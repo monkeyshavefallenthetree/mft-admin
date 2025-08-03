@@ -1,0 +1,2347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard - Monkeys Have Fallen The Tree</title>
+    
+    <!-- Firebase v9 SDK -->
+    <script type="module">
+        // Import the functions you need from the SDKs you need
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+        import { getAnalytics } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-analytics.js';
+        import { getAuth, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
+        import { getFirestore, collection, query, orderBy, onSnapshot, doc, updateDoc, deleteDoc, where, addDoc, getDocs, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+        
+        // Your web app's Firebase configuration
+        // For Firebase JS SDK v7.20.0 and later, measurementId is optional
+        const firebaseConfig = {
+            apiKey: "AIzaSyAszc76bGqYvAOSqZ5ZuxWDQNqdw8We2uc",
+  authDomain: "monkeys-have-fallen-tree.firebaseapp.com",
+  projectId: "monkeys-have-fallen-tree",
+  storageBucket: "monkeys-have-fallen-tree.firebasestorage.app",
+  messagingSenderId: "585775814693",
+  appId: "1:585775814693:web:fdab2f5af6a0a1e39687cc",
+  measurementId: "G-YTQ38QQFEL"
+};
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const analytics = getAnalytics(app);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // Make Firebase functions available globally
+        window.db = db;
+        window.auth = auth;
+        window.collection = collection;
+        window.query = query;
+        window.orderBy = orderBy;
+        window.onSnapshot = onSnapshot;
+        window.onAuthStateChanged = onAuthStateChanged;
+        window.signOut = signOut;
+        window.doc = doc;
+        window.updateDoc = updateDoc;
+        window.deleteDoc = deleteDoc;
+        window.where = where;
+        window.addDoc = addDoc;
+        window.getDocs = getDocs;
+        window.serverTimestamp = serverTimestamp;
+        window.analytics = analytics;
+    </script>
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            background: #0a0a0a;
+            color: #ffffff;
+            min-height: 100vh;
+        }
+
+        /* Header */
+        .dashboard-header {
+            background: rgba(20, 20, 20, 0.95);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid rgba(239, 65, 75, 0.3);
+            padding: 20px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+        }
+
+        .dashboard-title {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #ef414b;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .dashboard-title::before {
+            content: '🔥';
+            font-size: 1.2rem;
+        }
+
+        .dashboard-stats {
+            display: flex;
+            gap: 30px;
+            align-items: center;
+        }
+
+        .stat-item {
+            text-align: center;
+        }
+
+        .stat-number {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #ef414b;
+            display: block;
+        }
+
+        .stat-label {
+            font-size: 0.8rem;
+            color: #cccccc;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .firebase-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #28a745;
+            font-size: 0.9rem;
+            font-weight: 600;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: #28a745;
+            border-radius: 50%;
+            animation: livePulse 2s infinite;
+        }
+
+        @keyframes livePulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        .refresh-btn {
+            background: #ef414b;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .refresh-btn:hover {
+            background: #d63641;
+            transform: translateY(-1px);
+        }
+
+        /* Main content */
+        .dashboard-main {
+            padding: 30px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .filters-section {
+            background: rgba(20, 20, 20, 0.8);
+            border: 1px solid rgba(239, 65, 75, 0.2);
+            border-radius: 16px;
+            padding: 25px;
+            margin-bottom: 30px;
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .filter-label {
+            font-size: 0.8rem;
+            color: #cccccc;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 600;
+        }
+
+        .filter-select,
+        .filter-input {
+            padding: 8px 12px;
+            background: rgba(40, 40, 40, 0.8);
+            border: 1px solid rgba(239, 65, 75, 0.3);
+            border-radius: 6px;
+            color: #ffffff;
+            font-size: 0.9rem;
+            min-width: 150px;
+        }
+
+        .filter-select:focus,
+        .filter-input:focus {
+            outline: none;
+            border-color: #ef414b;
+        }
+
+        .filter-select option {
+            background: #2a2a2a;
+            color: #ffffff;
+        }
+
+        /* Submissions grid */
+        .submissions-container {
+            display: grid;
+            gap: 25px;
+        }
+
+        .submission-card {
+            background: rgba(20, 20, 20, 0.9);
+            border: 1px solid rgba(239, 65, 75, 0.2);
+            border-radius: 16px;
+            padding: 25px;
+            position: relative;
+            transition: all 0.3s ease;
+            overflow: hidden;
+            animation: cardFadeIn 0.5s ease-out;
+        }
+
+        @keyframes cardFadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .submission-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(239, 65, 75, 0.05), transparent);
+            transition: left 0.8s ease;
+        }
+
+        .submission-card:hover::before {
+            left: 100%;
+        }
+
+        .submission-card:hover {
+            border-color: rgba(239, 65, 75, 0.4);
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(239, 65, 75, 0.1);
+        }
+
+        .submission-card.new {
+            border-color: #28a745;
+            box-shadow: 0 5px 20px rgba(40, 167, 69, 0.2);
+        }
+
+        .submission-card.new::after {
+            content: 'NEW';
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: #28a745;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: 700;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        .submission-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 20px;
+            position: relative;
+            z-index: 2;
+        }
+
+        .client-info {
+            flex: 1;
+        }
+
+        .client-name {
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: #ef414b;
+            margin-bottom: 5px;
+        }
+
+        .client-email {
+            color: #cccccc;
+            font-size: 0.95rem;
+            margin-bottom: 3px;
+        }
+
+        .client-company {
+            color: #aaaaaa;
+            font-size: 0.9rem;
+        }
+
+        .submission-meta {
+            text-align: right;
+            min-width: 150px;
+        }
+
+        .submission-date {
+            color: #cccccc;
+            font-size: 0.85rem;
+            margin-bottom: 5px;
+        }
+
+        .submission-id {
+            color: #888888;
+            font-size: 0.75rem;
+            font-family: monospace;
+        }
+
+        .project-details {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+            position: relative;
+            z-index: 2;
+        }
+
+        .detail-group {
+            background: rgba(30, 30, 30, 0.6);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid rgba(239, 65, 75, 0.1);
+        }
+
+        .detail-label {
+            font-size: 0.8rem;
+            color: #ef414b;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .detail-value {
+            color: #ffffff;
+            font-size: 0.95rem;
+        }
+
+        .budget-badge {
+            display: inline-block;
+            background: linear-gradient(135deg, #ef414b, #ff6b75);
+            color: white;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+
+        .timeline-badge {
+            display: inline-block;
+            background: rgba(255, 193, 7, 0.2);
+            color: #ffc107;
+            border: 1px solid #ffc107;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            border: 1px solid;
+        }
+
+        .status-new {
+            background: rgba(40, 167, 69, 0.2);
+            color: #28a745;
+            border-color: #28a745;
+        }
+
+        .status-contacted {
+            background: rgba(0, 123, 255, 0.2);
+            color: #007bff;
+            border-color: #007bff;
+        }
+
+        .status-in-progress {
+            background: rgba(255, 193, 7, 0.2);
+            color: #ffc107;
+            border-color: #ffc107;
+        }
+
+        .status-completed {
+            background: rgba(108, 117, 125, 0.2);
+            color: #6c757d;
+            border-color: #6c757d;
+        }
+
+        .status-badge.online {
+            background: rgba(40, 167, 69, 0.2);
+            color: #28a745;
+            border-color: #28a745;
+        }
+
+        .status-badge.offline {
+            background: rgba(220, 53, 69, 0.2);
+            color: #dc3545;
+            border-color: #dc3545;
+        }
+
+        .services-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 5px;
+        }
+
+        .service-tag {
+            background: rgba(239, 65, 75, 0.2);
+            color: #ef414b;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .project-description {
+            background: rgba(30, 30, 30, 0.6);
+            padding: 20px;
+            border-radius: 12px;
+            border-left: 4px solid #ef414b;
+            margin-bottom: 20px;
+            position: relative;
+            z-index: 2;
+        }
+
+        .description-label {
+            font-size: 0.9rem;
+            color: #ef414b;
+            font-weight: 600;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .description-text {
+            color: #e0e0e0;
+            line-height: 1.6;
+            font-size: 0.95rem;
+        }
+
+        .submission-actions {
+            display: flex;
+            gap: 15px;
+            position: relative;
+            z-index: 2;
+            flex-wrap: wrap;
+        }
+
+        .action-btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .btn-contact {
+            background: #ef414b;
+            color: white;
+        }
+
+        .btn-contact:hover {
+            background: #d63641;
+            transform: translateY(-1px);
+        }
+
+        .btn-status {
+            background: transparent;
+            color: #007bff;
+            border: 1px solid #007bff;
+        }
+
+        .btn-status:hover {
+            background: #007bff;
+            color: white;
+        }
+
+        .btn-delete {
+            background: transparent;
+            color: #dc3545;
+            border: 1px solid #dc3545;
+        }
+
+        .btn-delete:hover {
+            background: #dc3545;
+            color: white;
+        }
+
+        /* Phase Management */
+        .phase-management {
+            margin-top: 20px;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .phase-header h4 {
+            color: #ef414b;
+            margin-bottom: 15px;
+            font-size: 1.1rem;
+        }
+
+        .phase-controls {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .phase-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 15px;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            transition: all 0.3s ease;
+        }
+
+        .phase-item.pending {
+            border-color: rgba(255, 193, 7, 0.3);
+            background: rgba(255, 193, 7, 0.05);
+        }
+
+        .phase-item.in-progress {
+            border-color: rgba(0, 123, 255, 0.3);
+            background: rgba(0, 123, 255, 0.05);
+        }
+
+        .phase-item.completed {
+            border-color: rgba(40, 167, 69, 0.3);
+            background: rgba(40, 167, 69, 0.05);
+        }
+
+        .phase-label {
+            font-weight: 600;
+            color: #ffffff;
+        }
+
+        .phase-buttons {
+            display: flex;
+            gap: 8px;
+        }
+
+        .phase-btn {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .phase-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-start {
+            background: #007bff;
+            color: white;
+        }
+
+        .btn-start:hover:not(:disabled) {
+            background: #0056b3;
+            transform: translateY(-1px);
+        }
+
+        .btn-complete {
+            background: #28a745;
+            color: white;
+        }
+
+        .btn-complete:hover:not(:disabled) {
+            background: #1e7e34;
+            transform: translateY(-1px);
+        }
+
+        /* No submissions state */
+        .no-submissions {
+            text-align: center;
+            padding: 60px 20px;
+            color: #666666;
+        }
+
+        .no-submissions-icon {
+            font-size: 4rem;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }
+
+        .no-submissions-text {
+            font-size: 1.2rem;
+            margin-bottom: 10px;
+        }
+
+        .no-submissions-subtitle {
+            font-size: 0.95rem;
+            opacity: 0.7;
+        }
+
+        /* Loading state */
+        .loading {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 60px;
+            color: #ef414b;
+            font-size: 1.1rem;
+        }
+
+        .loading::before {
+            content: '';
+            width: 20px;
+            height: 20px;
+            border: 2px solid transparent;
+            border-top: 2px solid #ef414b;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Mobile responsiveness */
+        @media (max-width: 768px) {
+            .dashboard-header {
+                padding: 15px 20px;
+                flex-direction: column;
+                gap: 15px;
+                text-align: center;
+            }
+
+            .dashboard-stats {
+                gap: 20px;
+            }
+
+            .dashboard-main {
+                padding: 20px 15px;
+            }
+
+            .filters-section {
+                padding: 20px;
+                flex-direction: column;
+                align-items: stretch;
+                gap: 15px;
+            }
+
+            .filter-group {
+                width: 100%;
+            }
+
+            .filter-select,
+            .filter-input {
+                width: 100%;
+                min-width: auto;
+            }
+
+            .submission-header {
+                flex-direction: column;
+                gap: 15px;
+                text-align: left;
+            }
+
+            .submission-meta {
+                text-align: left;
+                min-width: auto;
+            }
+
+            .project-details {
+                grid-template-columns: 1fr;
+                gap: 15px;
+            }
+
+            .submission-actions {
+                flex-direction: column;
+                gap: 10px;
+            }
+
+            .action-btn {
+                width: 100%;
+                text-align: center;
+            }
+        }
+
+
+
+        .config-info {
+            background: rgba(0, 123, 255, 0.1);
+            border: 1px solid #007bff;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 20px;
+            color: #007bff;
+            font-size: 0.9rem;
+        }
+
+        /* Navigation Tabs */
+        .nav-tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 30px;
+            border-bottom: 1px solid rgba(239, 65, 75, 0.3);
+            padding-bottom: 10px;
+        }
+
+        .nav-tab {
+            background: transparent;
+            color: #cccccc;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            font-size: 1rem;
+        }
+
+        .nav-tab:hover {
+            background: rgba(239, 65, 75, 0.1);
+            color: #ef414b;
+        }
+
+        .nav-tab.active {
+            background: #ef414b;
+            color: white;
+        }
+
+        /* Tab Content */
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Workers Section */
+        .workers-header, .tasks-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+
+        .workers-header h2, .tasks-header h2 {
+            color: #ef414b;
+            font-size: 1.8rem;
+            font-weight: 700;
+        }
+
+        .workers-container, .tasks-container {
+            display: grid;
+            gap: 20px;
+        }
+
+        .worker-card, .task-card {
+            background: rgba(20, 20, 20, 0.9);
+            border: 1px solid rgba(239, 65, 75, 0.2);
+            border-radius: 16px;
+            padding: 25px;
+            transition: all 0.3s ease;
+        }
+
+        .worker-card:hover, .task-card:hover {
+            border-color: rgba(239, 65, 75, 0.4);
+            transform: translateY(-2px);
+        }
+
+        .worker-header, .task-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .worker-name, .task-title {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: #ef414b;
+        }
+
+        .worker-role, .task-status {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+
+        .worker-role {
+            background: rgba(0, 123, 255, 0.2);
+            color: #007bff;
+            border: 1px solid rgba(0, 123, 255, 0.3);
+        }
+
+        .task-status.assigned {
+            background: rgba(0, 123, 255, 0.2);
+            color: #007bff;
+            border: 1px solid rgba(0, 123, 255, 0.3);
+        }
+
+        .task-status.in-progress {
+            background: rgba(255, 193, 7, 0.2);
+            color: #ffc107;
+            border: 1px solid rgba(255, 193, 7, 0.3);
+        }
+
+        .task-status.completed {
+            background: rgba(40, 167, 69, 0.2);
+            color: #28a745;
+            border: 1px solid rgba(40, 167, 69, 0.3);
+        }
+
+        .task-status.pendingapproval {
+            background: rgba(255, 193, 7, 0.2);
+            color: #ffc107;
+            border: 1px solid rgba(255, 193, 7, 0.3);
+        }
+
+        .worker-details, .task-details {
+            color: #cccccc;
+            font-size: 0.9rem;
+            line-height: 1.5;
+            margin-bottom: 15px;
+        }
+
+        .worker-actions, .task-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .worker-btn, .task-btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+        }
+
+        .btn-approve {
+            background: #28a745;
+            color: white;
+        }
+
+        .btn-approve:hover {
+            background: #1e7e34;
+        }
+
+        .btn-reject {
+            background: #dc3545;
+            color: white;
+        }
+
+        .btn-reject:hover {
+            background: #c82333;
+        }
+
+        .btn-assign {
+            background: #007bff;
+            color: white;
+        }
+
+        .btn-assign:hover {
+            background: #0056b3;
+        }
+
+        .btn-view {
+            background: transparent;
+            color: #cccccc;
+            border: 1px solid #cccccc;
+        }
+
+        .btn-view:hover {
+            background: #cccccc;
+            color: #000000;
+        }
+
+        /* Modal Styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 10000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+        }
+
+        .modal-content {
+            background: rgba(20, 20, 20, 0.95);
+            margin: 5% auto;
+            padding: 30px;
+            border: 1px solid rgba(239, 65, 75, 0.3);
+            border-radius: 16px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .modal-title {
+            color: #ef414b;
+            font-size: 1.5rem;
+            font-weight: 700;
+        }
+
+        .close {
+            color: #cccccc;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .close:hover {
+            color: #ef414b;
+        }
+
+        .modal-form {
+            display: grid;
+            gap: 20px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .form-label {
+            color: #ffffff;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+
+        .form-input, .form-select, .form-textarea {
+            padding: 12px 16px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.05);
+            color: #ffffff;
+            font-size: 1rem;
+        }
+
+        .form-input:focus, .form-select:focus, .form-textarea:focus {
+            outline: none;
+            border-color: #ef414b;
+        }
+
+        .form-textarea {
+            resize: vertical;
+            min-height: 100px;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 15px;
+            justify-content: flex-end;
+            margin-top: 20px;
+        }
+
+        .btn-cancel {
+            background: transparent;
+            color: #cccccc;
+            border: 1px solid #cccccc;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        .btn-cancel:hover {
+            background: #cccccc;
+            color: #000000;
+        }
+
+        .btn-submit {
+            background: #ef414b;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        .btn-submit:hover {
+            background: #d63641;
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard-header">
+        <div class="dashboard-title">
+            Firebase Admin Dashboard
+        </div>
+        <div class="dashboard-stats">
+            <div class="stat-item">
+                <span class="stat-number" id="totalSubmissions">0</span>
+                <span class="stat-label">Submissions</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-number" id="totalWorkers">0</span>
+                <span class="stat-label">Workers</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-number" id="totalTasks">0</span>
+                <span class="stat-label">Tasks</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-number" id="pendingApprovals">0</span>
+                <span class="stat-label">Pending</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-number" id="onlineWorkers">0</span>
+                <span class="stat-label">Online</span>
+            </div>
+        </div>
+        <div class="connection-status">
+            <div class="firebase-status">
+                <div class="status-dot"></div>
+                Real-time Connected
+            </div>
+            <button class="refresh-btn" onclick="manualRefresh()">
+                🔄 Refresh
+            </button>
+            <button class="logout-btn" onclick="logout()" style="background: #dc3545; color: white; border: none; padding: 8px 16px; border-radius: 5px; cursor: pointer; margin-left: 10px;">
+                🚪 Logout
+            </button>
+        </div>
+    </div>
+
+
+
+    <div class="dashboard-main">
+        <!-- Navigation Tabs -->
+        <div class="nav-tabs">
+            <button class="nav-tab active" onclick="switchTab('submissions')" id="tab-submissions">
+                📝 Submissions
+            </button>
+            <button class="nav-tab" onclick="switchTab('workers')" id="tab-workers">
+                👷 Workers
+            </button>
+            <button class="nav-tab" onclick="switchTab('tasks')" id="tab-tasks">
+                📋 Tasks
+            </button>
+        </div>
+
+        <!-- Submissions Tab -->
+        <div id="submissions-tab" class="tab-content active">
+            <div class="filters-section">
+                <div class="filter-group">
+                    <label class="filter-label">Filter by Status</label>
+                    <select class="filter-select" id="statusFilter" onchange="applyFilters()">
+                        <option value="">All Statuses</option>
+                        <option value="new">New</option>
+                        <option value="contacted">Contacted</option>
+                        <option value="in-progress">In Progress</option>
+                        <option value="completed">Completed</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label class="filter-label">Filter by Service</label>
+                    <select class="filter-select" id="serviceFilter" onchange="applyFilters()">
+                        <option value="">All Services</option>
+                        <option value="branding">Branding & Identity</option>
+                        <option value="media-buying">Media Buying</option>
+                        <option value="digital-marketing">Digital Marketing</option>
+                        <option value="media-production">Media Production</option>
+                        <option value="outdoor-advertising">Outdoor Advertising</option>
+                        <option value="web-development">Web & SEO Development</option>
+                        <option value="printing">Printing Solutions</option>
+                        <option value="event-management">Event Management</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label class="filter-label">Filter by Date</label>
+                    <select class="filter-select" id="dateFilter" onchange="applyFilters()">
+                        <option value="">All Dates</option>
+                        <option value="today">Today</option>
+                        <option value="tomorrow">Tomorrow</option>
+                        <option value="this-week">This Week</option>
+                        <option value="next-week">Next Week</option>
+                        <option value="this-month">This Month</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label class="filter-label">Search</label>
+                    <input type="text" class="filter-input" id="searchFilter" placeholder="Search by name, email..." oninput="applyFilters()">
+                </div>
+            </div>
+
+            <div class="submissions-container" id="submissionsContainer">
+                <div class="loading">🔥 Connecting to Firebase...</div>
+            </div>
+        </div>
+
+        <!-- Workers Tab -->
+        <div id="workers-tab" class="tab-content">
+            <div class="workers-header">
+                <h2>Worker Management</h2>
+            </div>
+            <div class="workers-container" id="workersContainer">
+                <div class="loading">Loading workers...</div>
+            </div>
+        </div>
+
+        <!-- Tasks Tab -->
+        <div id="tasks-tab" class="tab-content">
+            <div class="tasks-header">
+                <h2>Task Management</h2>
+                <button class="action-btn" onclick="showCreateTaskModal()">➕ Create Task</button>
+            </div>
+            <div class="tasks-container" id="tasksContainer">
+                <div class="loading">Loading tasks...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Task Modal -->
+    <div id="createTaskModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">Create New Task</h2>
+                <span class="close" onclick="closeModal('createTaskModal')">&times;</span>
+            </div>
+            <form class="modal-form" id="createTaskForm">
+                <div class="form-group">
+                    <label class="form-label">Task Title *</label>
+                    <input type="text" class="form-input" id="taskTitle" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Description *</label>
+                    <textarea class="form-textarea" id="taskDescription" required></textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Project Name</label>
+                    <input type="text" class="form-input" id="taskProject">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Assigned To</label>
+                    <select class="form-select" id="taskAssignedTo">
+                        <option value="">Select Worker</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Priority</label>
+                    <select class="form-select" id="taskPriority">
+                        <option value="low">Low</option>
+                        <option value="medium" selected>Medium</option>
+                        <option value="high">High</option>
+                        <option value="urgent">Urgent</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Due Date</label>
+                    <input type="date" class="form-input" id="taskDueDate">
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn-cancel" onclick="closeModal('createTaskModal')">Cancel</button>
+                    <button type="submit" class="btn-submit">Create Task</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Assign Task Modal -->
+    <div id="assignTaskModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">Assign Task to Worker</h2>
+                <span class="close" onclick="closeModal('assignTaskModal')">&times;</span>
+            </div>
+            <form class="modal-form" id="assignTaskForm">
+                <div class="form-group">
+                    <label class="form-label">Select Worker</label>
+                    <select class="form-select" id="assignWorkerId" required>
+                        <option value="">Choose a worker</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Task Title *</label>
+                    <input type="text" class="form-input" id="assignTaskTitle" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Description *</label>
+                    <textarea class="form-textarea" id="assignTaskDescription" required></textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Project Name</label>
+                    <input type="text" class="form-input" id="assignTaskProject">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Priority</label>
+                    <select class="form-select" id="assignTaskPriority">
+                        <option value="low">Low</option>
+                        <option value="medium" selected>Medium</option>
+                        <option value="high">High</option>
+                        <option value="urgent">Urgent</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Due Date</label>
+                    <input type="date" class="form-input" id="assignTaskDueDate">
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn-cancel" onclick="closeModal('assignTaskModal')">Cancel</button>
+                    <button type="submit" class="btn-submit">Assign Task</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Edit Task Modal -->
+    <div id="editTaskModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">Edit Task</h2>
+                <span class="close" onclick="closeModal('editTaskModal')">&times;</span>
+            </div>
+            <form class="modal-form" id="editTaskForm">
+                <input type="hidden" id="editTaskId">
+                <div class="form-group">
+                    <label class="form-label">Task Title *</label>
+                    <input type="text" class="form-input" id="editTaskTitle" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Description *</label>
+                    <textarea class="form-textarea" id="editTaskDescription" required></textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Project Name</label>
+                    <input type="text" class="form-input" id="editTaskProject">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Assigned To</label>
+                    <select class="form-select" id="editTaskAssignedTo">
+                        <option value="">Select Worker</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Status</label>
+                    <select class="form-select" id="editTaskStatus">
+                        <option value="assigned">Assigned</option>
+                        <option value="in-progress">In Progress</option>
+                        <option value="pending-approval">Pending Approval</option>
+                        <option value="completed">Completed</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Priority</label>
+                    <select class="form-select" id="editTaskPriority">
+                        <option value="low">Low</option>
+                        <option value="medium">Medium</option>
+                        <option value="high">High</option>
+                        <option value="urgent">Urgent</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Due Date</label>
+                    <input type="date" class="form-input" id="editTaskDueDate">
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn-cancel" onclick="closeModal('editTaskModal')">Cancel</button>
+                    <button type="submit" class="btn-submit">Update Task</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        let allSubmissions = [];
+        let filteredSubmissions = [];
+        let unsubscribe = null;
+
+        // Initialize Firebase real-time listener
+        async function initializeFirebase() {
+            try {
+                if (!window.db) {
+                    throw new Error('Firebase not initialized. Check your configuration.');
+                }
+
+                // Create query for submissions ordered by submission date
+                const q = window.query(
+                    window.collection(window.db, 'submissions'),
+                    window.orderBy('timestamp', 'desc')
+                );
+
+                // Set up real-time listener
+                unsubscribe = window.onSnapshot(q, 
+                    (querySnapshot) => {
+                        console.log('Firebase query result:', querySnapshot.size, 'documents');
+                        allSubmissions = [];
+                        querySnapshot.forEach((doc) => {
+                            const data = doc.data();
+                            console.log('Document data:', doc.id, data);
+                            allSubmissions.push({
+                                id: doc.id,
+                                ...data,
+                                // Convert Firestore timestamp to JavaScript date
+                                submittedAt: data.timestamp?.toDate?.() || data.submittedAt?.toDate?.() || new Date(data.createdAt || Date.now())
+                            });
+                        });
+                        
+                        filteredSubmissions = [...allSubmissions];
+                        updateStats();
+                        renderSubmissions();
+                        showNotification(`Updated: ${allSubmissions.length} submissions loaded`);
+                    },
+                    (error) => {
+                        console.error('Error listening to submissions:', error);
+                        // Don't show error message, just show no submissions state
+                        allSubmissions = [];
+                        filteredSubmissions = [];
+                        updateStats();
+                        renderNoSubmissions();
+                    }
+                );
+
+            } catch (error) {
+                console.error('Firebase initialization error:', error);
+                // Don't show error message, just show no submissions state
+                allSubmissions = [];
+                filteredSubmissions = [];
+                updateStats();
+                renderNoSubmissions();
+            }
+        }
+
+        // Show Firebase configuration error
+        function showFirebaseError(error) {
+            const container = document.getElementById('submissionsContainer');
+            container.innerHTML = `
+                <div class="no-submissions">
+                    <div class="no-submissions-icon">🔥</div>
+                    <div class="no-submissions-text">No submissions found</div>
+                    <div class="no-submissions-subtitle">New project requests will appear here in real-time</div>
+                    <div style="margin-top: 20px; padding: 15px; background: rgba(255,193,7,0.1); border-radius: 8px; border: 1px solid #ffc107;">
+                        <strong>Note:</strong> If you're not seeing data, please check your Firebase Firestore security rules.
+                    </div>
+                </div>
+            `;
+        }
+
+        // Update statistics
+        function updateStats() {
+            const today = new Date().toDateString();
+            const newCount = allSubmissions.filter(s => s.status === 'new').length;
+            const todayCount = allSubmissions.filter(s => {
+                const submissionDate = s.submittedAt instanceof Date ? s.submittedAt : new Date(s.submittedAt);
+                return submissionDate.toDateString() === today;
+            }).length;
+
+            document.getElementById('totalSubmissions').textContent = allSubmissions.length;
+            document.getElementById('newSubmissions').textContent = newCount;
+            document.getElementById('todaySubmissions').textContent = todayCount;
+        }
+
+        // Format date
+        function formatDate(date) {
+            if (!date) return 'Unknown date';
+            const d = date instanceof Date ? date : new Date(date);
+            return d.toLocaleDateString() + ' ' + d.toLocaleTimeString();
+        }
+
+        // Format date only (no time)
+        function formatDateOnly(date) {
+            if (!date) return 'Not specified';
+            const d = date instanceof Date ? date : new Date(date);
+            return d.toLocaleDateString('en-US', { 
+                weekday: 'long', 
+                year: 'numeric', 
+                month: 'long', 
+                day: 'numeric' 
+            });
+        }
+
+        // Format budget
+        function formatBudget(budget) {
+            const budgetMap = {
+                'under-5k': 'Under $5K',
+                '5k-15k': '$5K - $15K',
+                '15k-50k': '$15K - $50K',
+                'over-50k': '$50K+'
+            };
+            return budgetMap[budget] || budget;
+        }
+
+        // Format timeline
+        function formatTimeline(timeline) {
+            const timelineMap = {
+                'asap': 'ASAP',
+                '1-month': '1 Month',
+                '2-3-months': '2-3 Months',
+                '3-6-months': '3-6 Months',
+                'flexible': 'Flexible'
+            };
+            return timelineMap[timeline] || timeline;
+        }
+
+        // Format service name
+        function formatServiceName(service) {
+            const serviceMap = {
+                'branding': 'Branding & Identity',
+                'media-buying': 'Media Buying',
+                'digital-marketing': 'Digital Marketing',
+                'media-production': 'Media Production',
+                'outdoor-advertising': 'Outdoor Advertising',
+                'web-development': 'Web & SEO Development',
+                'printing': 'Printing Solutions',
+                'event-management': 'Event Management'
+            };
+            return serviceMap[service] || service;
+        }
+
+        // Format time
+        function formatTime(time) {
+            if (!time) return 'Not specified';
+            const [hour, minute] = time.split(':');
+            const hourNum = parseInt(hour);
+            const ampm = hourNum >= 12 ? 'PM' : 'AM';
+            const displayHour = hourNum % 12 || 12;
+            return `${displayHour}:${minute} ${ampm}`;
+        }
+
+        // Render submissions
+        function renderSubmissions() {
+            const container = document.getElementById('submissionsContainer');
+            
+            if (filteredSubmissions.length === 0) {
+                renderNoSubmissions();
+                return;
+            }
+
+            container.innerHTML = filteredSubmissions.map(submission => `
+                <div class="submission-card ${submission.status === 'new' ? 'new' : ''}" data-id="${submission.id}">
+                    <div class="submission-header">
+                        <div class="client-info">
+                            <div class="client-name">${submission.fullName}</div>
+                            <div class="client-email">📧 ${submission.email}</div>
+                            ${submission.phone ? `<div class="client-company">📞 ${submission.phone}</div>` : ''}
+                            ${submission.company ? `<div class="client-company">🏢 ${submission.company}</div>` : ''}
+                        </div>
+                        <div class="submission-meta">
+                            <div class="submission-date">${formatDate(submission.submittedAt)}</div>
+                            <div class="submission-id">ID: ${submission.id.slice(-8)}</div>
+                            <div style="margin-top: 5px;">
+                                <span class="status-badge status-${submission.status}">${submission.status}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="project-details">
+                        <div class="detail-group">
+                            <div class="detail-label">Meeting Schedule</div>
+                            <div class="detail-value">
+                                📅 ${formatDateOnly(submission.meetingDate)} at ${formatTime(submission.meetingTime)}
+                            </div>
+                        </div>
+                        ${submission.meetingEmail ? `
+                        <div class="detail-group">
+                            <div class="detail-label">Meeting Email</div>
+                            <div class="detail-value">📧 ${submission.meetingEmail}</div>
+                        </div>
+                        ` : ''}
+                    </div>
+
+                    ${submission.services && submission.services.length > 0 ? `
+                    <div class="detail-group" style="margin-bottom: 20px;">
+                        <div class="detail-label">Requested Services</div>
+                        <div class="services-list">
+                            ${submission.services.map(service => `<span class="service-tag">${formatServiceName(service)}</span>`).join('')}
+                        </div>
+                    </div>
+                    ` : ''}
+
+                    <div class="project-description">
+                        <div class="description-label">Project Description</div>
+                        <div class="description-text">${submission.projectDescription}</div>
+                    </div>
+
+                    ${submission.referenceLinks ? `
+                    <div class="project-description" style="margin-bottom: 20px;">
+                        <div class="description-label">Reference Links</div>
+                        <div class="description-text">${submission.referenceLinks}</div>
+                    </div>
+                    ` : ''}
+
+                    <div class="submission-actions">
+                        <button class="action-btn btn-contact" onclick="contactClient('${submission.email}', '${submission.fullName}')">
+                            📧 Contact Client
+                        </button>
+                        <button class="action-btn btn-status" onclick="updateStatus('${submission.id}', 'contacted')">
+                            ✅ Mark Contacted
+                        </button>
+                        <button class="action-btn btn-delete" onclick="deleteSubmission('${submission.id}')">
+                            🗑️ Delete
+                        </button>
+                    </div>
+                    
+                    <div class="phase-management">
+                        <div class="phase-header">
+                            <h4>Project Phases</h4>
+                        </div>
+                        <div class="phase-controls">
+                            <div class="phase-item ${submission.phase1Status || 'pending'}">
+                                <span class="phase-label">Phase 1: Planning</span>
+                                <div class="phase-buttons">
+                                    <button class="phase-btn btn-start" onclick="updatePhase('${submission.id}', 'phase1', 'in-progress')" ${submission.phase1Status === 'in-progress' || submission.phase1Status === 'completed' ? 'disabled' : ''}>
+                                        🚀 Start
+                                    </button>
+                                    <button class="phase-btn btn-complete" onclick="updatePhase('${submission.id}', 'phase1', 'completed')" ${submission.phase1Status !== 'in-progress' ? 'disabled' : ''}>
+                                        ✅ Complete
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="phase-item ${submission.phase2Status || 'pending'}">
+                                <span class="phase-label">Phase 2: Development</span>
+                                <div class="phase-buttons">
+                                    <button class="phase-btn btn-start" onclick="updatePhase('${submission.id}', 'phase2', 'in-progress')" ${submission.phase1Status !== 'completed' || submission.phase2Status === 'in-progress' || submission.phase2Status === 'completed' ? 'disabled' : ''}>
+                                        🚀 Start
+                                    </button>
+                                    <button class="phase-btn btn-complete" onclick="updatePhase('${submission.id}', 'phase2', 'completed')" ${submission.phase2Status !== 'in-progress' ? 'disabled' : ''}>
+                                        ✅ Complete
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="phase-item ${submission.phase3Status || 'pending'}">
+                                <span class="phase-label">Phase 3: Finalization</span>
+                                <div class="phase-buttons">
+                                    <button class="phase-btn btn-start" onclick="updatePhase('${submission.id}', 'phase3', 'in-progress')" ${submission.phase2Status !== 'completed' || submission.phase3Status === 'in-progress' || submission.phase3Status === 'completed' ? 'disabled' : ''}>
+                                        🚀 Start
+                                    </button>
+                                    <button class="phase-btn btn-complete" onclick="updatePhase('${submission.id}', 'phase3', 'completed')" ${submission.phase3Status !== 'in-progress' ? 'disabled' : ''}>
+                                        ✅ Complete
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Render no submissions state
+        function renderNoSubmissions() {
+            const container = document.getElementById('submissionsContainer');
+            container.innerHTML = `
+                <div class="no-submissions">
+                    <div class="no-submissions-icon">🔥</div>
+                    <div class="no-submissions-text">No submissions found</div>
+                    <div class="no-submissions-subtitle">New project requests will appear here in real-time</div>
+                </div>
+            `;
+        }
+
+        // Apply filters
+        function applyFilters() {
+            const statusFilter = document.getElementById('statusFilter').value;
+            const serviceFilter = document.getElementById('serviceFilter').value;
+            const dateFilter = document.getElementById('dateFilter').value;
+            const searchFilter = document.getElementById('searchFilter').value.toLowerCase();
+
+            filteredSubmissions = allSubmissions.filter(submission => {
+                const matchesStatus = !statusFilter || submission.status === statusFilter;
+                const matchesService = !serviceFilter || (submission.services && submission.services.includes(serviceFilter));
+                const matchesDate = !dateFilter || checkDateFilter(submission.meetingDate, dateFilter);
+                const matchesSearch = !searchFilter || 
+                    submission.fullName.toLowerCase().includes(searchFilter) ||
+                    submission.email.toLowerCase().includes(searchFilter) ||
+                    (submission.company && submission.company.toLowerCase().includes(searchFilter));
+
+                return matchesStatus && matchesService && matchesDate && matchesSearch;
+            });
+
+            renderSubmissions();
+        }
+
+        // Check date filter
+        function checkDateFilter(meetingDate, filter) {
+            if (!meetingDate) return false;
+            
+            const meetingDateObj = new Date(meetingDate);
+            const today = new Date();
+            const tomorrow = new Date(today);
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            
+            switch(filter) {
+                case 'today':
+                    return meetingDateObj.toDateString() === today.toDateString();
+                case 'tomorrow':
+                    return meetingDateObj.toDateString() === tomorrow.toDateString();
+                case 'this-week':
+                    const thisWeekStart = new Date(today);
+                    thisWeekStart.setDate(today.getDate() - today.getDay());
+                    const thisWeekEnd = new Date(thisWeekStart);
+                    thisWeekEnd.setDate(thisWeekStart.getDate() + 6);
+                    return meetingDateObj >= thisWeekStart && meetingDateObj <= thisWeekEnd;
+                case 'next-week':
+                    const nextWeekStart = new Date(today);
+                    nextWeekStart.setDate(today.getDate() - today.getDay() + 7);
+                    const nextWeekEnd = new Date(nextWeekStart);
+                    nextWeekEnd.setDate(nextWeekStart.getDate() + 6);
+                    return meetingDateObj >= nextWeekStart && meetingDateObj <= nextWeekEnd;
+                case 'this-month':
+                    return meetingDateObj.getMonth() === today.getMonth() && 
+                           meetingDateObj.getFullYear() === today.getFullYear();
+                default:
+                    return true;
+            }
+        }
+
+        // Contact client
+        function contactClient(email, name) {
+            const subject = encodeURIComponent(`Re: Your Project Request - Monkeys Have Fallen The Tree`);
+            const body = encodeURIComponent(`Hi ${name},\n\nThank you for your project request. We've reviewed your requirements and would love to discuss your project in more detail.\n\nBest regards,\nMonkeys Have Fallen The Tree Team`);
+            
+            window.open(`mailto:${email}?subject=${subject}&body=${body}`);
+        }
+
+        // Update submission status
+        async function updateStatus(id, status) {
+            try {
+                await window.updateDoc(window.doc(window.db, 'submissions', id), {
+                    status: status,
+                    updatedAt: new Date().toISOString()
+                });
+                showNotification(`Status updated to: ${status}`);
+            } catch (error) {
+                console.error('Error updating status:', error);
+                alert('Error updating status: ' + error.message);
+            }
+        }
+
+        // Update project phase
+        async function updatePhase(id, phase, status) {
+            try {
+                const updateData = {
+                    [phase + 'Status']: status,
+                    [phase + 'UpdatedAt']: new Date().toISOString()
+                };
+
+                // If completing a phase, also update the overall project status
+                if (status === 'completed') {
+                    updateData.updatedAt = new Date().toISOString();
+                    
+                    // Check if all phases are completed
+                    const submission = allSubmissions.find(s => s.id === id);
+                    if (submission) {
+                        const phase1Completed = phase === 'phase1' ? true : (submission.phase1Status === 'completed');
+                        const phase2Completed = phase === 'phase2' ? true : (submission.phase2Status === 'completed');
+                        const phase3Completed = phase === 'phase3' ? true : (submission.phase3Status === 'completed');
+                        
+                        if (phase1Completed && phase2Completed && phase3Completed) {
+                            updateData.status = 'completed';
+                            updateData.completedAt = new Date().toISOString();
+                        }
+                    }
+                }
+
+                await window.updateDoc(window.doc(window.db, 'submissions', id), updateData);
+                showNotification(`Phase ${phase.charAt(5)} ${status === 'in-progress' ? 'started' : 'completed'}`);
+            } catch (error) {
+                console.error('Error updating phase:', error);
+                alert('Error updating phase: ' + error.message);
+            }
+        }
+
+        // Delete submission
+        async function deleteSubmission(id) {
+            if (confirm('Are you sure you want to delete this submission? This action cannot be undone.')) {
+                try {
+                    await window.deleteDoc(window.doc(window.db, 'submissions', id));
+                    showNotification('Submission deleted successfully');
+                } catch (error) {
+                    console.error('Error deleting submission:', error);
+                    alert('Error deleting submission: ' + error.message);
+                }
+            }
+        }
+
+        // Manual refresh
+        function manualRefresh() {
+            // Firebase real-time listener handles updates automatically
+            showNotification('Real-time updates are active - no manual refresh needed!');
+        }
+
+        // Show notification
+        function showNotification(message) {
+            // Create notification element
+            const notification = document.createElement('div');
+            notification.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                background: #28a745;
+                color: white;
+                padding: 15px 20px;
+                border-radius: 8px;
+                font-weight: 600;
+                z-index: 10000;
+                animation: slideInRight 0.3s ease-out;
+                max-width: 300px;
+            `;
+            notification.textContent = message;
+            
+            document.body.appendChild(notification);
+            
+            // Remove notification after 3 seconds
+            setTimeout(() => {
+                notification.style.animation = 'slideOutRight 0.3s ease-out';
+                setTimeout(() => {
+                    if (document.body.contains(notification)) {
+                        document.body.removeChild(notification);
+                    }
+                }, 300);
+            }, 3000);
+        }
+
+        // Add CSS animations for notifications
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes slideInRight {
+                from { transform: translateX(100%); opacity: 0; }
+                to { transform: translateX(0); opacity: 1; }
+            }
+            @keyframes slideOutRight {
+                from { transform: translateX(0); opacity: 1; }
+                to { transform: translateX(100%); opacity: 0; }
+            }
+        `;
+        document.head.appendChild(style);
+
+        // Check admin authentication using Firebase Auth
+        function checkAdminAuth() {
+            return new Promise((resolve) => {
+                const unsubscribe = window.onAuthStateChanged(window.auth, (user) => {
+                    unsubscribe();
+                    
+                    if (!user || user.email !== 'admin@mft.com') {
+                        alert('Please login as admin first.');
+                        window.location.href = 'admin-login-firebase-auth.html';
+                        resolve(false);
+                        return;
+                    }
+                    
+                    resolve(true);
+                });
+            });
+        }
+
+        // Logout function
+        async function logout() {
+            if (confirm('Are you sure you want to logout?')) {
+                try {
+                    await window.signOut(window.auth);
+                    window.location.href = 'admin-login-firebase-auth.html';
+                } catch (error) {
+                    console.error('Logout error:', error);
+                    window.location.href = 'admin-login-firebase-auth.html';
+                }
+            }
+        }
+
+        // Initialize when page loads
+        document.addEventListener('DOMContentLoaded', async () => {
+            // Check authentication first
+            const isAuthenticated = await checkAdminAuth();
+            if (!isAuthenticated) {
+                return;
+            }
+            
+            // Add small delay to ensure Firebase is loaded
+            setTimeout(() => {
+                initializeFirebase();
+                
+                // Refresh worker data every 30 seconds to keep online status current
+                setInterval(() => {
+                    loadWorkers();
+                }, 30000);
+            }, 1000);
+        });
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (unsubscribe) {
+                unsubscribe();
+            }
+        });
+
+        // Global variables for workers and tasks
+        let allWorkers = [];
+        let allTasks = [];
+
+        // Tab switching functionality
+        function switchTab(tabName) {
+            // Hide all tab contents
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // Remove active class from all tabs
+            document.querySelectorAll('.nav-tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // Show selected tab content
+            document.getElementById(`${tabName}-tab`).classList.add('active');
+            
+            // Add active class to selected tab
+            document.getElementById(`tab-${tabName}`).classList.add('active');
+            
+            // Load data for the selected tab
+            if (tabName === 'workers') {
+                loadWorkers();
+            } else if (tabName === 'tasks') {
+                loadTasks();
+            }
+        }
+
+        // Load workers
+        async function loadWorkers() {
+            try {
+                const workersContainer = document.getElementById('workersContainer');
+                workersContainer.innerHTML = '<div class="loading">Loading workers...</div>';
+
+                const q = window.query(window.collection(window.db, 'workers'));
+                const querySnapshot = await window.getDocs(q);
+                
+                allWorkers = [];
+                querySnapshot.forEach((doc) => {
+                    const data = doc.data();
+                    allWorkers.push({
+                        id: doc.id,
+                        ...data
+                    });
+                });
+
+                renderWorkers();
+                updateStats();
+            } catch (error) {
+                console.error('Error loading workers:', error);
+                document.getElementById('workersContainer').innerHTML = 
+                    '<div style="color: #ff4757; text-align: center; padding: 20px;">Error loading workers</div>';
+            }
+        }
+
+        // Render workers
+        function renderWorkers() {
+            const workersContainer = document.getElementById('workersContainer');
+            
+            if (allWorkers.length === 0) {
+                workersContainer.innerHTML = `
+                    <div style="text-align: center; color: #888888; padding: 40px;">
+                        <p>No workers found.</p>
+                        <p>Workers will appear here when they register.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            workersContainer.innerHTML = allWorkers.map(worker => `
+                <div class="worker-card">
+                    <div class="worker-header">
+                        <div class="worker-name">${worker.firstName} ${worker.lastName}</div>
+                        <div class="worker-role">${formatRole(worker.role)}</div>
+                    </div>
+                    <div class="worker-details">
+                        <strong>Email:</strong> ${worker.email}<br>
+                        <strong>Phone:</strong> ${worker.phone}<br>
+                        <strong>Experience:</strong> ${worker.experience}<br>
+                        <strong>Status:</strong> ${worker.status}<br>
+                        <strong>Joined:</strong> ${worker.createdAt ? new Date(worker.createdAt.toDate()).toLocaleDateString() : 'N/A'}<br>
+                        <strong>Last Login:</strong> ${worker.lastLogin ? new Date(worker.lastLogin.toDate()).toLocaleString() : 'N/A'}<br>
+                        <strong>Last Logout:</strong> ${worker.lastLogout ? new Date(worker.lastLogout.toDate()).toLocaleString() : 'Never'}<br>
+                        <strong>Online Status:</strong> <span class="status-badge ${worker.isOnline ? 'online' : 'offline'}">${worker.isOnline ? '🟢 Online' : '🔴 Offline'}</span>
+                    </div>
+                    <div class="worker-actions">
+                        ${worker.status === 'pending' ? `
+                            <button class="worker-btn btn-approve" onclick="approveWorker('${worker.id}')">
+                                Approve
+                            </button>
+                            <button class="worker-btn btn-reject" onclick="rejectWorker('${worker.id}')">
+                                Reject
+                            </button>
+                        ` : ''}
+                        <button class="worker-btn btn-assign" onclick="showAssignTaskModal('${worker.id}')">
+                            Assign Task
+                        </button>
+                        <button class="worker-btn btn-view" onclick="viewWorkerDetails('${worker.id}')">
+                            View Details
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Load tasks
+        async function loadTasks() {
+            try {
+                const tasksContainer = document.getElementById('tasksContainer');
+                tasksContainer.innerHTML = '<div class="loading">Loading tasks...</div>';
+
+                const q = window.query(window.collection(window.db, 'tasks'), window.orderBy('createdAt', 'desc'));
+                const querySnapshot = await window.getDocs(q);
+                
+                allTasks = [];
+                querySnapshot.forEach((doc) => {
+                    const data = doc.data();
+                    allTasks.push({
+                        id: doc.id,
+                        ...data
+                    });
+                });
+
+                renderTasks();
+                updateStats();
+            } catch (error) {
+                console.error('Error loading tasks:', error);
+                document.getElementById('tasksContainer').innerHTML = 
+                    '<div style="color: #ff4757; text-align: center; padding: 20px;">Error loading tasks</div>';
+            }
+        }
+
+        // Render tasks
+        function renderTasks() {
+            const tasksContainer = document.getElementById('tasksContainer');
+            
+            if (allTasks.length === 0) {
+                tasksContainer.innerHTML = `
+                    <div style="text-align: center; color: #888888; padding: 40px;">
+                        <p>No tasks found.</p>
+                        <p>Tasks will appear here when created.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            tasksContainer.innerHTML = allTasks.map(task => `
+                <div class="task-card">
+                    <div class="task-header">
+                        <div class="task-title">${task.title}</div>
+                        <div class="task-status ${task.status.replace('-', '')}">${task.status.replace('-', ' ').toUpperCase()}</div>
+                    </div>
+                    <div class="task-details">
+                        <strong>Description:</strong> ${task.description}<br>
+                        <strong>Project:</strong> ${task.projectName || 'N/A'}<br>
+                        <strong>Priority:</strong> ${task.priority}<br>
+                        <strong>Assigned To:</strong> ${getWorkerName(task.assignedTo)}<br>
+                        <strong>Due Date:</strong> ${task.dueDate ? new Date(task.dueDate.toDate()).toLocaleDateString() : 'No due date'}<br>
+                        <strong>Created:</strong> ${task.createdAt ? new Date(task.createdAt.toDate()).toLocaleDateString() : 'N/A'}
+                    </div>
+                    <div class="task-actions">
+                        <button class="task-btn btn-view" onclick="viewTaskDetails('${task.id}')">
+                            View Details
+                        </button>
+                        <button class="task-btn btn-assign" onclick="editTask('${task.id}')">
+                            Edit Task
+                        </button>
+                        <button class="task-btn btn-delete" onclick="deleteTask('${task.id}')" style="background: #dc3545; color: white;">
+                            🗑️ Delete
+                        </button>
+                        ${task.status === 'pending-approval' ? `
+                            <button class="task-btn btn-approve" onclick="approveTask('${task.id}')" style="background: #28a745; color: white;">
+                                ✅ Approve
+                            </button>
+                            <button class="task-btn btn-reject" onclick="rejectTask('${task.id}')" style="background: #dc3545; color: white;">
+                                ❌ Reject
+                            </button>
+                        ` : ''}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Update statistics
+        function updateStats() {
+            document.getElementById('totalSubmissions').textContent = allSubmissions.length;
+            document.getElementById('totalWorkers').textContent = allWorkers.length;
+            document.getElementById('totalTasks').textContent = allTasks.length;
+            
+            const pendingWorkers = allWorkers.filter(worker => worker.status === 'pending').length;
+            document.getElementById('pendingApprovals').textContent = pendingWorkers;
+            
+            const onlineWorkers = allWorkers.filter(worker => worker.isOnline === true).length;
+            document.getElementById('onlineWorkers').textContent = onlineWorkers;
+        }
+
+        // Format role for display
+        function formatRole(role) {
+            return role.split('-').map(word => 
+                word.charAt(0).toUpperCase() + word.slice(1)
+            ).join(' ');
+        }
+
+        // Get worker name by ID
+        function getWorkerName(workerId) {
+            const worker = allWorkers.find(w => w.id === workerId);
+            return worker ? `${worker.firstName} ${worker.lastName}` : 'Unassigned';
+        }
+
+        // Approve worker
+        async function approveWorker(workerId) {
+            try {
+                await window.updateDoc(window.doc(window.db, 'workers', workerId), {
+                    status: 'approved'
+                });
+                showNotification('Worker approved successfully!');
+                loadWorkers();
+            } catch (error) {
+                console.error('Error approving worker:', error);
+                alert('Error approving worker. Please try again.');
+            }
+        }
+
+        // Reject worker
+        async function rejectWorker(workerId) {
+            try {
+                await window.updateDoc(window.doc(window.db, 'workers', workerId), {
+                    status: 'rejected'
+                });
+                showNotification('Worker rejected successfully!');
+                loadWorkers();
+            } catch (error) {
+                console.error('Error rejecting worker:', error);
+                alert('Error rejecting worker. Please try again.');
+            }
+        }
+
+        // Approve task completion
+        async function approveTask(taskId) {
+            try {
+                await window.updateDoc(window.doc(window.db, 'tasks', taskId), {
+                    status: 'completed',
+                    approvedAt: window.serverTimestamp(),
+                    approvedBy: 'admin'
+                });
+                showNotification('Task approved successfully!');
+                loadTasks();
+            } catch (error) {
+                console.error('Error approving task:', error);
+                alert('Error approving task. Please try again.');
+            }
+        }
+
+        // Reject task completion
+        async function rejectTask(taskId) {
+            try {
+                await window.updateDoc(window.doc(window.db, 'tasks', taskId), {
+                    status: 'in-progress',
+                    rejectedAt: window.serverTimestamp(),
+                    rejectedBy: 'admin',
+                    rejectionReason: prompt('Please provide a reason for rejection (optional):') || 'No reason provided'
+                });
+                showNotification('Task rejected. Worker will be notified to make changes.');
+                loadTasks();
+            } catch (error) {
+                console.error('Error rejecting task:', error);
+                alert('Error rejecting task. Please try again.');
+            }
+        }
+
+        // Show create task modal
+        function showCreateTaskModal() {
+            populateWorkerSelect('taskAssignedTo');
+            document.getElementById('createTaskModal').style.display = 'block';
+        }
+
+        // Show assign task modal
+        function showAssignTaskModal(workerId = null) {
+            populateWorkerSelect('assignWorkerId');
+            if (workerId) {
+                document.getElementById('assignWorkerId').value = workerId;
+            }
+            document.getElementById('assignTaskModal').style.display = 'block';
+        }
+
+        // Close modal
+        function closeModal(modalId) {
+            document.getElementById(modalId).style.display = 'none';
+            // Reset form
+            document.getElementById(modalId).querySelector('form').reset();
+        }
+
+        // Populate worker select dropdown
+        function populateWorkerSelect(selectId) {
+            const select = document.getElementById(selectId);
+            select.innerHTML = '<option value="">Select Worker</option>';
+            
+            const approvedWorkers = allWorkers.filter(worker => worker.status === 'approved');
+            approvedWorkers.forEach(worker => {
+                const option = document.createElement('option');
+                option.value = worker.id;
+                option.textContent = `${worker.firstName} ${worker.lastName} (${formatRole(worker.role)})`;
+                select.appendChild(option);
+            });
+        }
+
+        // Create task
+        async function createTask(taskData) {
+            try {
+                const task = {
+                    ...taskData,
+                    status: 'assigned',
+                    createdAt: window.serverTimestamp(),
+                    assignedAt: window.serverTimestamp()
+                };
+
+                await window.addDoc(window.collection(window.db, 'tasks'), task);
+                showNotification('Task created successfully!');
+                closeModal('createTaskModal');
+                loadTasks();
+            } catch (error) {
+                console.error('Error creating task:', error);
+                alert('Error creating task. Please try again.');
+            }
+        }
+
+        // Handle create task form submission
+        document.getElementById('createTaskForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const taskData = {
+                title: document.getElementById('taskTitle').value,
+                description: document.getElementById('taskDescription').value,
+                projectName: document.getElementById('taskProject').value,
+                assignedTo: document.getElementById('taskAssignedTo').value,
+                priority: document.getElementById('taskPriority').value,
+                dueDate: document.getElementById('taskDueDate').value ? new Date(document.getElementById('taskDueDate').value) : null
+            };
+
+            await createTask(taskData);
+        });
+
+        // Handle assign task form submission
+        document.getElementById('assignTaskForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const taskData = {
+                title: document.getElementById('assignTaskTitle').value,
+                description: document.getElementById('assignTaskDescription').value,
+                projectName: document.getElementById('assignTaskProject').value,
+                assignedTo: document.getElementById('assignWorkerId').value,
+                priority: document.getElementById('assignTaskPriority').value,
+                dueDate: document.getElementById('assignTaskDueDate').value ? new Date(document.getElementById('assignTaskDueDate').value) : null
+            };
+
+            await createTask(taskData);
+        });
+
+        // View worker details
+        function viewWorkerDetails(workerId) {
+            const worker = allWorkers.find(w => w.id === workerId);
+            if (worker) {
+                const details = `
+Worker Details:
+- Name: ${worker.firstName} ${worker.lastName}
+- Email: ${worker.email}
+- Phone: ${worker.phone}
+- Role: ${formatRole(worker.role)}
+- Experience: ${worker.experience}
+- Status: ${worker.status}
+- Joined: ${worker.createdAt ? new Date(worker.createdAt.toDate()).toLocaleDateString() : 'N/A'}
+- Last Login: ${worker.lastLogin ? new Date(worker.lastLogin.toDate()).toLocaleString() : 'N/A'}
+- Last Logout: ${worker.lastLogout ? new Date(worker.lastLogout.toDate()).toLocaleString() : 'Never'}
+- Online Status: ${worker.isOnline ? '🟢 Online' : '🔴 Offline'}
+                `;
+                alert(details);
+            }
+        }
+
+        // View task details
+        function viewTaskDetails(taskId) {
+            const task = allTasks.find(t => t.id === taskId);
+            if (task) {
+                const details = `
+Task Details:
+- Title: ${task.title}
+- Description: ${task.description}
+- Project: ${task.projectName || 'N/A'}
+- Priority: ${task.priority}
+- Status: ${task.status}
+- Assigned To: ${getWorkerName(task.assignedTo)}
+- Due Date: ${task.dueDate ? new Date(task.dueDate.toDate()).toLocaleDateString() : 'No due date'}
+- Created: ${task.createdAt ? new Date(task.createdAt.toDate()).toLocaleDateString() : 'N/A'}
+                `;
+                alert(details);
+            }
+        }
+
+        // Edit task
+        function editTask(taskId) {
+            const task = allTasks.find(t => t.id === taskId);
+            if (!task) {
+                alert('Task not found!');
+                return;
+            }
+            
+            // Populate the edit form with task data
+            document.getElementById('editTaskId').value = task.id;
+            document.getElementById('editTaskTitle').value = task.title;
+            document.getElementById('editTaskDescription').value = task.description;
+            document.getElementById('editTaskProject').value = task.projectName || '';
+            document.getElementById('editTaskStatus').value = task.status;
+            document.getElementById('editTaskPriority').value = task.priority;
+            
+            // Format due date for input field (YYYY-MM-DD)
+            if (task.dueDate) {
+                const dueDate = task.dueDate.toDate ? task.dueDate.toDate() : new Date(task.dueDate);
+                const formattedDate = dueDate.toISOString().split('T')[0];
+                document.getElementById('editTaskDueDate').value = formattedDate;
+            } else {
+                document.getElementById('editTaskDueDate').value = '';
+            }
+            
+            // Populate worker select dropdown
+            populateWorkerSelect('editTaskAssignedTo');
+            document.getElementById('editTaskAssignedTo').value = task.assignedTo || '';
+            
+            // Show the modal
+            document.getElementById('editTaskModal').style.display = 'block';
+        }
+
+        // Update task
+        async function updateTask(taskData) {
+            try {
+                const taskId = taskData.id;
+                delete taskData.id; // Remove id from data to be updated
+                
+                // Convert due date string to Date object if provided
+                if (taskData.dueDate) {
+                    taskData.dueDate = new Date(taskData.dueDate);
+                }
+                
+                // Add updated timestamp
+                taskData.updatedAt = window.serverTimestamp();
+                
+                await window.updateDoc(window.doc(window.db, 'tasks', taskId), taskData);
+                showNotification('Task updated successfully!');
+                closeModal('editTaskModal');
+                loadTasks();
+            } catch (error) {
+                console.error('Error updating task:', error);
+                alert('Error updating task. Please try again.');
+            }
+        }
+
+        // Delete task
+        async function deleteTask(taskId) {
+            if (confirm('Are you sure you want to delete this task? This action cannot be undone.')) {
+                try {
+                    await window.deleteDoc(window.doc(window.db, 'tasks', taskId));
+                    showNotification('Task deleted successfully!');
+                    loadTasks();
+                } catch (error) {
+                    console.error('Error deleting task:', error);
+                    alert('Error deleting task. Please try again.');
+                }
+            }
+        }
+
+        // Handle edit task form submission
+        document.getElementById('editTaskForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const taskData = {
+                id: document.getElementById('editTaskId').value,
+                title: document.getElementById('editTaskTitle').value,
+                description: document.getElementById('editTaskDescription').value,
+                projectName: document.getElementById('editTaskProject').value,
+                assignedTo: document.getElementById('editTaskAssignedTo').value,
+                status: document.getElementById('editTaskStatus').value,
+                priority: document.getElementById('editTaskPriority').value,
+                dueDate: document.getElementById('editTaskDueDate').value
+            };
+            
+            await updateTask(taskData);
+        });
+
+        // Close modals when clicking outside
+        window.onclick = function(event) {
+            if (event.target.classList.contains('modal')) {
+                event.target.style.display = 'none';
+            }
+        };
+    </script>
+</body>
+</html> 
