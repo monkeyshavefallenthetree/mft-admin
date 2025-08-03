@@ -1813,10 +1813,10 @@
             if (confirm('Are you sure you want to logout?')) {
                 try {
                     await window.signOut(window.auth);
-                    window.location.href = 'admin-login-firebase-auth.html';
+                    window.location.href = 'index.html';
                 } catch (error) {
                     console.error('Logout error:', error);
-                    window.location.href = 'admin-login-firebase-auth.html';
+                    window.location.href = 'index.html';
                 }
             }
         }
