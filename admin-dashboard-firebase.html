@@ -1103,9 +1103,6 @@
             <button class="nav-tab" onclick="switchTab('tasks')" id="tab-tasks">
                 📋 Tasks
             </button>
-            <button class="nav-tab" onclick="switchTab('account-managers')" id="tab-account-managers">
-                👔 Account Managers
-            </button>
         </div>
 
         <!-- Submissions Tab -->
@@ -1175,30 +1172,6 @@
             </div>
             <div class="tasks-container" id="tasksContainer">
                 <div class="loading">Loading tasks...</div>
-            </div>
-        </div>
-
-        <!-- Account Managers Tab -->
-        <div id="account-managers-tab" class="tab-content">
-            <div class="account-managers-header">
-                <h2>Account Manager Management</h2>
-                <div class="account-managers-stats">
-                    <div class="stat-item">
-                        <span class="stat-number" id="totalAccountManagers">0</span>
-                        <span class="stat-label">Account Managers</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-number" id="activeAccountManagers">0</span>
-                        <span class="stat-label">Active</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-number" id="totalClientsManaged">0</span>
-                        <span class="stat-label">Clients Managed</span>
-                    </div>
-                </div>
-            </div>
-            <div class="account-managers-container" id="accountManagersContainer">
-                <div class="loading">Loading account managers...</div>
             </div>
         </div>
     </div>
@@ -1357,9 +1330,6 @@
     <script>
         let allSubmissions = [];
         let filteredSubmissions = [];
-        let allWorkers = [];
-        let allTasks = [];
-        let allAccountManagers = [];
         let unsubscribe = null;
 
         // Initialize Firebase real-time listener
@@ -1878,7 +1848,8 @@
         });
 
         // Global variables for workers and tasks
-        // Note: allWorkers and allTasks are declared at the top of the script
+        let allWorkers = [];
+        let allTasks = [];
 
         // Tab switching functionality
         function switchTab(tabName) {
@@ -1903,8 +1874,6 @@
                 loadWorkers();
             } else if (tabName === 'tasks') {
                 loadTasks();
-            } else if (tabName === 'account-managers') {
-                loadAccountManagers();
             }
         }
 
@@ -2061,93 +2030,6 @@
                     </div>
                 </div>
             `).join('');
-        }
-
-        // Load account managers
-        async function loadAccountManagers() {
-            try {
-                const accountManagersContainer = document.getElementById('accountManagersContainer');
-                accountManagersContainer.innerHTML = '<div class="loading">Loading account managers...</div>';
-
-                const q = window.query(
-                    window.collection(window.db, 'workers'),
-                    window.where('role', '==', 'account-manager')
-                );
-                const querySnapshot = await window.getDocs(q);
-                
-                allAccountManagers = [];
-                querySnapshot.forEach((doc) => {
-                    const data = doc.data();
-                    allAccountManagers.push({
-                        id: doc.id,
-                        ...data
-                    });
-                });
-
-                renderAccountManagers();
-                updateAccountManagerStats();
-            } catch (error) {
-                console.error('Error loading account managers:', error);
-                document.getElementById('accountManagersContainer').innerHTML = 
-                    '<div style="color: #ff4757; text-align: center; padding: 20px;">Error loading account managers</div>';
-            }
-        }
-
-        // Render account managers
-        function renderAccountManagers() {
-            const accountManagersContainer = document.getElementById('accountManagersContainer');
-            
-            if (allAccountManagers.length === 0) {
-                accountManagersContainer.innerHTML = `
-                    <div style="text-align: center; color: #888888; padding: 40px;">
-                        <p>No account managers found.</p>
-                        <p>Account managers will appear here when they register with the 'account-manager' role.</p>
-                    </div>
-                `;
-                return;
-            }
-
-            accountManagersContainer.innerHTML = allAccountManagers.map(manager => `
-                <div class="worker-card">
-                    <div class="worker-header">
-                        <div class="worker-name">${manager.firstName} ${manager.lastName}</div>
-                        <div class="worker-role">Account Manager</div>
-                    </div>
-                    <div class="worker-details">
-                        <strong>Email:</strong> ${manager.email}<br>
-                        <strong>Phone:</strong> ${manager.phone}<br>
-                        <strong>Experience:</strong> ${manager.experience}<br>
-                        <strong>Status:</strong> ${manager.status}<br>
-                        <strong>Joined:</strong> ${manager.createdAt ? new Date(manager.createdAt.toDate()).toLocaleDateString() : 'N/A'}<br>
-                        <strong>Last Login:</strong> ${manager.lastLogin ? new Date(manager.lastLogin.toDate()).toLocaleString() : 'N/A'}<br>
-                        <strong>Online Status:</strong> <span class="status-badge ${manager.isOnline ? 'online' : 'offline'}">${manager.isOnline ? '🟢 Online' : '🔴 Offline'}</span>
-                    </div>
-                    <div class="worker-actions">
-                        ${manager.status === 'pending' ? `
-                            <button class="worker-btn btn-approve" onclick="approveWorker('${manager.id}')">
-                                Approve
-                            </button>
-                            <button class="worker-btn btn-reject" onclick="rejectWorker('${manager.id}')">
-                                Reject
-                            </button>
-                        ` : ''}
-                        <button class="worker-btn btn-view" onclick="viewAccountManagerDetails('${manager.id}')">
-                            View Details
-                        </button>
-                        <button class="worker-btn btn-assign" onclick="viewAccountManagerClients('${manager.id}')">
-                            View Clients
-                        </button>
-                    </div>
-                </div>
-            `).join('');
-        }
-
-        // Update account manager statistics
-        function updateAccountManagerStats() {
-            document.getElementById('totalAccountManagers').textContent = allAccountManagers.length;
-            document.getElementById('activeAccountManagers').textContent = allAccountManagers.filter(m => m.status === 'approved').length;
-            // This would need to be calculated from clients collection
-            document.getElementById('totalClientsManaged').textContent = '0';
         }
 
         // Update statistics
@@ -2460,39 +2342,6 @@ Task Details:
                 event.target.style.display = 'none';
             }
         };
-
-        // Account Manager helper functions
-        function viewAccountManagerDetails(managerId) {
-            const manager = allAccountManagers.find(m => m.id === managerId);
-            if (!manager) {
-                alert('Account manager not found!');
-                return;
-            }
-            
-            const details = `
-Account Manager Details:
-- Name: ${manager.firstName} ${manager.lastName}
-- Email: ${manager.email}
-- Phone: ${manager.phone}
-- Experience: ${manager.experience}
-- Status: ${manager.status}
-- Joined: ${manager.createdAt ? new Date(manager.createdAt.toDate()).toLocaleDateString() : 'N/A'}
-- Last Login: ${manager.lastLogin ? new Date(manager.lastLogin.toDate()).toLocaleString() : 'N/A'}
-- Online Status: ${manager.isOnline ? '🟢 Online' : '🔴 Offline'}
-            `;
-            alert(details);
-        }
-
-        function viewAccountManagerClients(managerId) {
-            // This would show clients managed by this account manager
-            // For now, show a placeholder message
-            alert('Client management feature will be implemented in the account manager dashboard. Account managers can view and manage their clients directly from their dashboard.');
-        }
-
-        // Initialize the dashboard
-        document.addEventListener('DOMContentLoaded', function() {
-            initializeFirebase();
-        });
     </script>
 </body>
 </html> 
