@@ -1342,7 +1342,7 @@
                 // Create query for submissions ordered by submission date
                 const q = window.query(
                     window.collection(window.db, 'submissions'),
-                    window.orderBy('timestamp', 'desc')
+                    window.orderBy('submittedAt', 'desc')
                 );
 
                 // Set up real-time listener
@@ -1353,15 +1353,23 @@
                         querySnapshot.forEach((doc) => {
                             const data = doc.data();
                             console.log('Document data:', doc.id, data);
+                            
+                            // Ensure status field exists
+                            if (!data.status) {
+                                data.status = 'new';
+                            }
+                            
                             allSubmissions.push({
                                 id: doc.id,
                                 ...data,
                                 // Convert Firestore timestamp to JavaScript date
-                                submittedAt: data.timestamp?.toDate?.() || data.submittedAt?.toDate?.() || new Date(data.createdAt || Date.now())
+                                submittedAt: data.submittedAt?.toDate?.() || data.timestamp?.toDate?.() || new Date(data.createdAt || Date.now())
                             });
                         });
                         
                         filteredSubmissions = [...allSubmissions];
+                        console.log('All submissions loaded:', allSubmissions);
+                        console.log('Filtered submissions:', filteredSubmissions);
                         updateStats();
                         renderSubmissions();
                         showNotification(`Updated: ${allSubmissions.length} submissions loaded`);
@@ -1524,7 +1532,7 @@
                         ` : ''}
                     </div>
 
-                    ${submission.services && submission.services.length > 0 ? `
+                    ${submission.services && Array.isArray(submission.services) && submission.services.length > 0 ? `
                     <div class="detail-group" style="margin-bottom: 20px;">
                         <div class="detail-label">Requested Services</div>
                         <div class="services-list">
@@ -1622,7 +1630,7 @@
 
             filteredSubmissions = allSubmissions.filter(submission => {
                 const matchesStatus = !statusFilter || submission.status === statusFilter;
-                const matchesService = !serviceFilter || (submission.services && submission.services.includes(serviceFilter));
+                const matchesService = !serviceFilter || (submission.services && Array.isArray(submission.services) && submission.services.includes(serviceFilter));
                 const matchesDate = !dateFilter || checkDateFilter(submission.meetingDate, dateFilter);
                 const matchesSearch = !searchFilter || 
                     submission.fullName.toLowerCase().includes(searchFilter) ||
@@ -1813,10 +1821,10 @@
             if (confirm('Are you sure you want to logout?')) {
                 try {
                     await window.signOut(window.auth);
-                    window.location.href = 'admin-login-firebase-auth.html';
+                    window.location.href = 'index.html';
                 } catch (error) {
                     console.error('Logout error:', error);
-                    window.location.href = 'admin-login-firebase-auth.html';
+                    window.location.href = 'index.html';
                 }
             }
         }
