@@ -1337,7 +1337,7 @@
             font-weight: 700;
         }
 
-        .workers-container, .tasks-container {
+        .workers-container, .tasks-container, .projects-container {
             display: grid;
             gap: 20px;
         }
@@ -1410,6 +1410,342 @@
             font-size: 0.9rem;
             line-height: 1.5;
             margin-bottom: 15px;
+        }
+
+        /* Project Card Styles */
+        .project-card {
+            background: rgba(20, 20, 20, 0.9);
+            border: 1px solid rgba(239, 65, 75, 0.3);
+            border-radius: 16px;
+            padding: 25px;
+            transition: all 0.3s ease;
+        }
+
+        .project-card:hover {
+            border-color: rgba(239, 65, 75, 0.5);
+            transform: translateY(-2px);
+        }
+
+        .project-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            cursor: pointer;
+        }
+
+        .project-title-section {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .project-expand-icon {
+            font-size: 1.2rem;
+            transition: transform 0.3s ease;
+        }
+
+        .project-expand-icon.expanded {
+            transform: rotate(90deg);
+        }
+
+        .project-title {
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: #ef414b;
+        }
+
+        .project-status {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+
+        .project-status.active {
+            background: rgba(40, 167, 69, 0.2);
+            color: #28a745;
+            border: 1px solid rgba(40, 167, 69, 0.3);
+        }
+
+        .project-status.completed {
+            background: rgba(108, 117, 125, 0.2);
+            color: #6c757d;
+            border: 1px solid rgba(108, 117, 125, 0.3);
+        }
+
+        .project-status.onhold {
+            background: rgba(255, 193, 7, 0.2);
+            color: #ffc107;
+            border: 1px solid rgba(255, 193, 7, 0.3);
+        }
+
+        .project-details {
+            color: #cccccc;
+            font-size: 0.9rem;
+            line-height: 1.5;
+            margin-bottom: 15px;
+        }
+
+        .project-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+
+        .project-btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+        }
+
+        .project-tasks-section {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            display: none;
+        }
+
+        .project-tasks-section.expanded {
+            display: block;
+        }
+
+        .project-tasks-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .project-tasks-title {
+            color: #ffffff;
+            font-size: 1rem;
+            font-weight: 600;
+        }
+
+        .task-count-badge {
+            background: rgba(239, 65, 75, 0.2);
+            color: #ef414b;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+
+        .project-task-item {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 10px;
+            transition: all 0.2s ease;
+        }
+
+        .project-task-item:hover {
+            border-color: rgba(239, 65, 75, 0.3);
+            background: rgba(0, 0, 0, 0.4);
+        }
+
+        .project-task-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .project-task-title {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #ffffff;
+        }
+
+        .project-task-details {
+            color: #999999;
+            font-size: 0.85rem;
+            line-height: 1.4;
+        }
+
+        .project-task-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .project-task-btn {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.8rem;
+            transition: all 0.2s ease;
+        }
+
+        /* Kanban Board Styles */
+        .kanban-board {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            overflow-x: auto;
+            padding-bottom: 20px;
+        }
+
+        .kanban-column {
+            background: rgba(20, 20, 20, 0.6);
+            border: 1px solid rgba(239, 65, 75, 0.2);
+            border-radius: 12px;
+            padding: 15px;
+            min-height: 400px;
+        }
+
+        .kanban-column-header {
+            background: rgba(239, 65, 75, 0.15);
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+
+        .kanban-column-title {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: #ef414b;
+        }
+
+        .kanban-task-count {
+            background: rgba(239, 65, 75, 0.3);
+            color: #ffffff;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .kanban-task-card {
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 12px;
+            transition: all 0.2s ease;
+            cursor: pointer;
+        }
+
+        .kanban-task-card:hover {
+            border-color: rgba(239, 65, 75, 0.4);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .kanban-task-title {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #ffffff;
+            margin-bottom: 8px;
+        }
+
+        .kanban-task-project {
+            font-size: 0.85rem;
+            color: #ef414b;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+
+        .kanban-task-details {
+            font-size: 0.85rem;
+            color: #999999;
+            line-height: 1.4;
+            margin-bottom: 10px;
+        }
+
+        .kanban-task-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .kanban-task-status {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .kanban-task-priority {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .kanban-task-priority.low {
+            background: rgba(108, 117, 125, 0.2);
+            color: #6c757d;
+            border: 1px solid rgba(108, 117, 125, 0.3);
+        }
+
+        .kanban-task-priority.medium {
+            background: rgba(0, 123, 255, 0.2);
+            color: #007bff;
+            border: 1px solid rgba(0, 123, 255, 0.3);
+        }
+
+        .kanban-task-priority.high {
+            background: rgba(255, 193, 7, 0.2);
+            color: #ffc107;
+            border: 1px solid rgba(255, 193, 7, 0.3);
+        }
+
+        .kanban-task-priority.urgent {
+            background: rgba(220, 53, 69, 0.2);
+            color: #dc3545;
+            border: 1px solid rgba(220, 53, 69, 0.3);
+        }
+
+        /* Project Details View Styles */
+        .project-details-header {
+            margin-bottom: 20px;
+        }
+
+        .back-btn {
+            margin-bottom: 15px;
+        }
+
+        .project-info-section {
+            margin-bottom: 20px;
+        }
+
+        .project-info-label {
+            color: #ef414b;
+            font-weight: 600;
+            font-size: 0.9rem;
+            margin-bottom: 5px;
+        }
+
+        .project-info-value {
+            color: #ffffff;
+            font-size: 1rem;
+            line-height: 1.5;
+        }
+
+        .project-task-card-detail {
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 20px;
+            transition: all 0.2s ease;
+        }
+
+        .project-task-card-detail:hover {
+            border-color: rgba(239, 65, 75, 0.4);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
         }
 
         .worker-actions, .task-actions {
@@ -1555,7 +1891,7 @@
         }
 
         /* Ensure dropdown items are readable when the select opens */
-        .form-select option {
+        .form-select option, .filter-select option {
             background: #ffffff;
             color: #000000;
         }
@@ -2174,8 +2510,8 @@
             <button class="nav-tab" onclick="switchTab('workers')" id="tab-workers">
                 👷 Workers
             </button>
-            <button class="nav-tab" onclick="switchTab('tasks')" id="tab-tasks">
-                📋 Tasks
+            <button class="nav-tab" onclick="switchTab('projects')" id="tab-projects">
+                📁 Projects
             </button>
             <button class="nav-tab" onclick="switchTab('worksessions')" id="tab-worksessions">
                 ⏰ Work Sessions
@@ -2296,13 +2632,51 @@
             </div>
         </div>
 
-        <!-- Tasks Tab -->
-        <div id="tasks-tab" class="tab-content">
+        <!-- Projects Tab -->
+        <div id="projects-tab" class="tab-content">
             <div class="tasks-header">
-                <h2>Task Management</h2>
-                <button class="action-btn" onclick="showCreateTaskModal()">➕ Create Task</button>
+                <h2>Project Management</h2>
+                <div style="display: flex; gap: 10px;">
+                    <button class="action-btn" onclick="showCreateProjectModal()">➕ Create Project</button>
+                </div>
             </div>
-            <div class="tasks-container" id="tasksContainer">
+            <div style="margin-bottom: 20px;">
+                <input type="text" id="projectSearchInput" placeholder="🔍 Search projects by name, client, or type..." style="width: 100%; padding: 12px 16px; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 8px; background: rgba(255, 255, 255, 0.05); color: #ffffff; font-size: 1rem;" oninput="filterProjects()">
+            </div>
+            <div class="projects-container" id="projectsContainer">
+                <div class="loading">Loading projects...</div>
+            </div>
+        </div>
+
+        <!-- Project Details View -->
+        <div id="projectdetails-view" class="tab-content" style="display: none;">
+            <div class="project-details-header">
+                <button class="back-btn" onclick="closeProjectDetails()" style="background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); color: #fff; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: 600; display: flex; align-items: center; gap: 8px; transition: all 0.2s ease;" onmouseover="this.style.background='rgba(255, 255, 255, 0.15)'" onmouseout="this.style.background='rgba(255, 255, 255, 0.1)'">
+                    ← Back to Projects
+                </button>
+                <div style="display: flex; gap: 10px; margin-top: 20px; flex-wrap: wrap;">
+                    <button class="action-btn" onclick="editProjectFromDetails()" style="background: #007bff;">
+                        ✏️ Edit Project
+                    </button>
+                    <button class="action-btn" onclick="addTaskToCurrentProject()" style="background: #28a745;">
+                        ➕ Add Task
+                    </button>
+                    <button class="action-btn" onclick="deleteCurrentProject()" style="background: #dc3545;">
+                        🗑️ Delete Project
+                    </button>
+                </div>
+            </div>
+
+            <!-- Project Info Card -->
+            <div id="projectInfoCard" style="background: rgba(20, 20, 20, 0.9); border: 1px solid rgba(239, 65, 75, 0.3); border-radius: 16px; padding: 25px; margin: 20px 0;">
+                <!-- Project info will be dynamically inserted here -->
+            </div>
+
+            <!-- Tasks Section -->
+            <div class="tasks-header" style="margin-top: 30px;">
+                <h2 style="color: #ef414b;">Tasks in this Project</h2>
+            </div>
+            <div id="projectTasksContainer" style="display: grid; gap: 15px; margin-top: 20px;">
                 <div class="loading">Loading tasks...</div>
             </div>
         </div>
@@ -2864,6 +3238,79 @@
         </div>
     </div>
 
+    <!-- Create Project Modal -->
+    <div id="createProjectModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">Create New Project</h2>
+                <span class="close" onclick="closeModal('createProjectModal')">&times;</span>
+            </div>
+            <form class="modal-form" id="createProjectForm">
+                <div class="form-group">
+                    <label class="form-label">Project Name *</label>
+                    <input type="text" class="form-input" id="projectName" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Client Name *</label>
+                    <input type="text" class="form-input" id="projectClientName" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Description *</label>
+                    <textarea class="form-textarea" id="projectDescription" required></textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Project Types * (Select all that apply)</label>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 8px;">
+                        <label style="display: flex; align-items: center; gap: 8px; color: #fff; cursor: pointer;">
+                            <input type="checkbox" class="project-type-checkbox" value="social-media" style="width: 18px; height: 18px; cursor: pointer;">
+                            <span>Social Media</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; color: #fff; cursor: pointer;">
+                            <input type="checkbox" class="project-type-checkbox" value="web-development" style="width: 18px; height: 18px; cursor: pointer;">
+                            <span>Web Development</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; color: #fff; cursor: pointer;">
+                            <input type="checkbox" class="project-type-checkbox" value="media-buying" style="width: 18px; height: 18px; cursor: pointer;">
+                            <span>Media Buying</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; color: #fff; cursor: pointer;">
+                            <input type="checkbox" class="project-type-checkbox" value="branding" style="width: 18px; height: 18px; cursor: pointer;">
+                            <span>Branding</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; color: #fff; cursor: pointer;">
+                            <input type="checkbox" class="project-type-checkbox" value="seo" style="width: 18px; height: 18px; cursor: pointer;">
+                            <span>SEO</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; color: #fff; cursor: pointer;">
+                            <input type="checkbox" class="project-type-checkbox" value="content-creation" style="width: 18px; height: 18px; cursor: pointer;">
+                            <span>Content Creation</span>
+                        </label>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Status</label>
+                    <select class="form-select" id="projectStatus">
+                        <option value="active" selected>Active</option>
+                        <option value="on-hold">On Hold</option>
+                        <option value="completed">Completed</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Start Date</label>
+                    <input type="date" class="form-input" id="projectStartDate">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">End Date</label>
+                    <input type="date" class="form-input" id="projectEndDate">
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn-cancel" onclick="closeModal('createProjectModal')">Cancel</button>
+                    <button type="submit" class="btn-submit">Create Project</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- Create Task Modal -->
     <div id="createTaskModal" class="modal">
         <div class="modal-content">
@@ -2873,6 +3320,12 @@
             </div>
             <form class="modal-form" id="createTaskForm">
                 <div class="form-group">
+                    <label class="form-label">Project *</label>
+                    <select class="form-select" id="taskProjectId" required>
+                        <option value="">Select Project</option>
+                    </select>
+                </div>
+                <div class="form-group">
                     <label class="form-label">Task Title *</label>
                     <input type="text" class="form-input" id="taskTitle" required>
                 </div>
@@ -2881,14 +3334,26 @@
                     <textarea class="form-textarea" id="taskDescription" required></textarea>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Project Name</label>
-                    <input type="text" class="form-input" id="taskProject">
+                    <label class="form-label">Department *</label>
+                    <select class="form-select" id="taskDepartment" required>
+                        <option value="">Select Department</option>
+                        <option value="social-media">Social Media</option>
+                        <option value="web-development">Web Development</option>
+                        <option value="media-buying">Media Buying</option>
+                        <option value="branding">Branding</option>
+                        <option value="seo">SEO</option>
+                        <option value="content-creation">Content Creation</option>
+                        <option value="general">General</option>
+                    </select>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Assigned To</label>
-                    <select class="form-select" id="taskAssignedTo">
-                        <option value="">Select Worker</option>
-                    </select>
+                    <label class="form-label">Assigned To (Select Multiple) *</label>
+                    <div id="taskAssignedToContainer" style="max-height: 200px; overflow-y: auto; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 8px; border: 1px solid rgba(255,255,255,0.2);">
+                        <div style="color: #999; padding: 10px;">Loading workers...</div>
+                    </div>
+                    <div style="color: #ffc107; font-size: 0.85rem; margin-top: 5px;">
+                        ✓ Check one or more workers to assign them to this task
+                    </div>
                 </div>
                 <div class="form-group">
                     <label class="form-label">Priority</label>
@@ -2902,6 +3367,16 @@
                 <div class="form-group">
                     <label class="form-label">Due Date</label>
                     <input type="date" class="form-input" id="taskDueDate">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Photo Filename (optional)</label>
+                    <input type="text" class="form-input" id="taskPhoto" placeholder="e.g., design.webp or photo.jpg">
+                    <div style="color: #999; font-size: 0.85rem; margin-top: 5px;">
+                        📁 Place photos in the <strong>photos/</strong> folder. Enter just the filename (e.g., "photo.webp")
+                    </div>
+                    <div id="taskPhotoPreview" style="margin-top: 10px; display: none;">
+                        <img id="taskPhotoPreviewImg" style="max-width: 200px; max-height: 200px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.2);">
+                    </div>
                 </div>
                 <div class="modal-actions">
                     <button type="button" class="btn-cancel" onclick="closeModal('createTaskModal')">Cancel</button>
@@ -2958,6 +3433,80 @@
         </div>
     </div>
 
+    <!-- Edit Project Modal -->
+    <div id="editProjectModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">Edit Project</h2>
+                <span class="close" onclick="closeModal('editProjectModal')">&times;</span>
+            </div>
+            <form class="modal-form" id="editProjectForm">
+                <input type="hidden" id="editProjectId">
+                <div class="form-group">
+                    <label class="form-label">Project Name *</label>
+                    <input type="text" class="form-input" id="editProjectName" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Client Name *</label>
+                    <input type="text" class="form-input" id="editProjectClientName" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Description *</label>
+                    <textarea class="form-textarea" id="editProjectDescription" required></textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Project Types * (Select all that apply)</label>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 8px;">
+                        <label style="display: flex; align-items: center; gap: 8px; color: #fff; cursor: pointer;">
+                            <input type="checkbox" class="edit-project-type-checkbox" value="social-media" style="width: 18px; height: 18px; cursor: pointer;">
+                            <span>Social Media</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; color: #fff; cursor: pointer;">
+                            <input type="checkbox" class="edit-project-type-checkbox" value="web-development" style="width: 18px; height: 18px; cursor: pointer;">
+                            <span>Web Development</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; color: #fff; cursor: pointer;">
+                            <input type="checkbox" class="edit-project-type-checkbox" value="media-buying" style="width: 18px; height: 18px; cursor: pointer;">
+                            <span>Media Buying</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; color: #fff; cursor: pointer;">
+                            <input type="checkbox" class="edit-project-type-checkbox" value="branding" style="width: 18px; height: 18px; cursor: pointer;">
+                            <span>Branding</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; color: #fff; cursor: pointer;">
+                            <input type="checkbox" class="edit-project-type-checkbox" value="seo" style="width: 18px; height: 18px; cursor: pointer;">
+                            <span>SEO</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; color: #fff; cursor: pointer;">
+                            <input type="checkbox" class="edit-project-type-checkbox" value="content-creation" style="width: 18px; height: 18px; cursor: pointer;">
+                            <span>Content Creation</span>
+                        </label>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Status</label>
+                    <select class="form-select" id="editProjectStatus">
+                        <option value="active">Active</option>
+                        <option value="on-hold">On Hold</option>
+                        <option value="completed">Completed</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Start Date</label>
+                    <input type="date" class="form-input" id="editProjectStartDate">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">End Date</label>
+                    <input type="date" class="form-input" id="editProjectEndDate">
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn-cancel" onclick="closeModal('editProjectModal')">Cancel</button>
+                    <button type="submit" class="btn-submit">Update Project</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- Edit Task Modal -->
     <div id="editTaskModal" class="modal">
         <div class="modal-content">
@@ -2968,6 +3517,12 @@
             <form class="modal-form" id="editTaskForm">
                 <input type="hidden" id="editTaskId">
                 <div class="form-group">
+                    <label class="form-label">Project *</label>
+                    <select class="form-select" id="editTaskProjectId" required>
+                        <option value="">Select Project</option>
+                    </select>
+                </div>
+                <div class="form-group">
                     <label class="form-label">Task Title *</label>
                     <input type="text" class="form-input" id="editTaskTitle" required>
                 </div>
@@ -2976,14 +3531,26 @@
                     <textarea class="form-textarea" id="editTaskDescription" required></textarea>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Project Name</label>
-                    <input type="text" class="form-input" id="editTaskProject">
+                    <label class="form-label">Department *</label>
+                    <select class="form-select" id="editTaskDepartment" required>
+                        <option value="">Select Department</option>
+                        <option value="social-media">Social Media</option>
+                        <option value="web-development">Web Development</option>
+                        <option value="media-buying">Media Buying</option>
+                        <option value="branding">Branding</option>
+                        <option value="seo">SEO</option>
+                        <option value="content-creation">Content Creation</option>
+                        <option value="general">General</option>
+                    </select>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Assigned To</label>
-                    <select class="form-select" id="editTaskAssignedTo">
-                        <option value="">Select Worker</option>
-                    </select>
+                    <label class="form-label">Assigned To (Select Multiple) *</label>
+                    <div id="editTaskAssignedToContainer" style="max-height: 200px; overflow-y: auto; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 8px; border: 1px solid rgba(255,255,255,0.2);">
+                        <div style="color: #999; padding: 10px;">Loading workers...</div>
+                    </div>
+                    <div style="color: #ffc107; font-size: 0.85rem; margin-top: 5px;">
+                        ✓ Check one or more workers to assign them to this task
+                    </div>
                 </div>
                 <div class="form-group">
                     <label class="form-label">Status</label>
@@ -3007,6 +3574,16 @@
                     <label class="form-label">Due Date</label>
                     <input type="date" class="form-input" id="editTaskDueDate">
                 </div>
+                <div class="form-group">
+                    <label class="form-label">Photo Filename (optional)</label>
+                    <input type="text" class="form-input" id="editTaskPhoto" placeholder="e.g., design.webp or photo.jpg">
+                    <div style="color: #999; font-size: 0.85rem; margin-top: 5px;">
+                        📁 Place photos in the <strong>photos/</strong> folder. Enter just the filename (e.g., "photo.webp")
+                    </div>
+                    <div id="editTaskPhotoPreview" style="margin-top: 10px; display: none;">
+                        <img id="editTaskPhotoPreviewImg" style="max-width: 200px; max-height: 200px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.2);">
+                    </div>
+                </div>
                 <div class="modal-actions">
                     <button type="button" class="btn-cancel" onclick="closeModal('editTaskModal')">Cancel</button>
                     <button type="submit" class="btn-submit">Update Task</button>
@@ -3018,6 +3595,9 @@
     <script>
         let allSubmissions = [];
         let filteredSubmissions = [];
+        let allProjects = [];
+        let allTasks = [];
+        let allWorkers = [];
         let unsubscribe = null;
 
         // Initialize Firebase real-time listener
@@ -3082,6 +3662,11 @@
 
                 // Initialize today's work time
                 updateTodayWorkTime();
+                
+                // Load workers and projects for dropdowns
+                loadWorkers();
+                loadProjects();
+                
                 console.log('✅ Firebase initialization completed');
 
             } catch (error) {
@@ -3566,9 +4151,7 @@
             }
         });
 
-        // Global variables for workers and tasks
-        let allWorkers = [];
-        let allTasks = [];
+        // Global variables - workers, projects, tasks, and work sessions (already declared above, removing duplicates)
         let allWorkSessions = [];
         let filteredWorkSessions = [];
 
@@ -3593,8 +4176,8 @@
             // Load data for the selected tab
             if (tabName === 'workers') {
                 loadWorkers();
-            } else if (tabName === 'tasks') {
-                loadTasks();
+            } else if (tabName === 'projects') {
+                loadProjects();
             } else if (tabName === 'worksessions') {
                 loadWorkSessions();
             } else if (tabName === 'hr') {
@@ -4052,8 +4635,20 @@
             ).join(' ');
         }
 
-        // Get worker name by ID
+        // Get worker name by ID (supports both single ID and array of IDs)
         function getWorkerName(workerId) {
+            // Handle array of worker IDs (multi-assign)
+            if (Array.isArray(workerId)) {
+                if (workerId.length === 0) return 'Unassigned';
+                const workerNames = workerId.map(id => {
+                    const worker = allWorkers.find(w => w.id === id);
+                    return worker ? `${worker.firstName} ${worker.lastName}` : 'Unknown';
+                }).filter(name => name !== 'Unknown');
+                return workerNames.length > 0 ? workerNames.join(', ') : 'Unassigned';
+            }
+            
+            // Handle single worker ID (backward compatibility)
+            if (!workerId) return 'Unassigned';
             const worker = allWorkers.find(w => w.id === workerId);
             return worker ? `${worker.firstName} ${worker.lastName}` : 'Unassigned';
         }
@@ -4215,12 +4810,6 @@
             }
         }
 
-        // Show create task modal
-        function showCreateTaskModal() {
-            populateWorkerSelect('taskAssignedTo');
-            document.getElementById('createTaskModal').style.display = 'block';
-        }
-
         // Show assign task modal
         function showAssignTaskModal(workerId = null) {
             populateWorkerSelect('assignWorkerId');
@@ -4237,6 +4826,13 @@
             const form = document.getElementById(modalId).querySelector('form');
             if (form) {
                 form.reset();
+            }
+            // Handle project modal specific cleanup - reset checkboxes
+            if (modalId === 'createProjectModal') {
+                document.querySelectorAll('.project-type-checkbox').forEach(cb => cb.checked = false);
+            }
+            if (modalId === 'editProjectModal') {
+                document.querySelectorAll('.edit-project-type-checkbox').forEach(cb => cb.checked = false);
             }
             // Handle payroll modal specific cleanup
             if (modalId === 'payrollReportModal') {
@@ -4256,6 +4852,41 @@
                 option.textContent = `${worker.firstName} ${worker.lastName} (${formatRole(worker.role)})`;
                 select.appendChild(option);
             });
+        }
+
+        // Populate worker checkboxes for multi-select
+        function populateWorkerCheckboxes(containerId, selectedWorkers = []) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+            
+            const approvedWorkers = allWorkers.filter(worker => worker.status === 'approved');
+            
+            if (approvedWorkers.length === 0) {
+                container.innerHTML = '<div style="color: #999; padding: 10px;">No workers available</div>';
+                return;
+            }
+            
+            approvedWorkers.forEach(worker => {
+                const isChecked = Array.isArray(selectedWorkers) ? selectedWorkers.includes(worker.id) : false;
+                const checkboxItem = document.createElement('label');
+                checkboxItem.style.cssText = 'display: flex; align-items: center; gap: 10px; padding: 8px; cursor: pointer; border-radius: 6px; transition: background 0.2s;';
+                checkboxItem.onmouseover = function() { this.style.background = 'rgba(255,255,255,0.05)'; };
+                checkboxItem.onmouseout = function() { this.style.background = 'transparent'; };
+                
+                checkboxItem.innerHTML = `
+                    <input type="checkbox" class="worker-checkbox" value="${worker.id}" ${isChecked ? 'checked' : ''} style="width: 18px; height: 18px; cursor: pointer;">
+                    <span style="color: #fff;">${worker.firstName} ${worker.lastName}</span>
+                    <span style="color: #999; font-size: 0.85rem;">(${formatRole(worker.role)})</span>
+                `;
+                container.appendChild(checkboxItem);
+            });
+        }
+
+        // Get selected workers from checkboxes
+        function getSelectedWorkers(containerId) {
+            const container = document.getElementById(containerId);
+            const checkboxes = container.querySelectorAll('.worker-checkbox:checked');
+            return Array.from(checkboxes).map(cb => cb.value);
         }
 
         // Create task
@@ -4421,7 +5052,10 @@ Task Details:
                 await window.updateDoc(window.doc(window.db, 'tasks', taskId), taskData);
                 showNotification('Task updated successfully!');
                 closeModal('editTaskModal');
+                
+                // Reload all task views
                 loadTasks();
+                loadProjects();
             } catch (error) {
                 console.error('Error updating task:', error);
                 alert('Error updating task. Please try again.');
@@ -4446,19 +5080,832 @@ Task Details:
         document.getElementById('editTaskForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             
+            const assignedWorkers = getSelectedWorkers('editTaskAssignedToContainer');
+            if (assignedWorkers.length === 0) {
+                alert('⚠️ Please select at least one worker to assign this task to.');
+                return;
+            }
+            
             const taskData = {
                 id: document.getElementById('editTaskId').value,
                 title: document.getElementById('editTaskTitle').value,
                 description: document.getElementById('editTaskDescription').value,
-                projectName: document.getElementById('editTaskProject').value,
-                assignedTo: document.getElementById('editTaskAssignedTo').value,
+                projectId: document.getElementById('editTaskProjectId').value,
+                department: document.getElementById('editTaskDepartment').value,
+                assignedTo: assignedWorkers,  // Now an array
                 status: document.getElementById('editTaskStatus').value,
                 priority: document.getElementById('editTaskPriority').value,
-                dueDate: document.getElementById('editTaskDueDate').value
+                dueDate: document.getElementById('editTaskDueDate').value,
+                photo: document.getElementById('editTaskPhoto').value.trim() || null
             };
             
             await updateTask(taskData);
         });
+
+        // ==================== PROJECT MANAGEMENT FUNCTIONS ====================
+
+        // Load projects
+        async function loadProjects() {
+            try {
+                const projectsContainer = document.getElementById('projectsContainer');
+                projectsContainer.innerHTML = '<div class="loading">Loading projects...</div>';
+
+                // Load all projects
+                const projectsQuery = window.query(window.collection(window.db, 'projects'), window.orderBy('createdAt', 'desc'));
+                const projectsSnapshot = await window.getDocs(projectsQuery);
+                
+                allProjects = [];
+                projectsSnapshot.forEach((doc) => {
+                    allProjects.push({
+                        id: doc.id,
+                        ...doc.data()
+                    });
+                });
+
+                // Load all tasks
+                const tasksQuery = window.query(window.collection(window.db, 'tasks'), window.orderBy('createdAt', 'desc'));
+                const tasksSnapshot = await window.getDocs(tasksQuery);
+                
+                allTasks = [];
+                tasksSnapshot.forEach((doc) => {
+                    allTasks.push({
+                        id: doc.id,
+                        ...doc.data()
+                    });
+                });
+
+                renderProjects();
+            } catch (error) {
+                console.error('Error loading projects:', error);
+                document.getElementById('projectsContainer').innerHTML = 
+                    '<div style="color: #ff4757; text-align: center; padding: 20px;">Error loading projects</div>';
+            }
+        }
+
+        // Render projects with nested tasks
+        function renderProjects() {
+            const projectsContainer = document.getElementById('projectsContainer');
+            
+            if (allProjects.length === 0) {
+                projectsContainer.innerHTML = `
+                    <div style="text-align: center; color: #888888; padding: 40px;">
+                        <p>No projects found.</p>
+                        <p>Projects will appear here when created.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            projectsContainer.innerHTML = allProjects.map(project => {
+                const projectTasks = allTasks.filter(task => task.projectId === project.id);
+                const taskCount = projectTasks.length;
+                
+                return `
+                    <div class="project-card">
+                        <div class="project-header" onclick="toggleProjectTasks('${project.id}')">
+                            <div class="project-title-section">
+                                <span class="project-expand-icon" id="expand-icon-${project.id}">▶</span>
+                                <div class="project-title">${project.name}</div>
+                                <span class="task-count-badge">${taskCount} task${taskCount !== 1 ? 's' : ''}</span>
+                            </div>
+                            <div class="project-status ${project.status.replace('-', '')}">${project.status.replace('-', ' ').toUpperCase()}</div>
+                        </div>
+                        <div class="project-details">
+                            <strong>Client:</strong> ${project.clientName || 'N/A'}<br>
+                            <strong>Types:</strong> ${project.projectTypes ? project.projectTypes.map(t => t.replace('-', ' ').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')).join(', ') : 'N/A'}<br>
+                            <strong>Description:</strong> ${project.description}<br>
+                            ${project.startDate ? `<strong>Start Date:</strong> ${new Date(project.startDate).toLocaleDateString()}<br>` : ''}
+                            ${project.endDate ? `<strong>End Date:</strong> ${new Date(project.endDate).toLocaleDateString()}<br>` : ''}
+                            <strong>Created:</strong> ${project.createdAt ? new Date(project.createdAt.toDate()).toLocaleDateString() : 'N/A'}
+                        </div>
+                        <div class="project-actions">
+                            <button class="project-btn btn-view" onclick="event.stopPropagation(); openProjectDetails('${project.id}')" style="background: #6f42c1; color: white;">
+                                👁️ View Details
+                            </button>
+                            <button class="project-btn btn-view" onclick="event.stopPropagation(); editProject('${project.id}')" style="background: #007bff; color: white;">
+                                ✏️ Edit Project
+                            </button>
+                            <button class="project-btn btn-assign" onclick="event.stopPropagation(); showCreateTaskModalForProject('${project.id}')" style="background: #28a745; color: white;">
+                                ➕ Add Task
+                            </button>
+                            <button class="project-btn btn-delete" onclick="event.stopPropagation(); deleteProject('${project.id}')" style="background: #dc3545; color: white;">
+                                🗑️ Delete Project
+                            </button>
+                        </div>
+                        
+                        <div class="project-tasks-section" id="tasks-${project.id}">
+                            <div class="project-tasks-header">
+                                <div class="project-tasks-title">Tasks in this Project</div>
+                            </div>
+                            ${projectTasks.length === 0 ? `
+                                <div style="text-align: center; color: #666; padding: 20px; font-size: 0.9rem;">
+                                    No tasks in this project yet. Click "Add Task" to create one.
+                                </div>
+                            ` : projectTasks.map(task => `
+                                <div class="project-task-item">
+                                    <div class="project-task-header">
+                                        <div class="project-task-title">${task.title}</div>
+                                        <div class="task-status ${task.status.replace('-', '')}">${task.status.replace('-', ' ').toUpperCase()}</div>
+                                    </div>
+                                    <div class="project-task-details">
+                                        <strong>Description:</strong> ${task.description}<br>
+                                        <strong>Department:</strong> ${task.department ? task.department.replace('-', ' ').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') : 'N/A'}<br>
+                                        <strong>Assigned To:</strong> ${getWorkerName(task.assignedTo)}<br>
+                                        <strong>Priority:</strong> ${task.priority}<br>
+                                        ${task.dueDate ? `<strong>Due Date:</strong> ${new Date(task.dueDate.toDate ? task.dueDate.toDate() : task.dueDate).toLocaleDateString()}<br>` : ''}
+                                    </div>
+                                    <div class="project-task-actions">
+                                        <button class="project-task-btn btn-view" onclick="editTask('${task.id}')" style="background: #007bff; color: white;">
+                                            ✏️ Edit
+                                        </button>
+                                        <button class="project-task-btn btn-delete" onclick="deleteTask('${task.id}')" style="background: #dc3545; color: white;">
+                                            🗑️ Delete
+                                        </button>
+                                        ${task.status === 'pending-approval' ? `
+                                            <button class="project-task-btn btn-approve" onclick="approveTask('${task.id}')" style="background: #28a745; color: white;">
+                                                ✅ Approve
+                                            </button>
+                                        ` : ''}
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Toggle project tasks visibility
+        function toggleProjectTasks(projectId) {
+            const tasksSection = document.getElementById(`tasks-${projectId}`);
+            const expandIcon = document.getElementById(`expand-icon-${projectId}`);
+            
+            if (tasksSection.classList.contains('expanded')) {
+                tasksSection.classList.remove('expanded');
+                expandIcon.classList.remove('expanded');
+            } else {
+                tasksSection.classList.add('expanded');
+                expandIcon.classList.add('expanded');
+            }
+        }
+
+        // Show create project modal
+        function showCreateProjectModal() {
+            document.getElementById('createProjectModal').style.display = 'block';
+        }
+
+        // Handle create project form submission
+        document.getElementById('createProjectForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            console.log('📝 Creating project...');
+            
+            // Get selected project types
+            const projectTypes = Array.from(document.querySelectorAll('.project-type-checkbox:checked')).map(cb => cb.value);
+            console.log('Selected project types:', projectTypes);
+            
+            if (projectTypes.length === 0) {
+                alert('Please select at least one project type.');
+                return;
+            }
+            
+            const projectData = {
+                name: document.getElementById('projectName').value,
+                clientName: document.getElementById('projectClientName').value,
+                description: document.getElementById('projectDescription').value,
+                projectTypes: projectTypes,
+                status: document.getElementById('projectStatus').value,
+                startDate: document.getElementById('projectStartDate').value || null,
+                endDate: document.getElementById('projectEndDate').value || null,
+                createdAt: window.serverTimestamp()
+            };
+
+            console.log('Project data:', projectData);
+
+            try {
+                const docRef = await window.addDoc(window.collection(window.db, 'projects'), projectData);
+                console.log('✅ Project created with ID:', docRef.id);
+                showNotification('Project created successfully!');
+                closeModal('createProjectModal');
+                loadProjects();
+            } catch (error) {
+                console.error('❌ Error creating project:', error);
+                console.error('Error details:', error.message, error.code);
+                alert('Error creating project: ' + error.message);
+            }
+        });
+
+        // Edit project
+        async function editProject(projectId) {
+            const project = allProjects.find(p => p.id === projectId);
+            if (!project) return;
+
+            document.getElementById('editProjectId').value = project.id;
+            document.getElementById('editProjectName').value = project.name;
+            document.getElementById('editProjectClientName').value = project.clientName || '';
+            document.getElementById('editProjectDescription').value = project.description;
+            document.getElementById('editProjectStatus').value = project.status;
+            document.getElementById('editProjectStartDate').value = project.startDate || '';
+            document.getElementById('editProjectEndDate').value = project.endDate || '';
+            
+            // Set project types checkboxes
+            document.querySelectorAll('.edit-project-type-checkbox').forEach(cb => {
+                cb.checked = project.projectTypes && project.projectTypes.includes(cb.value);
+            });
+            
+            document.getElementById('editProjectModal').style.display = 'block';
+        }
+
+        // Handle edit project form submission
+        document.getElementById('editProjectForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            // Get selected project types
+            const projectTypes = Array.from(document.querySelectorAll('.edit-project-type-checkbox:checked')).map(cb => cb.value);
+            
+            if (projectTypes.length === 0) {
+                alert('Please select at least one project type.');
+                return;
+            }
+            
+            const projectId = document.getElementById('editProjectId').value;
+            const projectData = {
+                name: document.getElementById('editProjectName').value,
+                clientName: document.getElementById('editProjectClientName').value,
+                description: document.getElementById('editProjectDescription').value,
+                projectTypes: projectTypes,
+                status: document.getElementById('editProjectStatus').value,
+                startDate: document.getElementById('editProjectStartDate').value || null,
+                endDate: document.getElementById('editProjectEndDate').value || null,
+                updatedAt: window.serverTimestamp()
+            };
+
+            try {
+                await window.updateDoc(window.doc(window.db, 'projects', projectId), projectData);
+                showNotification('Project updated successfully!');
+                closeModal('editProjectModal');
+                loadProjects();
+            } catch (error) {
+                console.error('Error updating project:', error);
+                alert('Error updating project. Please try again.');
+            }
+        });
+
+        // Delete project
+        async function deleteProject(projectId) {
+            const projectTasks = allTasks.filter(task => task.projectId === projectId);
+            
+            const confirmMessage = projectTasks.length > 0 
+                ? `This project has ${projectTasks.length} task(s). Deleting the project will also delete all its tasks. Are you sure?`
+                : 'Are you sure you want to delete this project?';
+                
+            if (confirm(confirmMessage)) {
+                try {
+                    // Delete all tasks in the project
+                    for (const task of projectTasks) {
+                        await window.deleteDoc(window.doc(window.db, 'tasks', task.id));
+                    }
+                    
+                    // Delete the project
+                    await window.deleteDoc(window.doc(window.db, 'projects', projectId));
+                    showNotification('Project and its tasks deleted successfully!');
+                    loadProjects();
+                } catch (error) {
+                    console.error('Error deleting project:', error);
+                    alert('Error deleting project. Please try again.');
+                }
+            }
+        }
+
+        // Show create task modal for a specific project
+        function showCreateTaskModalForProject(projectId) {
+            populateProjectSelect('taskProjectId');
+            populateWorkerCheckboxes('taskAssignedToContainer');
+            document.getElementById('taskProjectId').value = projectId;
+            document.getElementById('createTaskModal').style.display = 'block';
+        }
+
+        // Show create task modal (general)
+        function showCreateTaskModal() {
+            populateProjectSelect('taskProjectId');
+            populateWorkerCheckboxes('taskAssignedToContainer');
+            document.getElementById('createTaskModal').style.display = 'block';
+        }
+
+        // Populate project select dropdown
+        function populateProjectSelect(selectId) {
+            const select = document.getElementById(selectId);
+            select.innerHTML = '<option value="">Select Project</option>';
+            
+            allProjects.forEach(project => {
+                const option = document.createElement('option');
+                option.value = project.id;
+                option.textContent = project.name;
+                select.appendChild(option);
+            });
+        }
+
+        // Update the editTask function to populate project select
+        const originalEditTask = editTask;
+        async function editTask(taskId) {
+            const task = allTasks.find(t => t.id === taskId);
+            if (!task) return;
+
+            document.getElementById('editTaskId').value = task.id;
+            document.getElementById('editTaskTitle').value = task.title;
+            document.getElementById('editTaskDescription').value = task.description;
+            document.getElementById('editTaskStatus').value = task.status;
+            document.getElementById('editTaskPriority').value = task.priority;
+            
+            if (task.dueDate) {
+                const dueDate = task.dueDate.toDate ? task.dueDate.toDate() : new Date(task.dueDate);
+                document.getElementById('editTaskDueDate').value = dueDate.toISOString().split('T')[0];
+            } else {
+                document.getElementById('editTaskDueDate').value = '';
+            }
+
+            // Populate project and worker checkboxes
+            populateProjectSelect('editTaskProjectId');
+            const assignedWorkers = Array.isArray(task.assignedTo) ? task.assignedTo : (task.assignedTo ? [task.assignedTo] : []);
+            populateWorkerCheckboxes('editTaskAssignedToContainer', assignedWorkers);
+            
+            document.getElementById('editTaskProjectId').value = task.projectId || '';
+            document.getElementById('editTaskDepartment').value = task.department || '';
+            document.getElementById('editTaskPhoto').value = task.photo || '';
+            
+            // Show photo preview if exists
+            if (task.photo) {
+                const preview = document.getElementById('editTaskPhotoPreview');
+                const img = document.getElementById('editTaskPhotoPreviewImg');
+                img.src = `photos/${task.photo}`;
+                img.onload = function() {
+                    preview.style.display = 'block';
+                };
+                img.onerror = function() {
+                    preview.style.display = 'none';
+                };
+            }
+            
+            document.getElementById('editTaskModal').style.display = 'block';
+        }
+
+        // Photo preview functionality
+        document.getElementById('taskPhoto').addEventListener('input', function(e) {
+            const filename = e.target.value.trim();
+            const preview = document.getElementById('taskPhotoPreview');
+            const img = document.getElementById('taskPhotoPreviewImg');
+            
+            if (filename) {
+                img.src = `photos/${filename}`;
+                img.onerror = function() {
+                    preview.style.display = 'none';
+                    img.src = '';
+                };
+                img.onload = function() {
+                    preview.style.display = 'block';
+                };
+            } else {
+                preview.style.display = 'none';
+                img.src = '';
+            }
+        });
+
+        document.getElementById('editTaskPhoto').addEventListener('input', function(e) {
+            const filename = e.target.value.trim();
+            const preview = document.getElementById('editTaskPhotoPreview');
+            const img = document.getElementById('editTaskPhotoPreviewImg');
+            
+            if (filename) {
+                img.src = `photos/${filename}`;
+                img.onerror = function() {
+                    preview.style.display = 'none';
+                    img.src = '';
+                };
+                img.onload = function() {
+                    preview.style.display = 'block';
+                };
+            } else {
+                preview.style.display = 'none';
+                img.src = '';
+            }
+        });
+
+        // Update the createTask form handler
+        document.getElementById('createTaskForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const assignedWorkers = getSelectedWorkers('taskAssignedToContainer');
+            if (assignedWorkers.length === 0) {
+                alert('⚠️ Please select at least one worker to assign this task to.');
+                return;
+            }
+            
+            const taskData = {
+                projectId: document.getElementById('taskProjectId').value,
+                title: document.getElementById('taskTitle').value,
+                description: document.getElementById('taskDescription').value,
+                department: document.getElementById('taskDepartment').value,
+                assignedTo: assignedWorkers,  // Now an array
+                priority: document.getElementById('taskPriority').value,
+                dueDate: document.getElementById('taskDueDate').value ? new Date(document.getElementById('taskDueDate').value) : null,
+                photo: document.getElementById('taskPhoto').value.trim() || null,
+                status: 'assigned',
+                createdAt: window.serverTimestamp(),
+                assignedAt: window.serverTimestamp()
+            };
+
+            try {
+                await window.addDoc(window.collection(window.db, 'tasks'), taskData);
+                showNotification(`Task created successfully and assigned to ${assignedWorkers.length} worker(s)!`);
+                closeModal('createTaskModal');
+                
+                // Reload projects view
+                loadProjects();
+            } catch (error) {
+                console.error('Error creating task:', error);
+                alert('Error creating task. Please try again.');
+            }
+        });
+
+        // Override deleteTask to refresh projects view
+        const originalDeleteTask = deleteTask;
+        async function deleteTask(taskId) {
+            if (confirm('Are you sure you want to delete this task? This action cannot be undone.')) {
+                try {
+                    await window.deleteDoc(window.doc(window.db, 'tasks', taskId));
+                    showNotification('Task deleted successfully!');
+                    
+                    // Reload projects view
+                    loadProjects();
+                } catch (error) {
+                    console.error('Error deleting task:', error);
+                    alert('Error deleting task. Please try again.');
+                }
+            }
+        }
+
+        // Filter projects by search input
+        function filterProjects() {
+            const searchTerm = document.getElementById('projectSearchInput').value.toLowerCase();
+            
+            if (!searchTerm) {
+                renderProjects();
+                return;
+            }
+            
+            const filtered = allProjects.filter(project => {
+                const nameMatch = project.name.toLowerCase().includes(searchTerm);
+                const clientMatch = (project.clientName || '').toLowerCase().includes(searchTerm);
+                const typeMatch = (project.projectTypes || []).some(type => 
+                    type.toLowerCase().includes(searchTerm) || 
+                    type.replace('-', ' ').toLowerCase().includes(searchTerm)
+                );
+                return nameMatch || clientMatch || typeMatch;
+            });
+            
+            const projectsContainer = document.getElementById('projectsContainer');
+            
+            if (filtered.length === 0) {
+                projectsContainer.innerHTML = `
+                    <div style="text-align: center; color: #888888; padding: 40px;">
+                        <p>No projects found matching "${searchTerm}".</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            // Temporarily set allProjects to filtered for rendering
+            const originalProjects = [...allProjects];
+            allProjects = filtered;
+            renderProjects();
+            allProjects = originalProjects;
+        }
+
+        // Load Tasks Assigned view (Kanban by Department)
+        async function loadTasksAssigned() {
+            try {
+                const kanbanBoard = document.getElementById('kanbanBoard');
+                kanbanBoard.innerHTML = '<div class="loading">Loading tasks...</div>';
+
+                // Load all tasks and projects if not already loaded
+                if (allTasks.length === 0) {
+                    const tasksQuery = window.query(window.collection(window.db, 'tasks'), window.orderBy('createdAt', 'desc'));
+                    const tasksSnapshot = await window.getDocs(tasksQuery);
+                    
+                    allTasks = [];
+                    tasksSnapshot.forEach((doc) => {
+                        allTasks.push({
+                            id: doc.id,
+                            ...doc.data()
+                        });
+                    });
+                }
+
+                if (allProjects.length === 0) {
+                    const projectsQuery = window.query(window.collection(window.db, 'projects'), window.orderBy('createdAt', 'desc'));
+                    const projectsSnapshot = await window.getDocs(projectsQuery);
+                    
+                    allProjects = [];
+                    projectsSnapshot.forEach((doc) => {
+                        allProjects.push({
+                            id: doc.id,
+                            ...doc.data()
+                        });
+                    });
+                }
+
+                renderKanbanBoard();
+            } catch (error) {
+                console.error('Error loading tasks assigned:', error);
+                document.getElementById('kanbanBoard').innerHTML = 
+                    '<div style="color: #ff4757; text-align: center; padding: 20px;">Error loading tasks</div>';
+            }
+        }
+
+        // Render Kanban Board
+        function renderKanbanBoard() {
+            const departments = [
+                { id: 'social-media', name: 'Social Media' },
+                { id: 'web-development', name: 'Web Development' },
+                { id: 'media-buying', name: 'Media Buying' },
+                { id: 'branding', name: 'Branding' },
+                { id: 'seo', name: 'SEO' },
+                { id: 'content-creation', name: 'Content Creation' },
+                { id: 'general', name: 'General' }
+            ];
+
+            const kanbanBoard = document.getElementById('kanbanBoard');
+            
+            kanbanBoard.innerHTML = departments.map(dept => {
+                const deptTasks = allTasks.filter(task => task.department === dept.id);
+                
+                return `
+                    <div class="kanban-column">
+                        <div class="kanban-column-header">
+                            <div style="display: flex; flex-direction: column; gap: 8px; width: 100%;">
+                                <div style="display: flex; justify-content: space-between; align-items: center;">
+                                    <div class="kanban-column-title">${dept.name}</div>
+                                    <div class="kanban-task-count">${deptTasks.length}</div>
+                                </div>
+                                <button onclick="showCreateTaskForDepartment('${dept.id}')" style="width: 100%; padding: 8px; background: rgba(239, 65, 75, 0.2); border: 1px solid #ef414b; border-radius: 6px; color: #ef414b; font-weight: 600; cursor: pointer; transition: all 0.2s ease;" onmouseover="this.style.background='rgba(239, 65, 75, 0.3)'" onmouseout="this.style.background='rgba(239, 65, 75, 0.2)'">
+                                    ➕ Add Task
+                                </button>
+                            </div>
+                        </div>
+                        ${deptTasks.length === 0 ? `
+                            <div style="text-align: center; color: #666; padding: 20px; font-size: 0.9rem;">
+                                No tasks assigned yet
+                            </div>
+                        ` : deptTasks.map(task => {
+                            const project = allProjects.find(p => p.id === task.projectId);
+                            return `
+                                <div class="kanban-task-card" onclick="editTask('${task.id}')">
+                                    <div class="kanban-task-title">${task.title}</div>
+                                    <div class="kanban-task-project">📁 ${project ? project.name : 'No Project'}</div>
+                                    <div class="kanban-task-details">
+                                        ${task.description.substring(0, 100)}${task.description.length > 100 ? '...' : ''}<br>
+                                        <strong>Assigned:</strong> ${getWorkerName(task.assignedTo)}<br>
+                                        ${task.dueDate ? `<strong>Due:</strong> ${new Date(task.dueDate.toDate ? task.dueDate.toDate() : task.dueDate).toLocaleDateString()}` : ''}
+                                    </div>
+                                    <div class="kanban-task-footer">
+                                        <div class="task-status ${task.status.replace('-', '')}">${task.status.replace('-', ' ').toUpperCase()}</div>
+                                        <div class="kanban-task-priority ${task.priority}">${task.priority.toUpperCase()}</div>
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Show create task modal for a specific department (from Kanban board)
+        function showCreateTaskForDepartment(departmentId) {
+            populateProjectSelect('taskProjectId');
+            populateWorkerSelect('taskAssignedTo');
+            document.getElementById('taskDepartment').value = departmentId;
+            document.getElementById('createTaskModal').style.display = 'block';
+        }
+
+        // ==================== PROJECT DETAILS VIEW FUNCTIONS ====================
+
+        let currentProjectId = null;
+
+        // Open project details view
+        function openProjectDetails(projectId) {
+            currentProjectId = projectId;
+            const project = allProjects.find(p => p.id === projectId);
+            if (!project) return;
+
+            // Hide projects tab, show details view
+            document.getElementById('projects-tab').style.display = 'none';
+            document.getElementById('projectdetails-view').style.display = 'block';
+
+            // Populate project info
+            const projectInfoCard = document.getElementById('projectInfoCard');
+            projectInfoCard.innerHTML = `
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
+                    <div>
+                        <h1 style="color: #ef414b; font-size: 2rem; margin-bottom: 10px;">${project.name}</h1>
+                        <div class="project-status ${project.status.replace('-', '')}" style="display: inline-block;">${project.status.replace('-', ' ').toUpperCase()}</div>
+                    </div>
+                    <div style="text-align: right;">
+                        <div style="color: #999; font-size: 0.9rem;">Created ${project.createdAt ? new Date(project.createdAt.toDate()).toLocaleDateString() : 'N/A'}</div>
+                    </div>
+                </div>
+                
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px;">
+                    <div class="project-info-section">
+                        <div class="project-info-label">Client</div>
+                        <div class="project-info-value">${project.clientName || 'N/A'}</div>
+                    </div>
+                    
+                    <div class="project-info-section">
+                        <div class="project-info-label">Project Types</div>
+                        <div class="project-info-value">
+                            ${project.projectTypes ? project.projectTypes.map(t => `
+                                <span style="display: inline-block; background: rgba(239, 65, 75, 0.2); color: #ef414b; padding: 4px 10px; border-radius: 12px; margin: 2px; font-size: 0.85rem;">
+                                    ${t.replace('-', ' ').split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
+                                </span>
+                            `).join('') : 'N/A'}
+                        </div>
+                    </div>
+                    
+                    ${project.startDate ? `
+                        <div class="project-info-section">
+                            <div class="project-info-label">Start Date</div>
+                            <div class="project-info-value">${new Date(project.startDate).toLocaleDateString()}</div>
+                        </div>
+                    ` : ''}
+                    
+                    ${project.endDate ? `
+                        <div class="project-info-section">
+                            <div class="project-info-label">End Date</div>
+                            <div class="project-info-value">${new Date(project.endDate).toLocaleDateString()}</div>
+                        </div>
+                    ` : ''}
+                </div>
+                
+                <div class="project-info-section" style="margin-top: 20px;">
+                    <div class="project-info-label">Description</div>
+                    <div class="project-info-value">${project.description}</div>
+                </div>
+            `;
+
+            // Populate tasks
+            renderProjectTasks(projectId);
+        }
+
+        // Render tasks for the current project
+        function renderProjectTasks(projectId) {
+            const projectTasks = allTasks.filter(task => task.projectId === projectId);
+            const container = document.getElementById('projectTasksContainer');
+
+            if (projectTasks.length === 0) {
+                container.innerHTML = `
+                    <div style="text-align: center; color: #888888; padding: 40px; background: rgba(0, 0, 0, 0.3); border-radius: 12px;">
+                        <p style="font-size: 1.2rem; margin-bottom: 10px;">No tasks in this project yet</p>
+                        <p style="color: #666;">Click "Add Task" to create your first task</p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = projectTasks.map(task => `
+                <div class="project-task-card-detail">
+                    <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 15px;">
+                        <div>
+                            <h3 style="color: #ffffff; font-size: 1.2rem; margin-bottom: 8px;">${task.title}</h3>
+                            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                                <span class="task-status ${task.status.replace('-', '')}">${task.status.replace('-', ' ').toUpperCase()}</span>
+                                <span class="kanban-task-priority ${task.priority}">${task.priority.toUpperCase()}</span>
+                                ${task.department ? `<span style="background: rgba(0, 123, 255, 0.2); color: #007bff; padding: 4px 10px; border-radius: 12px; font-size: 0.75rem; font-weight: 600;">${task.department.replace('-', ' ').toUpperCase()}</span>` : ''}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div style="color: #cccccc; margin-bottom: 15px; line-height: 1.6;">
+                        ${task.description}
+                    </div>
+                    
+                    ${task.photo ? `
+                        <div style="margin-bottom: 15px;">
+                            <img src="photos/${task.photo}" alt="Task photo" style="max-width: 100%; max-height: 300px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.2);" onerror="this.style.display='none'">
+                        </div>
+                    ` : ''}
+                    
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 15px; padding-top: 15px; border-top: 1px solid rgba(255, 255, 255, 0.1);">
+                        <div>
+                            <div style="color: #ef414b; font-size: 0.85rem; font-weight: 600; margin-bottom: 5px;">Assigned To</div>
+                            <div style="color: #fff;">${getWorkerName(task.assignedTo)}</div>
+                        </div>
+                        ${task.dueDate ? `
+                            <div>
+                                <div style="color: #ef414b; font-size: 0.85rem; font-weight: 600; margin-bottom: 5px;">Due Date</div>
+                                <div style="color: #fff;">${new Date(task.dueDate.toDate ? task.dueDate.toDate() : task.dueDate).toLocaleDateString()}</div>
+                            </div>
+                        ` : ''}
+                        <div>
+                            <div style="color: #ef414b; font-size: 0.85rem; font-weight: 600; margin-bottom: 5px;">Created</div>
+                            <div style="color: #fff;">${task.createdAt ? new Date(task.createdAt.toDate()).toLocaleDateString() : 'N/A'}</div>
+                        </div>
+                    </div>
+                    
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <button onclick="editTask('${task.id}')" style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; transition: all 0.2s ease;" onmouseover="this.style.background='#0056b3'" onmouseout="this.style.background='#007bff'">
+                            ✏️ Edit
+                        </button>
+                        <button onclick="deleteTaskFromDetails('${task.id}')" style="padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; transition: all 0.2s ease;" onmouseover="this.style.background='#a71d2a'" onmouseout="this.style.background='#dc3545'">
+                            🗑️ Delete
+                        </button>
+                        ${task.status === 'pending-approval' ? `
+                            <button onclick="approveTaskFromDetails('${task.id}')" style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; transition: all 0.2s ease;" onmouseover="this.style.background='#1e7e34'" onmouseout="this.style.background='#28a745'">
+                                ✅ Approve
+                            </button>
+                        ` : ''}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Close project details and return to projects list
+        function closeProjectDetails() {
+            document.getElementById('projectdetails-view').style.display = 'none';
+            document.getElementById('projects-tab').style.display = 'block';
+            currentProjectId = null;
+        }
+
+        // Edit project from details view
+        function editProjectFromDetails() {
+            if (currentProjectId) {
+                editProject(currentProjectId);
+            }
+        }
+
+        // Add task to current project
+        function addTaskToCurrentProject() {
+            if (currentProjectId) {
+                showCreateTaskModalForProject(currentProjectId);
+            }
+        }
+
+        // Delete current project
+        async function deleteCurrentProject() {
+            if (currentProjectId) {
+                await deleteProject(currentProjectId);
+                closeProjectDetails();
+            }
+        }
+
+        // Delete task from details view
+        async function deleteTaskFromDetails(taskId) {
+            if (confirm('Are you sure you want to delete this task?')) {
+                try {
+                    await window.deleteDoc(window.doc(window.db, 'tasks', taskId));
+                    showNotification('Task deleted successfully!');
+                    
+                    // Reload tasks in current view
+                    const tasksQuery = window.query(window.collection(window.db, 'tasks'));
+                    const tasksSnapshot = await window.getDocs(tasksQuery);
+                    allTasks = [];
+                    tasksSnapshot.forEach((doc) => {
+                        allTasks.push({ id: doc.id, ...doc.data() });
+                    });
+                    
+                    renderProjectTasks(currentProjectId);
+                } catch (error) {
+                    console.error('Error deleting task:', error);
+                    alert('Error deleting task. Please try again.');
+                }
+            }
+        }
+
+        // Approve task from details view
+        async function approveTaskFromDetails(taskId) {
+            try {
+                await window.updateDoc(window.doc(window.db, 'tasks', taskId), {
+                    status: 'completed'
+                });
+                showNotification('Task approved successfully!');
+                
+                // Reload tasks
+                const tasksQuery = window.query(window.collection(window.db, 'tasks'));
+                const tasksSnapshot = await window.getDocs(tasksQuery);
+                allTasks = [];
+                tasksSnapshot.forEach((doc) => {
+                    allTasks.push({ id: doc.id, ...doc.data() });
+                });
+                
+                renderProjectTasks(currentProjectId);
+            } catch (error) {
+                console.error('Error approving task:', error);
+                alert('Error approving task. Please try again.');
+            }
+        }
+
+        // ==================== END PROJECT DETAILS VIEW FUNCTIONS ====================
+
+        // ==================== END PROJECT MANAGEMENT FUNCTIONS ====================
 
         // Load work sessions
         async function loadWorkSessions() {
