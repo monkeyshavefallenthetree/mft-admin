@@ -1,0 +1,62 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    color-scheme: dark;
+    --mft-bg: #000000;
+    --mft-surface: #0d0d0d;
+    --mft-border: #222222;
+    --mft-primary: #FF5500;
+    --mft-muted: #555555;
+    --mft-text: #ffffff;
+    --font-oswald: "Oswald", sans-serif;
+    --font-mono: "IBM Plex Mono", monospace;
+  }
+
+  html {
+    background: var(--mft-bg);
+    color: var(--mft-text);
+  }
+
+  body {
+    background: var(--mft-bg);
+    color: var(--mft-text);
+    font-family: var(--font-mono);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: var(--mft-bg); }
+  ::-webkit-scrollbar-thumb { background: var(--mft-border); }
+  ::-webkit-scrollbar-thumb:hover { background: var(--mft-primary); }
+}
+
+@layer utilities {
+  .font-oswald { font-family: var(--font-oswald); }
+
+  .brutal-card {
+    @apply border border-[var(--mft-border)] bg-[var(--mft-surface)] shadow-[4px_4px_0px_0px_#222222];
+  }
+
+  .brutal-btn {
+    @apply border border-[var(--mft-primary)] bg-[var(--mft-primary)] px-4 py-2 text-xs font-bold uppercase tracking-widest text-black transition-colors hover:bg-white hover:border-white hover:text-black;
+  }
+
+  .brutal-btn-outline {
+    @apply border border-[var(--mft-border)] bg-transparent px-4 py-2 text-xs font-bold uppercase tracking-widest text-white transition-colors hover:border-[var(--mft-primary)] hover:text-[var(--mft-primary)];
+  }
+
+  .brutal-input {
+    @apply w-full border border-[var(--mft-border)] bg-[var(--mft-bg)] px-3 py-2 text-sm text-white placeholder:text-[var(--mft-muted)] focus:border-[var(--mft-primary)] focus:outline-none;
+  }
+
+  .brutal-badge {
+    @apply border border-[var(--mft-border)] px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest;
+  }
+}
+

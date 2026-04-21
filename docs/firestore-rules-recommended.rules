@@ -1,0 +1,132 @@
+// Recommended Firestore security rules for MFT admin + worker apps
+// -----------------------------------------------------------------
+// Deploy via Firebase Console → Firestore → Rules (or `firebase deploy` if you add firebase.json).
+//
+// Admin detection — pick ONE (or use both):
+//   A) Firebase Console → Authentication → user → Custom claims: {"admin": true}
+//   B) Add each dashboard sign-in email to ADMIN_EMAILS below (same addresses as ADMIN_PUSH_EMAILS in .env).
+// If neither is done, isAdmin() is always false → "Missing or insufficient permissions" on tasks/projects/workers.
+//
+// Mobile background notifications: workers save `expoPushToken` on their own `/workers/{uid}` doc. The admin
+// dashboard reads those tokens (needs read on workers) and calls `/api/expo-push` to reach Expo’s push service.
+//
+// This file is documentation-only unless you wire it into your Firebase project.
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Dashboard admins: custom claim admin==true OR email in list (replace with your Firebase Auth emails).
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.get('admin', false) == true
+        || (
+          request.auth.token.email != null
+          && request.auth.token.email in [
+            "admin@mft.com"
+          ]
+        )
+      );
+    }
+
+    // --- Admin-managed collections (tighten to isAdmin() for production) ---
+    match /submissions/{id} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // Workers: signed-in read allows task assignee names and admin to read expoPushToken for mobile push.
+    // Mobile login updates lastLogin + currentLoginTime + isOnline (see mft-monkeys-mobile src/app/index.tsx).
+    match /workers/{workerId} {
+      allow read: if isSignedIn();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (
+        isSignedIn()
+        && request.auth.uid == workerId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'expoPushToken',
+          'expectedSalary',
+          'lastLogout',
+          'isOnline',
+          'lastLogin',
+          'currentLoginTime',
+        ])
+      );
+    }
+
+    match /tasks/{id} {
+      allow read: if isSignedIn();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (
+        isSignedIn()
+        && (
+          // assignedTo is usually an array of worker uids; support legacy string too
+          (resource.data.assignedTo is list && request.auth.uid in resource.data.assignedTo)
+          || (resource.data.assignedTo is string && request.auth.uid == resource.data.assignedTo)
+        )
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status',
+          'startedAt',
+          'submittedForApprovalAt',
+        ])
+      );
+
+      match /messages/{msgId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn();
+        allow update, delete: if isAdmin();
+      }
+    }
+
+    match /projects/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /workSessions/{id} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn();
+      allow delete: if isAdmin();
+    }
+
+    match /exceptionRequests/{id} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update, delete: if isAdmin();
+    }
+
+    match /alerts/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+      // Workers can mark their own alerts as read
+      allow update: if isSignedIn() && request.auth.uid in resource.data.recipients;
+    }
+
+    match /penalties/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Chat Notifications — created when a message is sent in task chat
+    // Workers receive notifications targeted by recipientUid
+    // Admin receives notifications targeted by recipientRole == "admin"
+    match /chatNotifications/{notifId} {
+      allow create: if isSignedIn();
+      allow read: if isAdmin() ||
+        (isSignedIn() && resource.data.recipientUid == request.auth.uid) ||
+        (isSignedIn() && resource.data.recipientRole == "admin");
+      allow update: if isAdmin() ||
+        (isSignedIn() && resource.data.recipientUid == request.auth.uid) ||
+        (isSignedIn() && resource.data.recipientRole == "admin");
+      allow delete: if isAdmin();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
