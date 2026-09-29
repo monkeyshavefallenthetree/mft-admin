@@ -104,12 +104,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-screen bg-[var(--mft-bg)]">
+      <div className="flex items-center justify-center h-screen bg-white">
         <div className="flex flex-col items-center gap-4">
-          <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-[var(--mft-muted)] animate-pulse">
+          <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-zinc-500 animate-pulse">
             INITIALIZING TERMINAL...
           </p>
-          <div className="w-48 h-px bg-[var(--mft-border)]" />
+          <div className="w-48 h-px bg-zinc-300" />
         </div>
       </div>
     );
@@ -123,24 +123,24 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   };
 
   return (
-    <div className="min-h-screen bg-[var(--mft-bg)] text-white flex">
+    <div className="min-h-screen bg-white text-zinc-950 flex">
       {/* Mobile overlay */}
       {sidebarOpen && (
-        <div className="fixed inset-0 bg-black/80 z-30 lg:hidden" onClick={() => setSidebarOpen(false)} />
+        <div className="fixed inset-0 bg-black/50 z-30 lg:hidden" onClick={() => setSidebarOpen(false)} />
       )}
 
       {/* Sidebar */}
-      <aside className={`fixed lg:sticky top-0 left-0 z-40 h-screen w-64 bg-[var(--mft-bg)] border-r border-[var(--mft-border)] flex flex-col transition-transform duration-150 ${sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}>
+      <aside className={`fixed lg:sticky top-0 left-0 z-40 h-screen w-64 bg-white border-r border-zinc-200 flex flex-col transition-transform duration-150 ${sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}>
 
         {/* Brand */}
-        <div className="p-6 border-b border-[var(--mft-border)]">
-          <p className="text-[9px] font-bold uppercase tracking-[0.3em] text-[var(--mft-muted)] mb-1">
+        <div className="p-6 border-b border-zinc-200">
+          <p className="text-[9px] font-bold uppercase tracking-[0.3em] text-zinc-500 mb-1">
             {"SYS.ADMIN //"}
           </p>
-          <h1 className="text-2xl font-oswald font-bold text-[var(--mft-primary)] uppercase tracking-widest">
+          <h1 className="text-2xl font-oswald font-bold text-red-600 uppercase tracking-widest">
             MFT
           </h1>
-          <p className="mt-1 text-[10px] uppercase tracking-widest text-[var(--mft-muted)] truncate">
+          <p className="mt-1 text-[10px] uppercase tracking-widest text-zinc-500 truncate">
             {user?.email ?? "—"}
           </p>
         </div>
@@ -163,8 +163,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 onClick={() => setSidebarOpen(false)}
                 className={`flex items-center gap-3 px-4 py-3 text-xs font-bold uppercase tracking-widest transition-colors border-l-2 ${
                   isActive
-                    ? "border-[var(--mft-primary)] bg-[var(--mft-primary)]/10 text-[var(--mft-primary)]"
-                    : "border-transparent text-[var(--mft-muted)] hover:border-[var(--mft-border)] hover:text-white"
+                    ? "border-red-600 bg-red-50 text-red-600"
+                    : "border-transparent text-zinc-600 hover:border-zinc-300 hover:text-zinc-950 hover:bg-zinc-50"
                 }`}
               >
                 <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -172,7 +172,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 </svg>
                 {item.label}
                 {item.label === "Projects" && unreadChatCount > 0 && (
-                  <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-cyan-500 text-[10px] font-bold text-black px-1 animate-pulse">
+                  <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 text-[10px] font-bold text-white px-1 animate-pulse">
                     {unreadChatCount > 9 ? "9+" : unreadChatCount}
                   </span>
                 )}
@@ -187,7 +187,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         </nav>
 
         {/* Logout */}
-        <div className="p-4 border-t border-[var(--mft-border)]">
+        <div className="p-4 border-t border-zinc-200">
           <button
             onClick={() => void handleLogout()}
             className="brutal-btn-outline flex items-center gap-3 w-full px-4 py-3"
@@ -201,15 +201,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       </aside>
 
       {/* Main content */}
-      <div className="flex-1 flex flex-col min-h-screen">
+      <div className="flex-1 flex flex-col min-h-screen bg-zinc-50/50">
         {/* Mobile header */}
-        <header className="lg:hidden sticky top-0 z-20 bg-[var(--mft-bg)] border-b border-[var(--mft-border)] px-4 py-3 flex items-center justify-between">
-          <button onClick={() => setSidebarOpen(true)} className="text-white p-1">
+        <header className="lg:hidden sticky top-0 z-20 bg-white border-b border-zinc-200 px-4 py-3 flex items-center justify-between">
+          <button onClick={() => setSidebarOpen(true)} className="text-zinc-900 p-1">
             <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           </button>
-          <h1 className="text-lg font-oswald font-bold text-[var(--mft-primary)] uppercase tracking-widest">MFT ADMIN</h1>
+          <h1 className="text-lg font-oswald font-bold text-red-600 uppercase tracking-widest">MFT ADMIN</h1>
           <div className="w-6" />
         </header>
 

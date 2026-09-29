@@ -27,25 +27,25 @@ export default function AdminLoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[var(--mft-bg)] flex items-center justify-center p-4">
+    <div className="min-h-screen bg-zinc-50 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
 
         {/* Header */}
-        <div className="mb-10">
-          <p className="text-[10px] font-bold uppercase tracking-[0.4em] text-[var(--mft-muted)] mb-2">
+        <div className="mb-10 text-center">
+          <p className="text-[10px] font-bold uppercase tracking-[0.4em] text-zinc-500 mb-2">
             {"// ADMIN TERMINAL ACCESS"}
           </p>
-          <h1 className="text-5xl font-oswald font-bold text-white uppercase tracking-widest">
-            MFT <span className="text-[var(--mft-primary)]">ADMIN</span>
+          <h1 className="text-5xl font-oswald font-bold text-zinc-950 uppercase tracking-widest">
+            MFT <span className="text-red-600">ADMIN</span>
           </h1>
-          <div className="mt-4 h-px w-full bg-[var(--mft-border)]" />
+          <div className="mt-4 h-px w-full bg-zinc-200" />
         </div>
 
         {/* Form */}
-        <form onSubmit={(e) => void handleSubmit(e)} className="border border-[var(--mft-border)] bg-[var(--mft-surface)] p-8 space-y-6 shadow-[4px_4px_0px_0px_var(--mft-primary)]">
+        <form onSubmit={(e) => void handleSubmit(e)} className="border border-zinc-200 bg-white p-8 space-y-6 shadow-[4px_4px_0px_0px_#09090b]">
 
           <div>
-            <label className="block text-[10px] font-bold uppercase tracking-widest text-[var(--mft-muted)] mb-2">
+            <label className="block text-[10px] font-bold uppercase tracking-widest text-zinc-700 mb-2">
               Operator ID (Email)
             </label>
             <input
@@ -59,7 +59,7 @@ export default function AdminLoginPage() {
           </div>
 
           <div>
-            <label className="block text-[10px] font-bold uppercase tracking-widest text-[var(--mft-muted)] mb-2">
+            <label className="block text-[10px] font-bold uppercase tracking-widest text-zinc-700 mb-2">
               Auth Key (Password)
             </label>
             <input
@@ -73,7 +73,7 @@ export default function AdminLoginPage() {
           </div>
 
           {error && (
-            <div className="border border-red-500 bg-red-950 px-4 py-3 text-red-300 text-xs font-bold uppercase tracking-widest">
+            <div className="border border-red-200 bg-red-50 px-4 py-3 text-red-700 text-xs font-bold uppercase tracking-widest">
               [ERR] {error}
             </div>
           )}
@@ -87,7 +87,7 @@ export default function AdminLoginPage() {
           </button>
         </form>
 
-        <p className="mt-6 text-center text-[9px] uppercase tracking-widest text-[var(--mft-muted)]">
+        <p className="mt-6 text-center text-[9px] uppercase tracking-widest text-zinc-500">
           MFT OPERATIONS — RESTRICTED ACCESS
         </p>
       </div>

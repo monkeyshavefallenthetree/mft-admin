@@ -72,21 +72,21 @@ export default function AdminHeaderStats() {
   ];
 
   return (
-    <div className="mb-6 border border-[var(--mft-border)] bg-[var(--mft-surface)] flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between px-4 py-4 md:px-6">
+    <div className="mb-6 border border-zinc-200 bg-white shadow-[2px_2px_0px_0px_#09090b] flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between px-4 py-4 md:px-6">
       {/* Stats grid */}
-      <div className="grid grid-cols-3 gap-px bg-[var(--mft-border)] sm:grid-cols-5 border border-[var(--mft-border)]">
+      <div className="grid grid-cols-3 gap-px bg-zinc-200 sm:grid-cols-5 border border-zinc-200">
         {items.map((s) => (
-          <div key={s.label} className="bg-[var(--mft-bg)] px-4 py-3 text-center hover:bg-[var(--mft-surface)] transition-colors">
-            <div className="text-2xl font-oswald font-bold text-[var(--mft-primary)] tabular-nums">{s.value}</div>
-            <div className="text-[9px] font-bold uppercase tracking-widest text-[var(--mft-muted)] mt-0.5">{s.label}</div>
+          <div key={s.label} className="bg-white px-4 py-3 text-center hover:bg-zinc-50 transition-colors">
+            <div className="text-2xl font-oswald font-bold text-zinc-950 tabular-nums">{s.value}</div>
+            <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-500 mt-0.5">{s.label}</div>
           </div>
         ))}
       </div>
 
       {/* Actions */}
       <div className="flex flex-wrap items-center gap-3 justify-center lg:justify-end">
-        <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-[#00FF66]">
-          <span className="h-1.5 w-1.5 bg-[#00FF66] animate-pulse" aria-hidden />
+        <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1">
+          <span className="h-2 w-2 rounded-full bg-emerald-600 animate-pulse" aria-hidden />
           LIVE
         </div>
         <button

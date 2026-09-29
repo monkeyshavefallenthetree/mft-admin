@@ -22,6 +22,7 @@ import {
   type ChatNotification,
 } from "@/lib/chatNotifications";
 import { getAuth, onAuthStateChanged } from "firebase/auth";
+import { DEPARTMENTS } from "@/lib/admin/constants";
 
 interface Task {
   id: string;
@@ -35,6 +36,10 @@ interface Task {
   dueDate?: { toDate: () => Date } | null;
   createdAt?: { toDate: () => Date } | null;
   rejectionReason?: string;
+  department?: string;
+  photo?: string | null;
+  startedAt?: { toDate: () => Date } | null;
+  submittedForApprovalAt?: { toDate: () => Date } | null;
 }
 
 interface ProjectRow {
@@ -51,17 +56,17 @@ interface Worker {
 }
 
 const STATUS_COLORS: Record<string, string> = {
-  assigned: "bg-blue-500/20 text-blue-400 border-blue-500/30",
-  "in-progress": "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
-  "pending-approval": "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
-  completed: "bg-green-500/20 text-green-400 border-green-500/30",
+  assigned: "bg-blue-50 text-blue-700 border-blue-300 font-bold",
+  "in-progress": "bg-amber-50 text-amber-800 border-amber-300 font-bold",
+  "pending-approval": "bg-amber-50 text-amber-800 border-amber-300 font-bold",
+  completed: "bg-emerald-50 text-emerald-700 border-emerald-300 font-bold",
 };
 
 const PRIORITY_COLORS: Record<string, string> = {
-  low: "text-zinc-400",
-  medium: "text-blue-400",
-  high: "text-orange-400",
-  urgent: "text-red-400",
+  low: "text-zinc-600 font-bold",
+  medium: "text-blue-700 font-bold",
+  high: "text-orange-700 font-bold",
+  urgent: "text-red-700 font-bold",
 };
 
 function formatRole(role: string) {
@@ -123,10 +128,12 @@ export default function AdminTasksPage() {
     description: "",
     projectId: "",
     projectName: "",
+    department: "general",
     assignedWorkerIds: [] as string[],
     priority: "medium",
     status: "assigned",
     dueDate: "",
+    photo: "",
     notificationMessage: "",
   });
 
@@ -259,10 +266,12 @@ export default function AdminTasksPage() {
       description: "",
       projectId: "",
       projectName: "",
+      department: "general",
       assignedWorkerIds: [],
       priority: "medium",
       status: "assigned",
       dueDate: "",
+      photo: "",
       notificationMessage: "",
     });
     setModalMode("create");
@@ -278,10 +287,12 @@ export default function AdminTasksPage() {
       description: task.description,
       projectId: task.projectId || "",
       projectName: task.projectName || (task.projectId ? projectById.get(task.projectId) || "" : ""),
+      department: task.department || "general",
       assignedWorkerIds: assignedWorkerIds(task.assignedTo),
       priority: task.priority,
       status: task.status,
       dueDate: dueDateStr,
+      photo: task.photo || "",
       notificationMessage: "",
     });
     setEditId(task.id);
@@ -313,6 +324,8 @@ export default function AdminTasksPage() {
         title: form.title,
         description: form.description,
         projectName: projName || "",
+        department: form.department || "general",
+        photo: form.photo || null,
         assignedTo,
         priority: form.priority,
         status: "assigned",
@@ -353,6 +366,8 @@ export default function AdminTasksPage() {
         title: form.title,
         description: form.description,
         projectName: projName || "",
+        department: form.department || "general",
+        photo: form.photo || null,
         assignedTo,
         priority: form.priority,
         status: form.status,
@@ -400,12 +415,77 @@ export default function AdminTasksPage() {
   };
 
   const approveTask = async (id: string) => {
-    await updateDoc(doc(db, "tasks", id), { status: "completed", approvedAt: serverTimestamp(), approvedBy: "admin" });
+    const task = tasks.find((t) => t.id === id);
+    await updateDoc(doc(db, "tasks", id), {
+      status: "completed",
+      approvedAt: serverTimestamp(),
+      approvedBy: "admin",
+      updatedAt: serverTimestamp(),
+    });
+    if (task) {
+      const ids = assignedWorkerIds(task.assignedTo);
+      for (const workerId of ids) {
+        await addDoc(collection(db, "alerts"), {
+          recipients: [workerId],
+          title: "Task Approved ✅",
+          message: `Your task "${task.title}" has been approved!`,
+          type: "task",
+          priority: "medium",
+          isRead: false,
+          createdAt: serverTimestamp(),
+          sentAt: serverTimestamp(),
+          sentBy: "Admin",
+        });
+      }
+      if (ids.length > 0) {
+        void sendExpoPushToWorkers(db, {
+          recipientUids: ids,
+          title: "Task Approved ✅",
+          body: `Your task "${task.title}" has been approved!`,
+          taskId: task.id,
+          taskTitle: task.title,
+        }).catch(() => {});
+      }
+    }
   };
 
   const rejectTask = async (id: string) => {
-    const reason = prompt("Reason for rejection (optional):") || "No reason provided";
-    await updateDoc(doc(db, "tasks", id), { status: "in-progress", rejectedAt: serverTimestamp(), rejectedBy: "admin", rejectionReason: reason });
+    const reason = prompt("Reason for rejection (optional):");
+    if (reason === null) return; // cancelled
+    const feedback = reason.trim() || "No reason provided";
+    const task = tasks.find((t) => t.id === id);
+    await updateDoc(doc(db, "tasks", id), {
+      status: "in-progress",
+      rejectedAt: serverTimestamp(),
+      rejectedBy: "admin",
+      rejectionReason: feedback,
+      updatedAt: serverTimestamp(),
+    });
+    if (task) {
+      const ids = assignedWorkerIds(task.assignedTo);
+      for (const workerId of ids) {
+        await addDoc(collection(db, "alerts"), {
+          recipients: [workerId],
+          title: "Task Needs Revision ⚠️",
+          message: `Task "${task.title}" rejected: ${feedback}`,
+          type: "task",
+          priority: "high",
+          isRead: false,
+          createdAt: serverTimestamp(),
+          sentAt: serverTimestamp(),
+          sentBy: "Admin",
+        });
+      }
+      if (ids.length > 0) {
+        void sendExpoPushToWorkers(db, {
+          recipientUids: ids,
+          title: "Task Needs Revision ⚠️",
+          body: `Task "${task.title}" rejected: ${feedback}`,
+          taskId: task.id,
+          taskTitle: task.title,
+        }).catch(() => {});
+      }
+    }
   };
 
   if (loading) {
@@ -420,9 +500,9 @@ export default function AdminTasksPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-4">
-          <h2 className="text-2xl font-bold text-red-400">Task Management</h2>
+          <h2 className="text-3xl font-oswald font-bold text-zinc-950 uppercase tracking-wider">Task Management</h2>
           {chatNotifications.length > 0 && (
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-cyan-500/20 border border-cyan-500/40 rounded-full text-cyan-400 text-xs font-semibold animate-pulse">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-red-100 border border-red-300 rounded-full text-red-700 text-xs font-bold animate-pulse">
               <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path d="M18 10c0 3.866-3.582 7-8 7a8.841 8.841 0 01-4.083-.98L2 17l1.338-3.123C2.493 12.767 2 11.434 2 10c0-3.866 3.582-7 8-7s8 3.134 8 7z" /></svg>
               {chatNotifications.length} new {chatNotifications.length === 1 ? "message" : "messages"}
             </span>
@@ -430,7 +510,7 @@ export default function AdminTasksPage() {
         </div>
         <div className="flex items-center gap-3">
           <p className="text-xs text-zinc-500 hidden sm:block">Live updates</p>
-          <button onClick={openCreate} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-semibold rounded-lg transition-colors">
+          <button onClick={openCreate} className="brutal-btn px-4 py-2">
             + Create Task
           </button>
         </div>
@@ -439,14 +519,14 @@ export default function AdminTasksPage() {
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
         {[
-          { label: "Total", value: tasks.length, color: "text-red-400" },
-          { label: "Assigned", value: tasks.filter((t) => t.status === "assigned").length, color: "text-blue-400" },
-          { label: "In Progress", value: tasks.filter((t) => t.status === "in-progress").length, color: "text-yellow-400" },
-          { label: "Completed", value: tasks.filter((t) => t.status === "completed").length, color: "text-green-400" },
-        { label: "Pending approval", value: tasks.filter((t) => t.status === "pending-approval").length, color: "text-amber-400" },
+          { label: "Total", value: tasks.length, color: "text-zinc-950" },
+          { label: "Assigned", value: tasks.filter((t) => t.status === "assigned").length, color: "text-blue-700" },
+          { label: "In Progress", value: tasks.filter((t) => t.status === "in-progress").length, color: "text-amber-700" },
+          { label: "Completed", value: tasks.filter((t) => t.status === "completed").length, color: "text-emerald-700" },
+          { label: "Pending approval", value: tasks.filter((t) => t.status === "pending-approval").length, color: "text-amber-700" },
         ].map((s) => (
-          <div key={s.label} className="bg-[#111] border border-red-600/20 rounded-xl p-5 text-center">
-            <div className={`text-2xl font-bold ${s.color}`}>{s.value}</div>
+          <div key={s.label} className="bg-white border border-zinc-200 shadow-[3px_3px_0px_0px_#09090b] rounded-lg p-5 text-center">
+            <div className={`text-2xl font-bold font-oswald ${s.color}`}>{s.value}</div>
             <div className="text-xs text-zinc-500 uppercase tracking-wider mt-1">{s.label}</div>
           </div>
         ))}
@@ -454,59 +534,74 @@ export default function AdminTasksPage() {
 
       {/* Tasks List */}
       {tasks.length === 0 ? (
-        <div className="text-center py-20 text-zinc-600">
-          <p className="text-lg font-medium">No tasks found</p>
+        <div className="text-center py-20 text-zinc-500 bg-white border border-zinc-200 rounded-lg">
+          <p className="text-lg font-bold text-zinc-900">No tasks found</p>
           <p className="text-sm mt-1">Create your first task to get started</p>
         </div>
       ) : (
         <div className="space-y-4">
           {tasks.map((task) => (
-            <div key={task.id} className="bg-[#111] border border-red-600/20 rounded-xl p-6 hover:border-red-600/40 transition-colors">
+            <div key={task.id} className="bg-white border border-zinc-200 shadow-[3px_3px_0px_0px_#09090b] rounded-lg p-6 hover:border-zinc-900 transition-colors">
               <div className="flex flex-col sm:flex-row justify-between gap-3 mb-4">
-                <h3 className="text-lg font-bold text-red-400">{task.title}</h3>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-lg font-bold text-zinc-950 font-oswald tracking-wide">{task.title}</h3>
+                  <span className="text-xs font-mono font-bold uppercase text-zinc-700 bg-zinc-100 border border-zinc-300 px-2 py-0.5">
+                    {task.department || "general"}
+                  </span>
+                  {task.photo && (
+                    <a
+                      href={task.photo}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs font-mono font-bold text-red-600 bg-red-50 border border-red-300 px-2 py-0.5 hover:bg-red-100 inline-flex items-center gap-1"
+                    >
+                      📷 Photo Attached ↗
+                    </a>
+                  )}
+                </div>
                 <span className={`inline-block self-start px-3 py-1 rounded-full text-xs font-semibold uppercase border ${STATUS_COLORS[task.status] || STATUS_COLORS.assigned}`}>
                   {task.status.replace(/-/g, " ")}
                 </span>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4 text-sm text-zinc-400">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4 text-sm text-zinc-700">
                 <p><span className="text-zinc-500 font-medium">Description:</span> {task.description}</p>
                 <p>
                   <span className="text-zinc-500 font-medium">Project:</span>{" "}
-                  {task.projectName || (task.projectId ? projectById.get(task.projectId) || task.projectId : "N/A")}
+                  <span className="font-semibold text-zinc-900">{task.projectName || (task.projectId ? projectById.get(task.projectId) || task.projectId : "N/A")}</span>
                 </p>
-                {task.projectId && <p className="text-xs text-zinc-600">projectId: {task.projectId}</p>}
+                {task.projectId && <p className="text-xs text-zinc-500">projectId: {task.projectId}</p>}
                 <p><span className="text-zinc-500 font-medium">Priority:</span> <span className={PRIORITY_COLORS[task.priority] || ""}>{task.priority}</span></p>
-                <p><span className="text-zinc-500 font-medium">Assigned To:</span> {formatAssignees(task.assignedTo)}</p>
-                <p><span className="text-zinc-500 font-medium">Due Date:</span> {task.dueDate?.toDate ? task.dueDate.toDate().toLocaleDateString() : "No due date"}</p>
-                <p><span className="text-zinc-500 font-medium">Created:</span> {task.createdAt?.toDate ? task.createdAt.toDate().toLocaleDateString() : "N/A"}</p>
+                <p><span className="text-zinc-500 font-medium">Assigned To:</span> <span className="font-semibold text-zinc-900">{formatAssignees(task.assignedTo)}</span></p>
+                <p><span className="text-zinc-500 font-medium">Due Date:</span> <span className="font-semibold text-zinc-900">{task.dueDate?.toDate ? task.dueDate.toDate().toLocaleDateString() : "No due date"}</span></p>
+                <p><span className="text-zinc-500 font-medium">Created:</span> <span className="text-zinc-600">{task.createdAt?.toDate ? task.createdAt.toDate().toLocaleDateString() : "N/A"}</span></p>
               </div>
 
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-2 pt-2 border-t border-zinc-100">
                 <button
                   type="button"
                   onClick={() => setDetailTask(task)}
-                  className="relative px-4 py-2 border border-zinc-600 text-zinc-300 hover:bg-white/5 text-sm font-semibold rounded-lg transition-colors"
+                  className="relative px-4 py-2 border border-zinc-300 bg-zinc-50 hover:bg-zinc-100 text-zinc-800 text-xs font-bold uppercase tracking-wider rounded transition-colors cursor-pointer"
                 >
                   View Details
                   {chatNotifications.some((n) => n.taskId === task.id) && (
-                    <span className="absolute -top-1.5 -right-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-cyan-500 text-[10px] font-bold text-black px-1">
+                    <span className="absolute -top-1.5 -right-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 text-[10px] font-bold text-white px-1">
                       {chatNotifications.filter((n) => n.taskId === task.id).length}
                     </span>
                   )}
                 </button>
-                <button onClick={() => openEdit(task)} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg transition-colors">
+                <button onClick={() => openEdit(task)} className="px-4 py-2 border border-zinc-900 bg-white hover:bg-zinc-900 hover:text-white text-zinc-900 text-xs font-bold uppercase tracking-wider rounded transition-colors cursor-pointer">
                   Edit Task
                 </button>
-                <button onClick={() => deleteTask(task.id)} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-semibold rounded-lg transition-colors">
+                <button onClick={() => deleteTask(task.id)} className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-bold uppercase tracking-wider rounded transition-colors cursor-pointer">
                   Delete
                 </button>
                 {task.status === "pending-approval" && (
                   <>
-                    <button onClick={() => approveTask(task.id)} className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-lg transition-colors">
+                    <button onClick={() => approveTask(task.id)} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold uppercase tracking-wider rounded transition-colors cursor-pointer">
                       Approve
                     </button>
-                    <button onClick={() => rejectTask(task.id)} className="px-4 py-2 border border-red-500/50 text-red-400 hover:bg-red-500 hover:text-white text-sm font-semibold rounded-lg transition-colors">
+                    <button onClick={() => rejectTask(task.id)} className="px-4 py-2 border border-red-300 bg-red-50 text-red-700 hover:bg-red-600 hover:text-white text-xs font-bold uppercase tracking-wider rounded transition-colors cursor-pointer">
                       Reject
                     </button>
                   </>
@@ -518,55 +613,74 @@ export default function AdminTasksPage() {
       )}
 
       {/* Task details (parity with original admin) */}
+      {/* Task details (parity with original admin) */}
       {detailTask && (
-        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={() => setDetailTask(null)}>
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4 backdrop-blur-xs" onClick={() => setDetailTask(null)}>
           <div
-            className="bg-[#111] border border-red-600/30 rounded-2xl w-full max-w-md p-8 space-y-3 text-sm text-zinc-300"
+            className="bg-white border-2 border-zinc-900 rounded-xl w-full max-w-md p-8 space-y-3 text-sm text-zinc-800 shadow-[6px_6px_0px_0px_#09090b]"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-xl font-bold text-red-400">Task Details</h3>
-              <button type="button" onClick={() => setDetailTask(null)} className="text-zinc-400 hover:text-red-400 text-2xl leading-none">
+            <div className="flex items-center justify-between mb-4 pb-2 border-b border-zinc-200">
+              <h3 className="text-xl font-bold font-oswald text-zinc-950 uppercase tracking-wider">Task Details</h3>
+              <button type="button" onClick={() => setDetailTask(null)} className="text-zinc-500 hover:text-zinc-950 text-2xl leading-none cursor-pointer">
                 &times;
               </button>
             </div>
-            <p><span className="text-zinc-500 font-medium">Title:</span> {detailTask.title}</p>
-            <p><span className="text-zinc-500 font-medium">Description:</span> {detailTask.description}</p>
+            <p><span className="text-zinc-500 font-medium">Title:</span> <span className="font-bold text-zinc-900">{detailTask.title}</span></p>
+            <p><span className="text-zinc-500 font-medium">Description:</span> <span className="text-zinc-800">{detailTask.description}</span></p>
             <p>
               <span className="text-zinc-500 font-medium">Project:</span>{" "}
-              {detailTask.projectName ||
-                (detailTask.projectId ? projectById.get(detailTask.projectId) || detailTask.projectId : "N/A")}
+              <span className="font-semibold text-zinc-900">
+                {detailTask.projectName ||
+                  (detailTask.projectId ? projectById.get(detailTask.projectId) || detailTask.projectId : "N/A")}
+              </span>
             </p>
-            {detailTask.projectId && <p className="text-xs text-zinc-600">projectId: {detailTask.projectId}</p>}
-            <p><span className="text-zinc-500 font-medium">Priority:</span> {detailTask.priority}</p>
-            <p><span className="text-zinc-500 font-medium">Status:</span> {detailTask.status.replace(/-/g, " ")}</p>
-            <p><span className="text-zinc-500 font-medium">Assigned To:</span> {formatAssignees(detailTask.assignedTo)}</p>
-            <p><span className="text-zinc-500 font-medium">Due Date:</span> {detailTask.dueDate?.toDate ? detailTask.dueDate.toDate().toLocaleDateString() : "No due date"}</p>
-            <p><span className="text-zinc-500 font-medium">Created:</span> {detailTask.createdAt?.toDate ? detailTask.createdAt.toDate().toLocaleDateString() : "N/A"}</p>
+            {detailTask.projectId && <p className="text-xs text-zinc-500">projectId: {detailTask.projectId}</p>}
+            <p><span className="text-zinc-500 font-medium">Department:</span> <span className="font-semibold text-zinc-900 uppercase">{detailTask.department || "general"}</span></p>
+            <p><span className="text-zinc-500 font-medium">Priority:</span> <span className="font-semibold text-zinc-900">{detailTask.priority}</span></p>
+            <p><span className="text-zinc-500 font-medium">Status:</span> <span className="font-semibold text-zinc-900">{detailTask.status.replace(/-/g, " ")}</span></p>
+            <p><span className="text-zinc-500 font-medium">Assigned To:</span> <span className="font-semibold text-zinc-900">{formatAssignees(detailTask.assignedTo)}</span></p>
+            <p><span className="text-zinc-500 font-medium">Due Date:</span> <span className="font-semibold text-zinc-900">{detailTask.dueDate?.toDate ? detailTask.dueDate.toDate().toLocaleDateString() : "No due date"}</span></p>
+            <p><span className="text-zinc-500 font-medium">Created:</span> <span className="text-zinc-600">{detailTask.createdAt?.toDate ? detailTask.createdAt.toDate().toLocaleDateString() : "N/A"}</span></p>
+            {detailTask.startedAt?.toDate && (
+              <p><span className="text-zinc-500 font-medium">Started Work:</span> <span className="text-zinc-700">{detailTask.startedAt.toDate().toLocaleString()}</span></p>
+            )}
+            {detailTask.submittedForApprovalAt?.toDate && (
+              <p><span className="text-zinc-500 font-medium">Submitted for Approval:</span> <span className="text-zinc-700">{detailTask.submittedForApprovalAt.toDate().toLocaleString()}</span></p>
+            )}
+            {detailTask.photo && (
+              <div className="pt-2 pb-1">
+                <span className="text-zinc-500 font-medium block mb-1">Attached Photo / Proof:</span>
+                <a href={detailTask.photo} target="_blank" rel="noreferrer" className="block group">
+                  <img src={detailTask.photo} alt="Task proof" className="max-h-48 rounded border border-zinc-300 object-cover group-hover:opacity-90" />
+                  <span className="text-xs text-red-600 underline font-bold mt-1 inline-block">View full size ↗</span>
+                </a>
+              </div>
+            )}
             {detailTask.rejectionReason && (
-              <p><span className="text-zinc-500 font-medium">Last rejection reason:</span> {detailTask.rejectionReason}</p>
+              <p><span className="text-red-600 font-medium">Last rejection reason:</span> <span className="text-red-700">{detailTask.rejectionReason}</span></p>
             )}
 
             {/* Task Chat */}
-            <div className="mt-4 pt-4 border-t border-white/10">
-              <h4 className="text-sm font-bold text-red-400 mb-3">💬 Task Chat</h4>
-              <div className="flex flex-col gap-2 max-h-48 overflow-y-auto mb-3 pr-1">
+            <div className="mt-4 pt-4 border-t border-zinc-200">
+              <h4 className="text-sm font-bold text-red-600 mb-3">💬 Task Chat</h4>
+              <div className="flex flex-col gap-2 max-h-48 overflow-y-auto mb-3 pr-1 bg-zinc-50 p-2 rounded border border-zinc-200">
                 {chatMessages.length === 0 && (
-                  <p className="text-xs text-zinc-600 italic">No messages yet.</p>
+                  <p className="text-xs text-zinc-500 italic">No messages yet.</p>
                 )}
                 {chatMessages.map((m) => {
                   const isAdmin = m.senderRole === "admin";
                   const ts = m.createdAt?.toDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
                   return (
                     <div key={m.id} className={`flex flex-col gap-0.5 ${isAdmin ? "items-end" : "items-start"}`}>
-                      <div className={`max-w-[80%] rounded-lg px-3 py-2 text-sm leading-snug ${
+                      <div className={`max-w-[80%] rounded-lg px-3 py-2 text-sm leading-snug font-mono ${
                         isAdmin
-                          ? "bg-red-600/20 border border-red-500/30 text-white"
-                          : "bg-white/5 border border-white/10 text-zinc-200"
+                          ? "bg-red-100 border border-red-200 text-red-950 font-medium"
+                          : "bg-white border border-zinc-200 text-zinc-900"
                       }`}>
                         {m.text}
                       </div>
-                      <p className="text-[9px] text-zinc-600">
+                      <p className="text-[9px] text-zinc-500">
                         {isAdmin ? "YOU" : m.senderName} · {ts ?? "—"}
                       </p>
                     </div>
@@ -580,22 +694,47 @@ export default function AdminTasksPage() {
                   onChange={(e) => setChatInput(e.target.value)}
                   placeholder="Message to worker..."
                   disabled={chatBusy}
-                  className="flex-1 px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:border-red-500 placeholder:text-zinc-600"
+                  className="flex-1 px-3 py-2 bg-white border border-zinc-300 rounded-lg text-sm text-zinc-900 focus:outline-none focus:border-red-600 placeholder:text-zinc-400"
                 />
                 <button
                   type="submit"
                   disabled={chatBusy || !chatInput.trim()}
-                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-lg disabled:opacity-40"
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-bold uppercase rounded-lg disabled:opacity-40 cursor-pointer"
                 >
                   Send
                 </button>
               </form>
             </div>
 
+            {detailTask.status === "pending-approval" && (
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await approveTask(detailTask.id);
+                    setDetailTask(null);
+                  }}
+                  className="flex-1 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold uppercase tracking-wider cursor-pointer"
+                >
+                  ✓ Approve Task
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await rejectTask(detailTask.id);
+                    setDetailTask(null);
+                  }}
+                  className="flex-1 py-2.5 rounded-lg border border-red-300 bg-red-50 text-red-700 hover:bg-red-600 hover:text-white text-xs font-bold uppercase tracking-wider cursor-pointer"
+                >
+                  ✕ Reject Task
+                </button>
+              </div>
+            )}
+
             <button
               type="button"
               onClick={() => setDetailTask(null)}
-              className="mt-4 w-full py-2.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-semibold"
+              className="mt-4 w-full py-2.5 rounded-lg bg-zinc-900 hover:bg-black text-white text-sm font-bold uppercase tracking-wider cursor-pointer"
             >
               Close
             </button>
@@ -605,23 +744,23 @@ export default function AdminTasksPage() {
 
       {/* Create / Edit Modal */}
       {modalMode && (
-        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={() => setModalMode(null)}>
-          <div className="bg-[#111] border border-red-600/30 rounded-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto p-8" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="text-xl font-bold text-red-400">{modalMode === "create" ? "Create New Task" : "Edit Task"}</h3>
-              <button onClick={() => setModalMode(null)} className="text-zinc-400 hover:text-red-400 text-2xl leading-none">&times;</button>
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4 backdrop-blur-xs" onClick={() => setModalMode(null)}>
+          <div className="bg-white border-2 border-zinc-900 rounded-xl w-full max-w-lg max-h-[85vh] overflow-y-auto p-8 shadow-[6px_6px_0px_0px_#09090b]" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-6 pb-2 border-b border-zinc-200">
+              <h3 className="text-xl font-bold font-oswald text-red-600 uppercase tracking-wider">{modalMode === "create" ? "Create New Task" : "Edit Task"}</h3>
+              <button onClick={() => setModalMode(null)} className="text-zinc-500 hover:text-zinc-950 text-2xl leading-none cursor-pointer">&times;</button>
             </div>
             <form onSubmit={handleSubmit} className="space-y-5">
               <div>
-                <label className="block text-sm font-semibold text-zinc-300 mb-2">Task Title *</label>
-                <input required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-red-500" />
+                <label className="block text-sm font-semibold text-zinc-700 mb-2">Task Title *</label>
+                <input required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className="w-full px-4 py-3 bg-white border border-zinc-300 rounded-lg text-zinc-900 focus:outline-none focus:border-red-600" />
               </div>
               <div>
-                <label className="block text-sm font-semibold text-zinc-300 mb-2">Description *</label>
-                <textarea required value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={3} className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-red-500 resize-y" />
+                <label className="block text-sm font-semibold text-zinc-700 mb-2">Description *</label>
+                <textarea required value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={3} className="w-full px-4 py-3 bg-white border border-zinc-300 rounded-lg text-zinc-900 focus:outline-none focus:border-red-600 resize-y" />
               </div>
               <div>
-                <label className="block text-sm font-semibold text-zinc-300 mb-2">Link to project (optional)</label>
+                <label className="block text-sm font-semibold text-zinc-700 mb-2">Link to project (optional)</label>
                 <select
                   value={form.projectId}
                   onChange={(e) => {
@@ -632,7 +771,7 @@ export default function AdminTasksPage() {
                       projectName: id ? projectById.get(id) || "" : form.projectName,
                     });
                   }}
-                  className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-red-500"
+                  className="w-full px-4 py-3 bg-white border border-zinc-300 rounded-lg text-zinc-900 focus:outline-none focus:border-red-600"
                 >
                   <option value="">No project</option>
                   {projects.map((p) => (
@@ -642,29 +781,52 @@ export default function AdminTasksPage() {
                   ))}
                 </select>
               </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-zinc-700 mb-2">Department</label>
+                  <select
+                    value={form.department}
+                    onChange={(e) => setForm({ ...form, department: e.target.value })}
+                    className="w-full px-4 py-3 bg-white border border-zinc-300 rounded-lg text-zinc-900 focus:outline-none focus:border-red-600 uppercase"
+                  >
+                    {DEPARTMENTS.map((d) => (
+                      <option key={d.value} value={d.value}>{d.label.toUpperCase()}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-zinc-700 mb-2">Photo / Proof URL (optional)</label>
+                  <input
+                    value={form.photo}
+                    onChange={(e) => setForm({ ...form, photo: e.target.value })}
+                    placeholder="https://..."
+                    className="w-full px-4 py-3 bg-white border border-zinc-300 rounded-lg text-zinc-900 focus:outline-none focus:border-red-600 text-xs"
+                  />
+                </div>
+              </div>
               <div>
-                <label className="block text-sm font-semibold text-zinc-300 mb-2">Project name (free text, optional)</label>
+                <label className="block text-sm font-semibold text-zinc-700 mb-2">Project name (free text, optional)</label>
                 <input
                   value={form.projectName}
                   onChange={(e) => setForm({ ...form, projectName: e.target.value })}
                   placeholder="Legacy label if not using dropdown"
-                  className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-red-500"
+                  className="w-full px-4 py-3 bg-white border border-zinc-300 rounded-lg text-zinc-900 focus:outline-none focus:border-red-600"
                 />
               </div>
               <div>
-                <label className="block text-sm font-semibold text-zinc-300 mb-2">Assigned workers</label>
+                <label className="block text-sm font-semibold text-zinc-700 mb-2">Assigned workers</label>
                 <p className="text-xs text-zinc-500 mb-2">Select one or more approved workers (stored as array when multiple).</p>
-                <div className="max-h-40 overflow-y-auto space-y-2 border border-white/10 rounded-lg p-3 bg-white/[0.03]">
+                <div className="max-h-40 overflow-y-auto space-y-2 border border-zinc-300 rounded-lg p-3 bg-zinc-50">
                   {approvedWorkers.length === 0 ? (
                     <p className="text-zinc-500 text-sm">No approved workers.</p>
                   ) : (
                     approvedWorkers.map((w) => (
-                      <label key={w.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                      <label key={w.id} className="flex items-center gap-2 text-sm text-zinc-900 cursor-pointer">
                         <input
                           type="checkbox"
                           checked={form.assignedWorkerIds.includes(w.id)}
                           onChange={() => toggleAssignee(w.id)}
-                          className="rounded border-zinc-600"
+                          className="rounded border-zinc-300 accent-red-600"
                         />
                         <span>
                           {w.firstName} {w.lastName} ({formatRole(w.role)})
@@ -676,8 +838,8 @@ export default function AdminTasksPage() {
               </div>
               {modalMode === "edit" && (
                 <div>
-                  <label className="block text-sm font-semibold text-zinc-300 mb-2">Status</label>
-                  <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-red-500">
+                  <label className="block text-sm font-semibold text-zinc-700 mb-2">Status</label>
+                  <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="w-full px-4 py-3 bg-white border border-zinc-300 rounded-lg text-zinc-900 focus:outline-none focus:border-red-600">
                     <option value="assigned">Assigned</option>
                     <option value="in-progress">In Progress</option>
                     <option value="pending-approval">Pending Approval</option>
@@ -687,8 +849,8 @@ export default function AdminTasksPage() {
               )}
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-semibold text-zinc-300 mb-2">Priority</label>
-                  <select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })} className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-red-500">
+                  <label className="block text-sm font-semibold text-zinc-700 mb-2">Priority</label>
+                  <select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })} className="w-full px-4 py-3 bg-white border border-zinc-300 rounded-lg text-zinc-900 focus:outline-none focus:border-red-600">
                     <option value="low">Low</option>
                     <option value="medium">Medium</option>
                     <option value="high">High</option>
@@ -696,19 +858,19 @@ export default function AdminTasksPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-semibold text-zinc-300 mb-2">Due Date</label>
-                  <input type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-red-500" />
+                  <label className="block text-sm font-semibold text-zinc-700 mb-2">Due Date</label>
+                  <input type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} className="w-full px-4 py-3 bg-white border border-zinc-300 rounded-lg text-zinc-900 focus:outline-none focus:border-red-600" />
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-semibold text-zinc-300 mb-2">Custom Notification Message (optional)</label>
-                <textarea value={form.notificationMessage} onChange={(e) => setForm({ ...form, notificationMessage: e.target.value })} rows={2} placeholder="Leave blank to use default message" className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:border-red-500 resize-y" />
+                <label className="block text-sm font-semibold text-zinc-700 mb-2">Custom Notification Message (optional)</label>
+                <textarea value={form.notificationMessage} onChange={(e) => setForm({ ...form, notificationMessage: e.target.value })} rows={2} placeholder="Leave blank to use default message" className="w-full px-4 py-3 bg-white border border-zinc-300 rounded-lg text-zinc-900 focus:outline-none focus:border-red-600 resize-y" />
               </div>
-              <div className="flex gap-3 justify-end pt-2">
-                <button type="button" onClick={() => setModalMode(null)} className="px-5 py-2.5 border border-zinc-600 text-zinc-400 hover:bg-zinc-800 rounded-lg text-sm font-semibold transition-colors">
+              <div className="flex gap-3 justify-end pt-2 border-t border-zinc-200">
+                <button type="button" onClick={() => setModalMode(null)} className="px-5 py-2.5 border border-zinc-300 text-zinc-700 hover:bg-zinc-100 rounded-lg text-sm font-bold uppercase tracking-wider transition-colors cursor-pointer">
                   Cancel
                 </button>
-                <button type="submit" className="px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-semibold transition-colors">
+                <button type="submit" className="px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-bold uppercase tracking-wider transition-colors cursor-pointer">
                   {modalMode === "create" ? "Create Task" : "Update Task"}
                 </button>
               </div>

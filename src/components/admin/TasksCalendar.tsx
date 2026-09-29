@@ -76,16 +76,16 @@ export default function TasksCalendar({ tasks, selectedDate, onSelectDate }: Pro
   const nextMonth = () => setViewMonth(new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 1));
 
   return (
-    <div className="border border-[var(--mft-border)] bg-[var(--mft-surface)] p-6 mb-8 shadow-[4px_4px_0px_0px_#00FF66] lg:max-w-xl mx-auto flex flex-col transition-all">
+    <div className="border border-zinc-200 bg-white p-6 mb-8 shadow-[3px_3px_0px_0px_#09090b] lg:max-w-xl mx-auto flex flex-col transition-all">
       {/* Header */}
-      <div className="flex justify-between items-center mb-6 border-b border-[var(--mft-border)] pb-4">
-        <button type="button" onClick={prevMonth} className="text-white hover:text-[var(--mft-primary)] font-mono text-xs tracking-widest font-bold">
+      <div className="flex justify-between items-center mb-6 border-b border-zinc-200 pb-4">
+        <button type="button" onClick={prevMonth} className="text-zinc-700 hover:text-red-600 font-mono text-xs tracking-widest font-bold cursor-pointer">
           &lt; PREV
         </button>
-        <span className="font-oswald text-2xl tracking-widest uppercase text-[var(--mft-primary)]">
+        <span className="font-oswald text-2xl tracking-widest uppercase text-zinc-950 font-bold">
           {viewMonth.toLocaleString('default', { month: 'long', year: 'numeric' })}
         </span>
-        <button type="button" onClick={nextMonth} className="text-white hover:text-[var(--mft-primary)] font-mono text-xs tracking-widest font-bold">
+        <button type="button" onClick={nextMonth} className="text-zinc-700 hover:text-red-600 font-mono text-xs tracking-widest font-bold cursor-pointer">
           NEXT &gt;
         </button>
       </div>
@@ -93,7 +93,7 @@ export default function TasksCalendar({ tasks, selectedDate, onSelectDate }: Pro
       {/* Days Row */}
       <div className="grid grid-cols-7 mb-4">
         {DAY_NAMES.map(name => (
-          <div key={name} className="text-center font-mono text-[10px] sm:text-xs font-bold text-[var(--mft-muted)] tracking-widest">
+          <div key={name} className="text-center font-mono text-[10px] sm:text-xs font-bold text-zinc-500 tracking-widest">
             {name}
           </div>
         ))}
@@ -117,8 +117,8 @@ export default function TasksCalendar({ tasks, selectedDate, onSelectDate }: Pro
                         type="button"
                         onClick={() => onSelectDate(isSelected ? null : date)}
                         className={`
-                            relative w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center font-mono text-sm leading-none bg-transparent hover:bg-[var(--mft-bg)] transition-colors border
-                            ${isSelected ? "bg-[var(--mft-primary)] text-black font-bold border-[var(--mft-primary)]" : "text-white border-transparent hover:border-[var(--mft-border)]"}
+                            relative w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center font-mono text-sm leading-none bg-transparent hover:bg-zinc-100 transition-colors border cursor-pointer
+                            ${isSelected ? "bg-red-600 text-white font-bold border-red-600 shadow-sm" : "text-zinc-900 border-transparent hover:border-zinc-300"}
                             ${!isCurrentMonth && !isSelected ? "opacity-30" : ""}
                         `}
                         style={{
@@ -130,7 +130,7 @@ export default function TasksCalendar({ tasks, selectedDate, onSelectDate }: Pro
                     {/* Activity Dot underneath */}
                     <div className="h-2 w-full flex justify-center mt-1.5">
                         {hasTask && (
-                            <div className={`w-1.5 h-1.5 rounded-sm ${isSelected ? "bg-[#000000]" : "bg-[var(--mft-primary)]"}`} />
+                            <div className={`w-1.5 h-1.5 rounded-sm ${isSelected ? "bg-white" : "bg-red-600"}`} />
                         )}
                     </div>
                 </div>
@@ -139,12 +139,12 @@ export default function TasksCalendar({ tasks, selectedDate, onSelectDate }: Pro
       </div>
       
       {/* Footer / Context */}
-      <div className="mt-6 pt-4 border-t border-[var(--mft-border)] flex justify-between items-center">
-        <span className="font-mono text-[10px] text-[var(--mft-muted)] uppercase tracking-widest font-bold">
+      <div className="mt-6 pt-4 border-t border-zinc-200 flex justify-between items-center">
+        <span className="font-mono text-[10px] text-zinc-500 uppercase tracking-widest font-bold">
              {selectedDate ? "FILTERING BY DATE" : "SHOWING ALL"}
         </span>
         {selectedDate && (
-            <button type="button" onClick={() => onSelectDate(null)} className="font-mono text-[10px] font-bold tracking-widest text-white hover:text-[var(--mft-primary)]">
+            <button type="button" onClick={() => onSelectDate(null)} className="font-mono text-[10px] font-bold tracking-widest text-red-600 hover:text-red-700 cursor-pointer">
                 [ CLEAR FILTER ]
             </button>
         )}
