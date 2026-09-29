@@ -1,4 +1,11 @@
+@import url("https://fonts.googleapis.com/css2?family=Carlito:ital,wght@0,400;0,700;1,400;1,700&display=swap");
 @import "tailwindcss";
+
+@theme {
+  --font-sans: "Calibri", "Carlito", Candara, Segoe, "Segoe UI", Optima, Arial, sans-serif;
+  --font-calibri: "Calibri", "Carlito", Candara, Segoe, "Segoe UI", Optima, Arial, sans-serif;
+  --font-cambria: "Cambria", "Caladea", "Times New Roman", Times, serif;
+}
 
 @layer base {
   :root {
@@ -12,20 +19,28 @@
     --mft-primary-hover: #b91c1c;
     --mft-muted: #64748b;
     --mft-text: #09090b;
+    --font-calibri: "Calibri", "Carlito", Candara, Segoe, "Segoe UI", Optima, Arial, sans-serif;
+    --font-cambria: "Cambria", "Caladea", "Times New Roman", Times, serif;
     --font-oswald: "Oswald", sans-serif;
-    --font-mono: "IBM Plex Mono", monospace;
+    --font-mono: var(--font-calibri);
+    --font-code: "IBM Plex Mono", monospace;
   }
 
   html {
     background: var(--mft-bg);
     color: var(--mft-text);
+    font-family: var(--font-calibri);
   }
 
   body {
     background: var(--mft-bg);
     color: var(--mft-text);
-    font-family: var(--font-mono);
+    font-family: var(--font-calibri);
     -webkit-font-smoothing: antialiased;
+  }
+
+  button, input, select, textarea {
+    font-family: inherit;
   }
 
   * {
@@ -40,6 +55,9 @@
 }
 
 @layer utilities {
+  .font-calibri { font-family: var(--font-calibri); }
+  .font-cambria { font-family: var(--font-cambria); }
+  .font-code { font-family: var(--font-code); }
   .font-oswald { font-family: var(--font-oswald); }
 
   .brutal-card {
