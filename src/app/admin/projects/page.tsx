@@ -188,6 +188,8 @@ export default function AdminProjectsPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [showAddTask, setShowAddTask] = useState(false);
+  const [editingTask, setEditingTask] = useState<TaskRow | null>(null);
+  const [savingTask, setSavingTask] = useState(false);
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [taskFilter, setTaskFilter] = useState<"all" | "pending" | "active" | "completed">("all");
@@ -202,6 +204,17 @@ export default function AdminProjectsPage() {
     dueDate: "",
     photo: "",
     workerIds: [] as string[],
+  });
+  const [editTaskForm, setEditTaskForm] = useState({
+    title: "",
+    description: "",
+    department: "general",
+    priority: "medium",
+    status: "assigned",
+    dueDate: "",
+    photo: "",
+    workerIds: [] as string[],
+    notificationMessage: "",
   });
 
   useEffect(() => {
@@ -551,6 +564,107 @@ export default function AdminProjectsPage() {
     setTaskForm({ title: "", description: "", department: "general", priority: "medium", dueDate: "", photo: "", workerIds: [] });
   };
 
+  const openEditTask = (task: TaskRow) => {
+    let dueDateStr = "";
+    if (task.dueDate) {
+      if (typeof (task.dueDate as { toDate?: () => Date }).toDate === "function") {
+        const d = (task.dueDate as { toDate: () => Date }).toDate();
+        const pad = (n: number) => n.toString().padStart(2, "0");
+        dueDateStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      } else if (task.dueDate instanceof Date) {
+        const pad = (n: number) => n.toString().padStart(2, "0");
+        dueDateStr = `${task.dueDate.getFullYear()}-${pad(task.dueDate.getMonth() + 1)}-${pad(task.dueDate.getDate())}`;
+      } else if (typeof task.dueDate === "string") {
+        dueDateStr = (task.dueDate as string).split("T")[0];
+      }
+    }
+    const ids = Array.isArray(task.assignedTo) ? task.assignedTo : task.assignedTo ? [task.assignedTo] : [];
+    setEditTaskForm({
+      title: task.title || "",
+      description: task.description || "",
+      department: task.department || "general",
+      priority: task.priority || "medium",
+      status: task.status || "assigned",
+      dueDate: dueDateStr,
+      photo: task.photo || "",
+      workerIds: ids,
+      notificationMessage: "",
+    });
+    setEditingTask(task);
+  };
+
+  const submitEditTask = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTask) return;
+    if (editTaskForm.workerIds.length === 0) {
+      alert("Select at least one worker.");
+      return;
+    }
+
+    setSavingTask(true);
+    try {
+      const assignedWorkerNames = editTaskForm.workerIds
+        .map((id) => {
+          const w = workers.find((x) => x.id === id);
+          return w ? `${w.firstName} ${w.lastName}` : id;
+        })
+        .join(", ");
+
+      await updateDoc(doc(db, "tasks", editingTask.id), {
+        title: editTaskForm.title.trim(),
+        description: editTaskForm.description.trim(),
+        department: editTaskForm.department,
+        assignedTo: editTaskForm.workerIds,
+        assignedWorkerName: assignedWorkerNames,
+        priority: editTaskForm.priority,
+        status: editTaskForm.status,
+        dueDate: editTaskForm.dueDate ? new Date(editTaskForm.dueDate) : null,
+        photo: editTaskForm.photo.trim() || null,
+        updatedAt: serverTimestamp(),
+      });
+
+      if (editingTask.projectId) {
+        if (editTaskForm.status !== "completed" && detailProject && detailProject.status === "completed") {
+          void updateDoc(doc(db, "projects", editingTask.projectId), {
+            status: "active",
+            updatedAt: serverTimestamp(),
+          }).catch(() => {});
+        }
+      }
+
+      if (editTaskForm.workerIds.length > 0) {
+        for (const workerId of editTaskForm.workerIds) {
+          await addDoc(collection(db, "alerts"), {
+            recipients: [workerId],
+            title: "Task Updated",
+            message: editTaskForm.notificationMessage.trim() || `Task updated: ${editTaskForm.title}`,
+            type: "schedule",
+            priority: editTaskForm.priority || "medium",
+            isRead: false,
+            createdAt: serverTimestamp(),
+            sentAt: serverTimestamp(),
+            sentBy: "System",
+          });
+        }
+
+        void sendExpoPushToWorkers(db, {
+          recipientUids: editTaskForm.workerIds,
+          title: "Task Updated",
+          body: editTaskForm.notificationMessage.trim() || `Task updated: ${editTaskForm.title}`,
+          taskId: editingTask.id,
+          taskTitle: editTaskForm.title,
+        }).catch(() => {});
+      }
+
+      setEditingTask(null);
+    } catch (err) {
+      console.error("Failed to edit task:", err);
+      alert("Failed to edit task.");
+    } finally {
+      setSavingTask(false);
+    }
+  };
+
   /* ── Project Detail View ── */
   if (detailProject) {
     const tasksByStatus = {
@@ -765,6 +879,16 @@ export default function AdminProjectsPage() {
                         <span className={`brutal-badge ${STATUS_COLORS[task.status] ?? "text-zinc-600 border-zinc-300"}`}>
                           {task.status.replace(/-/g, " ")}
                         </span>
+                        <span
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openEditTask(task);
+                          }}
+                          title="Edit Task"
+                          className="inline-flex items-center gap-1 px-2.5 py-1 bg-white hover:bg-zinc-900 hover:text-white text-zinc-900 text-[10px] font-bold uppercase tracking-wider border border-zinc-900 shadow-[1px_1px_0px_0px_#09090b] transition-transform active:translate-x-0.5 active:translate-y-0.5 cursor-pointer"
+                        >
+                          ✏️ EDIT
+                        </span>
                         {task.status === "pending-approval" && (
                           <span
                             onClick={(e) => {
@@ -844,6 +968,14 @@ export default function AdminProjectsPage() {
                         {/* Task actions */}
                         <div className="mt-4 pt-4 border-t border-zinc-200 flex flex-wrap items-center justify-between gap-3">
                           <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => openEditTask(task)}
+                              className="bg-zinc-900 hover:bg-black text-white font-mono text-xs font-bold uppercase px-4 py-2 border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] transition-all active:translate-x-0.5 active:translate-y-0.5 cursor-pointer flex items-center gap-1.5"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                              [ EDIT TASK ]
+                            </button>
                             {task.status === "pending-approval" && (
                               <>
                                 <button
@@ -953,6 +1085,177 @@ export default function AdminProjectsPage() {
                 <div className="flex gap-3 pt-4 border-t border-zinc-200">
                   <button type="button" onClick={() => setShowAddTask(false)} className="brutal-btn-outline flex-1">[ CANCEL ]</button>
                   <button type="submit" className="brutal-btn flex-1">[ CREATE ]</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+        {editingTask && (
+          <div
+            className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 backdrop-blur-xs"
+            onClick={() => setEditingTask(null)}
+          >
+            <div
+              className="border-2 border-zinc-900 bg-white w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 shadow-[8px_8px_0px_0px_#09090b] text-zinc-950 font-mono"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-5 pb-3 border-b-2 border-zinc-900 flex items-center justify-between">
+                <div>
+                  <h3 className="text-xl font-oswald text-red-600 uppercase tracking-wider font-bold">
+                    {"// EDIT TASK DIRECTIVE"}
+                  </h3>
+                  <p className="text-[10px] text-zinc-500 mt-0.5">TASK ID: {editingTask.id}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEditingTask(null)}
+                  className="text-zinc-500 hover:text-zinc-950 text-xl font-bold cursor-pointer"
+                >
+                  &times;
+                </button>
+              </div>
+
+              <form onSubmit={(e) => void submitEditTask(e)} className="space-y-4 text-xs">
+                <Field label="Title *">
+                  <input
+                    required
+                    value={editTaskForm.title}
+                    onChange={(e) => setEditTaskForm({ ...editTaskForm, title: e.target.value })}
+                    className="brutal-input text-sm"
+                  />
+                </Field>
+
+                <Field label="Description *">
+                  <textarea
+                    required
+                    rows={3}
+                    value={editTaskForm.description}
+                    onChange={(e) => setEditTaskForm({ ...editTaskForm, description: e.target.value })}
+                    className="brutal-input text-sm resize-y"
+                  />
+                </Field>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <Field label="Department *">
+                    <select
+                      value={editTaskForm.department}
+                      onChange={(e) => setEditTaskForm({ ...editTaskForm, department: e.target.value })}
+                      className="brutal-input"
+                    >
+                      {TASK_DEPARTMENTS.map((d) => (
+                        <option key={d} value={d}>
+                          {d}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+
+                  <Field label="Status">
+                    <select
+                      value={editTaskForm.status}
+                      onChange={(e) => setEditTaskForm({ ...editTaskForm, status: e.target.value })}
+                      className="brutal-input"
+                    >
+                      <option value="assigned">Assigned</option>
+                      <option value="in-progress">In Progress</option>
+                      <option value="pending-approval">Pending Approval</option>
+                      <option value="completed">Completed</option>
+                    </select>
+                  </Field>
+                </div>
+
+                <Field label={`Assign Workers * (${editTaskForm.workerIds.length} Selected)`}>
+                  <div className="max-h-36 overflow-y-auto border border-zinc-300 bg-zinc-50 p-2 space-y-1">
+                    {approvedWorkers.length === 0 ? (
+                      <p className="text-xs text-zinc-500">No approved workers</p>
+                    ) : (
+                      approvedWorkers.map((w) => {
+                        const isAssigned = editTaskForm.workerIds.includes(w.id);
+                        return (
+                          <label
+                            key={w.id}
+                            className={`flex items-center justify-between gap-2 p-1 rounded text-xs uppercase tracking-wider cursor-pointer ${
+                              isAssigned ? "bg-red-50 text-red-950 font-bold" : "text-zinc-900 hover:text-red-600"
+                            }`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={isAssigned}
+                                onChange={() => {
+                                  const set = new Set(editTaskForm.workerIds);
+                                  if (set.has(w.id)) set.delete(w.id);
+                                  else set.add(w.id);
+                                  setEditTaskForm({ ...editTaskForm, workerIds: [...set] });
+                                }}
+                                className="accent-red-600"
+                              />
+                              <span>
+                                {w.firstName} {w.lastName}
+                              </span>
+                            </div>
+                          </label>
+                        );
+                      })
+                    )}
+                  </div>
+                </Field>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Priority">
+                    <select
+                      value={editTaskForm.priority}
+                      onChange={(e) => setEditTaskForm({ ...editTaskForm, priority: e.target.value })}
+                      className="brutal-input"
+                    >
+                      <option value="low">Low</option>
+                      <option value="medium">Medium</option>
+                      <option value="high">High</option>
+                      <option value="urgent">Urgent</option>
+                    </select>
+                  </Field>
+                  <Field label="Due date">
+                    <input
+                      type="date"
+                      value={editTaskForm.dueDate}
+                      onChange={(e) => setEditTaskForm({ ...editTaskForm, dueDate: e.target.value })}
+                      className="brutal-input"
+                    >
+                    </input>
+                  </Field>
+                </div>
+
+                <Field label="Photo / Proof URL (Optional)">
+                  <input
+                    value={editTaskForm.photo}
+                    onChange={(e) => setEditTaskForm({ ...editTaskForm, photo: e.target.value })}
+                    placeholder="https://..."
+                    className="brutal-input text-xs"
+                  />
+                </Field>
+
+                <Field label="Custom Update Notification Alert (Optional)">
+                  <textarea
+                    rows={2}
+                    value={editTaskForm.notificationMessage}
+                    onChange={(e) => setEditTaskForm({ ...editTaskForm, notificationMessage: e.target.value })}
+                    placeholder="Message pushed to assigned worker mobile..."
+                    className="brutal-input text-xs resize-y"
+                  />
+                </Field>
+
+                <div className="flex gap-3 pt-3 border-t-2 border-zinc-900">
+                  <button
+                    type="button"
+                    onClick={() => setEditingTask(null)}
+                    disabled={savingTask}
+                    className="brutal-btn-outline flex-1"
+                  >
+                    [ CANCEL ]
+                  </button>
+                  <button type="submit" disabled={savingTask} className="brutal-btn flex-1">
+                    {savingTask ? "[ SAVING... ]" : "[ SAVE DIRECTIVE ]"}
+                  </button>
                 </div>
               </form>
             </div>
