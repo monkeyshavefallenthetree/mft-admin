@@ -23,6 +23,19 @@ import {
 } from "@/lib/chatNotifications";
 import { getAuth, onAuthStateChanged } from "firebase/auth";
 import { DEPARTMENTS } from "@/lib/admin/constants";
+import { toast, confirmDialog, promptDialog } from "@/lib/admin/feedback";
+import { logActivity } from "@/lib/admin/activity";
+import { useUrlState } from "@/lib/admin/useUrlState";
+import ModalPortal from "@/components/admin/ui/ModalPortal";
+import ProjectBoardView from "@/components/admin/projects/ProjectBoardView";
+import { SubtaskItem, TaskRow, Worker as ProjectWorker } from "@/components/admin/projects/types";
+
+function formatExternalUrl(url?: string): string {
+  if (!url) return "";
+  const trimmed = url.trim();
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+}
 
 interface Task {
   id: string;
@@ -42,6 +55,7 @@ interface Task {
   photo?: string | null;
   startedAt?: { toDate?: () => Date } | Date | string | null;
   submittedForApprovalAt?: { toDate?: () => Date } | Date | string | null;
+  subtasks?: SubtaskItem[];
 }
 
 interface ProjectRow {
@@ -147,15 +161,25 @@ export default function AdminTasksPage() {
   const [chatNotifications, setChatNotifications] = useState<ChatNotification[]>([]);
   const chatNotifCountRef = useRef(0);
 
-  // Filters & Search
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [searchQuery, setSearchQuery] = useState("");
+  // Filters & Search (mirrored to the URL so views are shareable)
+  const [statusFilterRaw, setStatusFilterRaw] = useUrlState("status", "all");
+  const statusFilter = statusFilterRaw as StatusFilter;
+  const setStatusFilter = (v: StatusFilter) => setStatusFilterRaw(v);
+  const [searchQuery, setSearchQuery] = useUrlState("q", "");
+
+  // View Mode: list vs board
+  const [viewModeRaw, setViewModeRaw] = useUrlState("view", "list");
+  const viewMode = (viewModeRaw === "board" ? "board" : "list") as "list" | "board";
+  const setViewMode = (v: "list" | "board") => setViewModeRaw(v);
 
   // Modal State
   const [modalMode, setModalMode] = useState<ModalMode>(null);
   const [editId, setEditId] = useState("");
   const [workerSearch, setWorkerSearch] = useState("");
   const [saving, setSaving] = useState(false);
+  const [detailSubtaskTitle, setDetailSubtaskTitle] = useState("");
+  const [detailSubtaskDesc, setDetailSubtaskDesc] = useState("");
+  const [detailSubtaskLink, setDetailSubtaskLink] = useState("");
 
   const [form, setForm] = useState({
     title: "",
@@ -215,6 +239,37 @@ export default function AdminTasksPage() {
       if (fresh) setDetailTask(fresh);
     }
   }, [tasks]);
+
+  const handleToggleDetailSubtask = async (stId: string) => {
+    if (!detailTask) return;
+    const current = detailTask.subtasks || [];
+    const updated = current.map((st) => (st.id === stId ? { ...st, completed: !st.completed } : st));
+    await updateDoc(doc(db, "tasks", detailTask.id), { subtasks: updated });
+  };
+
+  const handleAddDetailSubtask = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!detailTask || !detailSubtaskTitle.trim()) return;
+    const current = detailTask.subtasks || [];
+    const newSt: SubtaskItem = {
+      id: "st_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7),
+      title: detailSubtaskTitle.trim(),
+      description: detailSubtaskDesc.trim() || undefined,
+      link: detailSubtaskLink.trim() || undefined,
+      completed: false,
+    };
+    await updateDoc(doc(db, "tasks", detailTask.id), { subtasks: [...current, newSt] });
+    setDetailSubtaskTitle("");
+    setDetailSubtaskDesc("");
+    setDetailSubtaskLink("");
+  };
+
+  const handleDeleteDetailSubtask = async (stId: string) => {
+    if (!detailTask) return;
+    const current = detailTask.subtasks || [];
+    const updated = current.filter((st) => st.id !== stId);
+    await updateDoc(doc(db, "tasks", detailTask.id), { subtasks: updated });
+  };
 
   // Subscribe to admin chat notifications (wait for auth to be ready)
   useEffect(() => {
@@ -386,7 +441,7 @@ export default function AdminTasksPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.title.trim()) {
-      alert("Please enter a task title.");
+      toast.warning("Task title is required");
       return;
     }
 
@@ -439,6 +494,8 @@ export default function AdminTasksPage() {
             taskTitle: form.title,
           }).catch(() => {});
         }
+        toast.success("Task created", { description: assignedWorkerNames ? `Assigned to ${assignedWorkerNames}` : form.title.trim() });
+        void logActivity({ action: "created", entity: "task", entityId: taskRef.id, label: form.title.trim(), detail: projName || undefined });
       } else if (modalMode === "edit" && editId) {
         const updateData: Record<string, unknown> = {
           title: form.title.trim(),
@@ -483,20 +540,34 @@ export default function AdminTasksPage() {
             taskTitle: form.title,
           }).catch(() => {});
         }
+        toast.success("Task updated");
+        void logActivity({ action: "updated", entity: "task", entityId: editId, label: form.title.trim() });
       }
       setModalMode(null);
     } catch (err) {
       console.error("Failed to save task:", err);
-      alert("Failed to save task. Please try again.");
+      toast.error("Failed to save task", { description: "Please try again." });
     } finally {
       setSaving(false);
     }
   };
 
   const deleteTask = async (id: string) => {
-    if (confirm("Are you sure you want to delete this task? This action cannot be undone.")) {
+    const t = tasks.find((x) => x.id === id);
+    const ok = await confirmDialog({
+      title: `Delete ${t?.title ? `"${t.title}"` : "this task"}?`,
+      message: "This action cannot be undone.",
+      tone: "danger",
+      confirmLabel: "Delete task",
+    });
+    if (!ok) return;
+    try {
       await deleteDoc(doc(db, "tasks", id));
       if (detailTask?.id === id) setDetailTask(null);
+      toast.success("Task deleted");
+      void logActivity({ action: "deleted", entity: "task", entityId: id, label: t?.title || id });
+    } catch {
+      toast.error("Could not delete task");
     }
   };
 
@@ -533,10 +604,19 @@ export default function AdminTasksPage() {
         }).catch(() => {});
       }
     }
+    toast.success("Task approved", { description: task?.title });
+    void logActivity({ action: "approved", entity: "task", entityId: id, label: task?.title || id });
   };
 
   const rejectTask = async (id: string) => {
-    const reason = prompt("Reason for rejection (optional):");
+    const pending = tasks.find((t) => t.id === id);
+    const reason = await promptDialog({
+      title: `Request changes${pending?.title ? ` on "${pending.title}"` : ""}`,
+      message: "The task goes back to In progress and assignees are notified.",
+      placeholder: "Reason / feedback for the worker (optional)",
+      multiline: true,
+      confirmLabel: "Send back",
+    });
     if (reason === null) return; // cancelled
     const feedback = reason.trim() || "No reason provided";
     const task = tasks.find((t) => t.id === id);
@@ -572,7 +652,58 @@ export default function AdminTasksPage() {
         }).catch(() => {});
       }
     }
+    toast.warning("Changes requested", { description: task?.title });
+    void logActivity({ action: "rejected", entity: "task", entityId: id, label: task?.title || id, detail: feedback });
   };
+
+  const quickUpdateStatus = async (taskId: string, newStatus: string) => {
+    const t = tasks.find((x) => x.id === taskId);
+    if (!t || t.status === newStatus) return;
+
+    if (newStatus === "completed") {
+      await approveTask(taskId);
+      return;
+    }
+    if (newStatus === "pending-approval") {
+      await updateDoc(doc(db, "tasks", taskId), {
+        status: "pending-approval",
+        submittedForApprovalAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      toast.success("Task moved to review", { description: t.title });
+      void logActivity({ action: "updated", entity: "task", entityId: taskId, label: t.title, detail: "Moved to pending review" });
+      return;
+    }
+    await updateDoc(doc(db, "tasks", taskId), {
+      status: newStatus,
+      updatedAt: serverTimestamp(),
+      ...(newStatus === "in-progress" && !t.startedAt ? { startedAt: serverTimestamp() } : {}),
+    });
+    toast.success(`Task moved to ${newStatus.replace(/-/g, " ")}`, { description: t.title });
+    void logActivity({ action: "updated", entity: "task", entityId: taskId, label: t.title, detail: `Moved to ${newStatus}` });
+  };
+
+  const quickAddTask = (prefill: { status: string }) => {
+    setForm({
+      title: "",
+      description: "",
+      projectId: "",
+      projectName: "",
+      department: "general",
+      assignedWorkerIds: [],
+      priority: "medium",
+      status: prefill.status || "assigned",
+      dueDate: "",
+      photo: "",
+      notificationMessage: "",
+    });
+    setWorkerSearch("");
+    setModalMode("create");
+  };
+
+  const unreadTaskIdSet = useMemo(() => {
+    return new Set(chatNotifications.map((n) => n.taskId).filter(Boolean));
+  }, [chatNotifications]);
 
   const formatTaskDate = (d: unknown) => {
     if (!d) return "No due date";
@@ -645,8 +776,50 @@ export default function AdminTasksPage() {
           )}
         </div>
         <div className="flex items-center gap-3">
-          <button onClick={openCreate} className="brutal-btn px-4 py-2">
-            + Create &amp; Assign Task
+          {/* View Mode Toggle: List vs Board */}
+          <div className="flex items-center bg-zinc-100 border-2 border-zinc-900 rounded-lg p-1 shadow-[2px_2px_0px_0px_#09090b]">
+            <button
+              type="button"
+              onClick={() => setViewMode("list")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono font-bold uppercase rounded transition-all cursor-pointer ${
+                viewMode === "list"
+                  ? "bg-zinc-900 text-white shadow-xs"
+                  : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200/70"
+              }`}
+              title="Switch to List View"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h7" />
+              </svg>
+              <span>List</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("board")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-mono font-bold uppercase rounded transition-all cursor-pointer ${
+                viewMode === "board"
+                  ? "bg-zinc-900 text-white shadow-xs"
+                  : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200/70"
+              }`}
+              title="Switch to Kanban Board View"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
+              </svg>
+              <span>Board</span>
+            </button>
+          </div>
+
+          <button
+            type="button"
+            id="btn-create-task"
+            onClick={openCreate}
+            className="brutal-btn px-4 py-2 flex items-center gap-2 cursor-pointer shadow-md"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            <span>Create &amp; Assign Task</span>
           </button>
         </div>
       </div>
@@ -709,8 +882,38 @@ export default function AdminTasksPage() {
         </div>
       </div>
 
-      {/* Tasks List */}
-      {filteredTasks.length === 0 ? (
+      {/* Task Content: Board vs List */}
+      {viewMode === "board" ? (
+        <div className="space-y-4">
+          {statusFilter !== "all" && (
+            <div className="flex items-center justify-between p-3 bg-amber-50 border border-amber-300 rounded-lg text-xs font-mono">
+              <span className="text-amber-900 font-bold">
+                ⚠️ Board is currently filtered to status: <span className="uppercase underline">{statusFilter.replace(/-/g, " ")}</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setStatusFilter("all")}
+                className="px-2.5 py-1 bg-amber-200 hover:bg-amber-300 text-amber-950 font-bold uppercase rounded cursor-pointer transition-colors"
+              >
+                Show All Columns
+              </button>
+            </div>
+          )}
+
+          <ProjectBoardView
+            tasks={filteredTasks as unknown as TaskRow[]}
+            workers={workers as unknown as ProjectWorker[]}
+            unreadTaskIdSet={unreadTaskIdSet}
+            onSelectTask={(task) => setDetailTask(task as unknown as Task)}
+            onOpenEditTask={(task) => openEdit(task as unknown as Task)}
+            onDeleteTask={(taskId) => deleteTask(taskId)}
+            onApproveTask={(task) => approveTask(task.id)}
+            onRejectTask={(task) => rejectTask(task.id)}
+            onQuickUpdateStatus={(taskId, newStatus) => quickUpdateStatus(taskId, newStatus)}
+            onQuickAddTask={(prefill) => quickAddTask(prefill)}
+          />
+        </div>
+      ) : filteredTasks.length === 0 ? (
         <div className="text-center py-16 text-zinc-500 bg-white border border-zinc-200 rounded-lg shadow-[2px_2px_0px_0px_#09090b]">
           <p className="text-lg font-bold text-zinc-900 font-oswald uppercase">No tasks match criteria</p>
           <p className="text-sm mt-1 font-mono text-zinc-600">
@@ -753,6 +956,18 @@ export default function AdminTasksPage() {
                     >
                       📷 Proof Photo ↗
                     </a>
+                  )}
+                  {task.subtasks && task.subtasks.length > 0 && (
+                    <span
+                      className={`text-xs font-mono font-bold px-2 py-0.5 border rounded ${
+                        task.subtasks.every((s) => s.completed)
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-300"
+                          : "bg-zinc-100 text-zinc-700 border-zinc-300"
+                      }`}
+                      title="Checklist / Subtasks progress"
+                    >
+                      ☑ {task.subtasks.filter((s) => s.completed).length}/{task.subtasks.length}
+                    </span>
                   )}
                 </div>
                 <span
@@ -856,14 +1071,15 @@ export default function AdminTasksPage() {
 
       {/* Task Details Modal */}
       {detailTask && (
-        <div
-          className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 backdrop-blur-xs"
-          onClick={() => setDetailTask(null)}
-        >
+        <ModalPortal onClose={() => setDetailTask(null)}>
           <div
-            className="bg-white border-2 border-zinc-900 rounded-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 space-y-3 text-sm text-zinc-800 shadow-[8px_8px_0px_0px_#09090b] font-mono"
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-[120] bg-zinc-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in"
+            onClick={() => setDetailTask(null)}
           >
+            <div
+              className="bg-white border-2 border-zinc-900 rounded-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 space-y-3 text-sm text-zinc-800 shadow-2xl font-mono animate-scale-in"
+              onClick={(e) => e.stopPropagation()}
+            >
             {/* Header */}
             <div className="flex items-center justify-between pb-3 border-b-2 border-zinc-900 mb-2">
               <div>
@@ -980,6 +1196,144 @@ export default function AdminTasksPage() {
               )}
             </div>
 
+            {/* Checklist & Subtasks Section */}
+            <div className="mt-4 pt-4 border-t-2 border-zinc-200 space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-bold font-mono text-zinc-950 uppercase flex items-center gap-1.5">
+                  <span>☑</span> Checklist &amp; Subtasks
+                  {detailTask.subtasks && detailTask.subtasks.length > 0 && (
+                    <span className="text-[10px] font-mono font-bold text-zinc-600 bg-zinc-200 px-2 py-0.5 rounded">
+                      {detailTask.subtasks.filter((s) => s.completed).length}/{detailTask.subtasks.length} (
+                      {Math.round(
+                        (detailTask.subtasks.filter((s) => s.completed).length / detailTask.subtasks.length) * 100
+                      )}
+                      %)
+                    </span>
+                  )}
+                </h4>
+              </div>
+
+              {detailTask.subtasks && detailTask.subtasks.length > 0 && (
+                <div className="h-1.5 w-full bg-zinc-200 rounded-full overflow-hidden">
+                  <div
+                    style={{
+                      width: `${Math.round(
+                        (detailTask.subtasks.filter((s) => s.completed).length / detailTask.subtasks.length) * 100
+                      )}%`,
+                    }}
+                    className="h-full bg-emerald-600 transition-all duration-300"
+                  />
+                </div>
+              )}
+
+              <div className="space-y-2">
+                {(detailTask.subtasks || []).map((st) => (
+                  <div
+                    key={st.id}
+                    className={`p-2.5 bg-white border border-zinc-200 rounded-md transition-all group ${
+                      st.completed ? "bg-zinc-50/80 border-zinc-200 opacity-80" : "hover:border-zinc-400 shadow-2xs"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2.5">
+                      <label className="flex items-start gap-2.5 flex-1 min-w-0 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={st.completed}
+                          onChange={() => handleToggleDetailSubtask(st.id)}
+                          className="accent-emerald-600 w-4 h-4 mt-0.5 rounded cursor-pointer shrink-0"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <span
+                            className={`text-xs font-mono font-semibold block break-words ${
+                              st.completed ? "line-through text-zinc-400" : "text-zinc-900"
+                            }`}
+                          >
+                            {st.title}
+                          </span>
+                          {st.description && (
+                            <p
+                              className={`text-[11px] font-mono mt-0.5 whitespace-pre-wrap break-words ${
+                                st.completed ? "text-zinc-400 line-through" : "text-zinc-600"
+                              }`}
+                            >
+                              {st.description}
+                            </p>
+                          )}
+                          {st.link && (
+                            <div className="mt-1.5">
+                              <a
+                                href={formatExternalUrl(st.link)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="inline-flex items-center gap-1.5 text-[10px] font-mono font-semibold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-0.5 rounded transition-colors cursor-pointer max-w-full truncate"
+                                title={st.link}
+                              >
+                                <svg className="w-3 h-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                </svg>
+                                <span className="truncate">{st.link.replace(/^https?:\/\//i, "")}</span>
+                              </a>
+                            </div>
+                          )}
+                        </div>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteDetailSubtask(st.id)}
+                        className="opacity-0 group-hover:opacity-100 p-1 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded text-xs cursor-pointer transition-opacity"
+                        title="Delete subtask"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                ))}
+
+                {(!detailTask.subtasks || detailTask.subtasks.length === 0) && (
+                  <p className="text-xs font-mono text-zinc-400 italic py-1">No subtasks or checklist steps yet.</p>
+                )}
+              </div>
+
+              {/* Add Subtask Form */}
+              <form onSubmit={handleAddDetailSubtask} className="bg-white border border-zinc-200 rounded-md p-2.5 space-y-2">
+                <input
+                  type="text"
+                  value={detailSubtaskTitle}
+                  onChange={(e) => setDetailSubtaskTitle(e.target.value)}
+                  placeholder="+ Subtask title (required)..."
+                  className="w-full text-xs font-mono px-2.5 py-1.5 border border-zinc-300 rounded focus:outline-none focus:border-red-600"
+                />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <input
+                    type="text"
+                    value={detailSubtaskDesc}
+                    onChange={(e) => setDetailSubtaskDesc(e.target.value)}
+                    placeholder="Description / criteria (optional)..."
+                    className="text-[11px] font-mono px-2.5 py-1.5 border border-zinc-200 rounded focus:outline-none focus:border-red-600 text-zinc-700 placeholder:text-zinc-400"
+                  />
+                  <input
+                    type="text"
+                    value={detailSubtaskLink}
+                    onChange={(e) => setDetailSubtaskLink(e.target.value)}
+                    placeholder="Link URL (e.g. figma.com/..., optional)"
+                    className="text-[11px] font-mono px-2.5 py-1.5 border border-zinc-200 rounded focus:outline-none focus:border-red-600 text-zinc-700 placeholder:text-zinc-400"
+                  />
+                </div>
+                <div className="flex justify-end pt-0.5">
+                  <button
+                    type="submit"
+                    disabled={!detailSubtaskTitle.trim()}
+                    className="px-3 py-1.5 bg-zinc-900 hover:bg-black text-white text-xs font-mono font-bold uppercase rounded disabled:opacity-40 cursor-pointer shadow-xs transition-colors"
+                  >
+                    + Add Subtask
+                  </button>
+                </div>
+              </form>
+            </div>
+
             {/* Task Chat */}
             <div className="mt-4 pt-4 border-t-2 border-zinc-200">
               <h4 className="text-xs font-bold font-mono text-red-600 uppercase mb-2 flex items-center gap-1.5">
@@ -1077,19 +1431,21 @@ export default function AdminTasksPage() {
             </div>
           </div>
         </div>
-      )}
+      </ModalPortal>
+    )}
 
       {/* Create / Edit Task Modal */}
       {modalMode && (
-        <div
-          className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 backdrop-blur-xs"
-          onClick={() => setModalMode(null)}
-        >
+        <ModalPortal onClose={() => setModalMode(null)}>
           <div
-            className="bg-white border-2 border-zinc-900 rounded-xl w-full max-w-xl max-h-[90vh] overflow-y-auto p-6 md:p-8 shadow-[8px_8px_0px_0px_#09090b] font-mono text-zinc-950"
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-[120] bg-zinc-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in"
+            onClick={() => setModalMode(null)}
           >
-            <div className="flex items-center justify-between mb-5 pb-3 border-b-2 border-zinc-900">
+            <div
+              className="bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 rounded-xl w-full max-w-xl max-h-[90vh] overflow-y-auto p-6 md:p-8 shadow-2xl font-mono text-zinc-950 dark:text-zinc-100 animate-scale-in"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-5 pb-3 border-b-2 border-zinc-900 dark:border-zinc-700">
               <div>
                 <h3 className="text-2xl font-bold font-oswald text-red-600 uppercase tracking-wider">
                   {modalMode === "create" ? "Create & Assign Task" : "Edit Task & Directives"}
@@ -1365,6 +1721,7 @@ export default function AdminTasksPage() {
             </form>
           </div>
         </div>
+      </ModalPortal>
       )}
     </div>
   );

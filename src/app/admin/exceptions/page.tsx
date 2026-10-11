@@ -1,16 +1,15 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
-import {
-  collection,
-  onSnapshot,
-  doc,
-  updateDoc,
-  deleteDoc,
-  serverTimestamp,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { useEffect, useMemo, useState } from "react";
+import { collection, onSnapshot, doc, updateDoc, serverTimestamp, writeBatch, addDoc } from "firebase/firestore";
+import { auth, db } from "@/lib/firebase";
 import { downloadCsv } from "@/lib/admin/csv";
+import { useUrlState } from "@/lib/admin/useUrlState";
+import { toast, confirmDialog } from "@/lib/admin/feedback";
+import { logActivity } from "@/lib/admin/activity";
+import { BulkBar, BulkButton, EmptyState, PageHeader, SkeletonRows, STATE_ICONS } from "@/components/admin/ui/States";
+import { ICONS } from "@/lib/admin/nav";
+import ModalPortal from "@/components/admin/ui/ModalPortal";
 
 interface ExceptionRequest {
   id: string;
@@ -19,6 +18,7 @@ interface ExceptionRequest {
   workerEmail?: string;
   type?: string;
   lateMinutes?: number;
+  requestedAmount?: number;
   exceptionDate?: string;
   reason?: string;
   supportingEvidence?: string;
@@ -35,47 +35,80 @@ interface ExceptionRequest {
 }
 
 function formatExceptionType(type: string | undefined) {
-  if (type === "late") return "Late Arrival";
-  if (type === "absent") return "Absent for Day";
-  return type || "Unknown Exception";
+  if (type === "late") return "Late arrival";
+  if (type === "absent") return "Absent for day";
+  if (type === "overtime") return "Overtime request";
+  if (type === "annual_leave") return "Annual Leave (سنوية)";
+  if (type === "sick_leave") return "Sick Leave (مرضية)";
+  if (type === "emergency_leave") return "Emergency Leave (عارضة)";
+  if (type === "advance_request") return "Salary Advance (سلفة)";
+  return type || "Other";
 }
 
 function formatTs(t: { toDate: () => Date } | undefined) {
   if (!t?.toDate) return "—";
-  return t.toDate().toLocaleString([], {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return t.toDate().toLocaleString([], { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function timeAgo(t: { toDate: () => Date } | undefined) {
+  if (!t?.toDate) return "";
+  const s = Math.floor((Date.now() - t.toDate().getTime()) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+const adminId = () => auth.currentUser?.email ?? "admin";
+const statusOf = (e: ExceptionRequest) => e.status || "pending";
+
+const STATUS_STYLE: Record<string, string> = {
+  pending: "bg-amber-50 text-amber-700 border-amber-200",
+  approved: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  rejected: "bg-red-50 text-red-700 border-red-200",
+};
+
+function Svg({ d, className = "h-4 w-4" }: { d: string; className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+      <path strokeLinecap="round" strokeLinejoin="round" d={d} />
+    </svg>
+  );
 }
 
 export default function AdminExceptionsPage() {
   const [items, setItems] = useState<ExceptionRequest[]>([]);
-  const [statusFilter, setStatusFilter] = useState("");
-  const [typeFilter, setTypeFilter] = useState("");
-  const [dateFilter, setDateFilter] = useState("all");
-  const [workerFilter, setWorkerFilter] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useUrlState("status", "pending");
+  const [typeFilter, setTypeFilter] = useUrlState("type");
+  const [dateFilter, setDateFilter] = useUrlState("date", "all");
+  const [workerFilter, setWorkerFilter] = useUrlState("worker");
+  const [search, setSearch] = useUrlState("q");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
 
-  const [responseModal, setResponseModal] = useState<{
-    id: string;
-    workerName: string;
-    mode: "reject" | "response";
-  } | null>(null);
+  const [responseModal, setResponseModal] = useState<{ ids: string[]; workerName: string; mode: "reject" | "response" } | null>(null);
   const [modalText, setModalText] = useState("");
 
   useEffect(() => {
-    return onSnapshot(collection(db, "exceptionRequests"), (snap) => {
-      const list: ExceptionRequest[] = [];
-      snap.forEach((d) => list.push({ id: d.id, ...d.data() } as ExceptionRequest));
-      list.sort((a, b) => {
-        const ta = a.createdAt?.toDate?.()?.getTime() ?? a.submittedAt?.toDate?.()?.getTime() ?? 0;
-        const tb = b.createdAt?.toDate?.()?.getTime() ?? b.submittedAt?.toDate?.()?.getTime() ?? 0;
-        return tb - ta;
-      });
-      setItems(list);
-    });
+    return onSnapshot(
+      collection(db, "exceptionRequests"),
+      (snap) => {
+        const list: ExceptionRequest[] = [];
+        snap.forEach((d) => list.push({ id: d.id, ...d.data() } as ExceptionRequest));
+        list.sort((a, b) => {
+          const ta = a.createdAt?.toDate?.()?.getTime() ?? a.submittedAt?.toDate?.()?.getTime() ?? 0;
+          const tb = b.createdAt?.toDate?.()?.getTime() ?? b.submittedAt?.toDate?.()?.getTime() ?? 0;
+          return tb - ta;
+        });
+        setItems(list);
+        setLoading(false);
+      },
+      (err) => {
+        setLoading(false);
+        toast.error("Couldn't load exception requests", { description: err.message });
+      },
+    );
   }, []);
 
   const workerOptions = useMemo(() => {
@@ -86,11 +119,13 @@ export default function AdminExceptionsPage() {
     return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1]));
   }, [items]);
 
-  const filtered = useMemo(() => {
+  /** Everything except the status tab — used for tab counts. */
+  const baseFiltered = useMemo(() => {
+    const q = search.trim().toLowerCase();
     return items.filter((e) => {
-      if (statusFilter && (e.status || "pending") !== statusFilter) return false;
       if (typeFilter && e.type !== typeFilter) return false;
       if (workerFilter && e.workerId !== workerFilter) return false;
+      if (q && !`${e.workerName ?? ""} ${e.workerEmail ?? ""} ${e.reason ?? ""}`.toLowerCase().includes(q)) return false;
       if (dateFilter !== "all") {
         const ex = e.createdAt?.toDate?.() ?? e.submittedAt?.toDate?.() ?? new Date(0);
         const now = new Date();
@@ -100,71 +135,150 @@ export default function AdminExceptionsPage() {
       }
       return true;
     });
-  }, [items, statusFilter, typeFilter, dateFilter, workerFilter]);
+  }, [items, typeFilter, workerFilter, dateFilter, search]);
 
-  const stats = useMemo(() => {
-    const pending = filtered.filter((e) => !e.status || e.status === "pending").length;
-    const approved = filtered.filter((e) => e.status === "approved").length;
-    const rejected = filtered.filter((e) => e.status === "rejected").length;
+  const filtered = useMemo(() => (statusFilter ? baseFiltered.filter((e) => statusOf(e) === statusFilter) : baseFiltered), [baseFiltered, statusFilter]);
+
+  const counts = useMemo(() => {
+    const c = { pending: 0, approved: 0, rejected: 0, all: baseFiltered.length };
+    baseFiltered.forEach((e) => {
+      const s = statusOf(e) as "pending" | "approved" | "rejected";
+      if (s in c) c[s]++;
+    });
+    return c;
+  }, [baseFiltered]);
+
+  const todayN = useMemo(() => {
     const today = new Date().toDateString();
-    const todayN = filtered.filter((e) => {
-      const ex = e.createdAt?.toDate?.() ?? e.submittedAt?.toDate?.() ?? new Date(0);
-      return ex.toDateString() === today;
-    }).length;
-    return { pending, approved, rejected, total: filtered.length, todayN };
+    return items.filter((e) => (e.createdAt?.toDate?.() ?? e.submittedAt?.toDate?.() ?? new Date(0)).toDateString() === today).length;
+  }, [items]);
+
+  // Drop selections that are no longer visible.
+  useEffect(() => {
+    setSelected((prev) => {
+      const visible = new Set(filtered.map((f) => f.id));
+      const next = new Set([...prev].filter((id) => visible.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
   }, [filtered]);
 
-  const approve = async (id: string) => {
-    await updateDoc(doc(db, "exceptionRequests", id), {
-      status: "approved",
-      approvedAt: serverTimestamp(),
-      approvedBy: "admin",
+  const toggle = (id: string) =>
+    setSelected((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
     });
+  const allSelected = filtered.length > 0 && filtered.every((f) => selected.has(f.id));
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(filtered.map((f) => f.id)));
+
+  const byId = (id: string) => items.find((i) => i.id === id);
+
+  const approve = async (ids: string[]) => {
+    setBusy(true);
+    try {
+      const batch = writeBatch(db);
+      ids.forEach((id) => batch.update(doc(db, "exceptionRequests", id), { status: "approved", approvedAt: serverTimestamp(), approvedBy: adminId() }));
+      await batch.commit();
+      ids.forEach((id) => {
+        const e = byId(id);
+        void logActivity({ action: "approved", entity: "exception", entityId: id, label: `${formatExceptionType(e?.type)} · ${e?.workerName ?? "worker"}`, detail: e?.exceptionDate });
+        // Automatically sync salary advances to payroll adjustments
+        if (e?.type === "advance_request" && e.workerId && Number(e.requestedAmount) > 0) {
+          void addDoc(collection(db, "payrollAdjustments"), {
+            workerId: e.workerId,
+            workerName: e.workerName || "Worker",
+            type: "advance",
+            amount: Number(e.requestedAmount),
+            date: e.exceptionDate || new Date().toISOString().split("T")[0],
+            reason: `[Approved Advance Request] ${e.reason || ""}`.trim(),
+            status: "applied",
+            createdAt: serverTimestamp(),
+            createdBy: adminId(),
+          });
+        }
+      });
+      toast.success(ids.length === 1 ? "Request approved" : `${ids.length} requests approved`);
+      setSelected(new Set());
+    } catch (err) {
+      toast.error("Approval failed", { description: err instanceof Error ? err.message : undefined });
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const openRejectModal = (id: string, workerName: string) => {
+  const openRejectModal = (ids: string[], workerName: string) => {
     setModalText("");
-    setResponseModal({ id, workerName, mode: "reject" });
+    setResponseModal({ ids, workerName, mode: "reject" });
   };
 
   const openResponseModal = (id: string, workerName: string) => {
-    setModalText("");
-    setResponseModal({ id, workerName, mode: "response" });
+    setModalText(byId(id)?.adminResponse ?? "");
+    setResponseModal({ ids: [id], workerName, mode: "response" });
   };
 
   const submitModalAction = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!responseModal) return;
-
-    if (responseModal.mode === "reject") {
-      const u: Record<string, unknown> = {
-        status: "rejected",
-        rejectedAt: serverTimestamp(),
-        rejectedBy: "admin",
-      };
-      if (modalText.trim()) u.adminResponse = modalText.trim();
-      await updateDoc(doc(db, "exceptionRequests", responseModal.id), u);
-    } else {
-      if (!modalText.trim()) return;
-      await updateDoc(doc(db, "exceptionRequests", responseModal.id), {
-        adminResponse: modalText.trim(),
-        responseAt: serverTimestamp(),
-        responseBy: "admin",
-      });
+    setBusy(true);
+    try {
+      if (responseModal.mode === "reject") {
+        const batch = writeBatch(db);
+        responseModal.ids.forEach((id) => {
+          const u: Record<string, unknown> = { status: "rejected", rejectedAt: serverTimestamp(), rejectedBy: adminId() };
+          if (modalText.trim()) u.adminResponse = modalText.trim();
+          batch.update(doc(db, "exceptionRequests", id), u);
+        });
+        await batch.commit();
+        responseModal.ids.forEach((id) => {
+          const x = byId(id);
+          void logActivity({ action: "rejected", entity: "exception", entityId: id, label: `${formatExceptionType(x?.type)} · ${x?.workerName ?? "worker"}`, detail: modalText.trim() || undefined });
+        });
+        toast.success(responseModal.ids.length === 1 ? "Request rejected" : `${responseModal.ids.length} requests rejected`);
+        setSelected(new Set());
+      } else {
+        if (!modalText.trim()) return;
+        const id = responseModal.ids[0];
+        await updateDoc(doc(db, "exceptionRequests", id), { adminResponse: modalText.trim(), responseAt: serverTimestamp(), responseBy: adminId() });
+        void logActivity({ action: "updated", entity: "exception", entityId: id, label: `Response to ${responseModal.workerName}`, detail: modalText.trim().slice(0, 120) });
+        toast.success("Response saved", { description: "The worker can now see your note." });
+      }
+      setResponseModal(null);
+    } catch (err) {
+      toast.error("Action failed", { description: err instanceof Error ? err.message : undefined });
+    } finally {
+      setBusy(false);
     }
-
-    setResponseModal(null);
   };
 
-  const remove = async (id: string) => {
-    if (!confirm("Delete this exception request?")) return;
-    await deleteDoc(doc(db, "exceptionRequests", id));
+  const remove = async (ids: string[]) => {
+    const ok = await confirmDialog({
+      title: ids.length === 1 ? "Delete this request?" : `Delete ${ids.length} requests?`,
+      message: "This permanently removes the request and any admin response. This can't be undone.",
+      tone: "danger",
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const batch = writeBatch(db);
+      ids.forEach((id) => batch.delete(doc(db, "exceptionRequests", id)));
+      await batch.commit();
+      ids.forEach((id) => {
+        const x = byId(id);
+        void logActivity({ action: "deleted", entity: "exception", entityId: id, label: `${formatExceptionType(x?.type)} · ${x?.workerName ?? "worker"}` });
+      });
+      toast.success(ids.length === 1 ? "Request deleted" : `${ids.length} requests deleted`);
+      setSelected(new Set());
+    } catch (err) {
+      toast.error("Delete failed", { description: err instanceof Error ? err.message : undefined });
+    } finally {
+      setBusy(false);
+    }
   };
+
 
   const exportCsv = () => {
-    const rows: (string | number)[][] = [
-      ["Worker", "Email", "Type", "Late Minutes", "Exception Date", "Reason", "Evidence", "Status", "Submitted", "Admin Response"],
-    ];
+    const rows: (string | number)[][] = [["Worker", "Email", "Type", "Late Minutes", "Exception Date", "Reason", "Evidence", "Status", "Submitted", "Admin Response"]];
     for (const e of filtered) {
       rows.push([
         e.workerName || "",
@@ -174,286 +288,315 @@ export default function AdminExceptionsPage() {
         e.exceptionDate || "",
         e.reason || "",
         e.supportingEvidence || "",
-        (e.status || "pending").toUpperCase(),
+        statusOf(e).toUpperCase(),
         formatTs(e.createdAt || e.submittedAt),
         e.adminResponse || "",
       ]);
     }
     downloadCsv(rows, `exception_requests_${new Date().toISOString().split("T")[0]}.csv`);
+    toast.success(`Exported ${filtered.length} requests`);
   };
 
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b-2 border-zinc-900">
-        <div>
-          <h2 className="text-2xl font-black text-zinc-950 font-heading tracking-tight uppercase">
-            Exception &amp; Time-Off Requests
-          </h2>
-          <p className="text-xs text-zinc-600 font-mono mt-0.5">
-            Worker Attendance Exceptions, Late Justifications &amp; Approvals
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={exportCsv}
-            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-mono text-xs font-bold uppercase tracking-wider border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] cursor-pointer"
-          >
-            Export CSV
-          </button>
-        </div>
-      </div>
+  const tabs: { key: string; label: string; count: number }[] = [
+    { key: "pending", label: "Pending", count: counts.pending },
+    { key: "approved", label: "Approved", count: counts.approved },
+    { key: "rejected", label: "Rejected", count: counts.rejected },
+    { key: "", label: "All", count: counts.all },
+  ];
 
-      {/* Stats Counters */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+  const hasFilters = !!(typeFilter || workerFilter || search || dateFilter !== "all");
+  const selectedIds = [...selected];
+  const selectedPending = selectedIds.filter((id) => statusOf(byId(id) ?? ({} as ExceptionRequest)) === "pending");
+
+  return (
+    <div className="pb-24">
+      <PageHeader
+        title="Exception requests"
+        description="Late arrival and absence justifications submitted by workers."
+        actions={
+          <button type="button" onClick={exportCsv} disabled={!filtered.length} className="brutal-btn-outline normal-case tracking-normal disabled:opacity-50">
+            <Svg d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /> Export CSV
+          </button>
+        }
+      />
+
+      {/* Stat strip */}
+      <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
         {[
-          { label: "Verify Pending", value: stats.pending, color: "text-amber-700" },
-          { label: "Approved Requests", value: stats.approved, color: "text-emerald-700" },
-          { label: "Rejected Units", value: stats.rejected, color: "text-red-700" },
-          { label: "Total Filtered", value: stats.total, color: "text-zinc-950" },
-          { label: "Submitted Today", value: stats.todayN, color: "text-zinc-950" },
+          { label: "Awaiting decision", value: counts.pending, tone: "text-amber-600", ring: "bg-amber-500" },
+          { label: "Approved", value: counts.approved, tone: "text-emerald-600", ring: "bg-emerald-500" },
+          { label: "Rejected", value: counts.rejected, tone: "text-red-600", ring: "bg-red-500" },
+          { label: "Submitted today", value: todayN, tone: "text-zinc-900", ring: "bg-zinc-400" },
         ].map((s) => (
-          <div key={s.label} className="bg-white border-2 border-zinc-900 shadow-[3px_3px_0px_0px_#09090b] p-4 text-center">
-            <div className={`text-2xl font-black font-heading ${s.color}`}>{s.value}</div>
-            <div className="text-[10px] font-bold uppercase font-mono tracking-wider text-zinc-600 mt-1">{s.label}</div>
+          <div key={s.label} className="ui-card relative overflow-hidden px-4 py-3">
+            <span className={`absolute left-0 top-0 h-full w-1 ${s.ring}`} />
+            <p className="text-[11px] font-medium text-zinc-500">{s.label}</p>
+            <p className={`mt-1 text-2xl font-bold tracking-tight ${s.tone}`}>{loading ? "–" : s.value}</p>
           </div>
         ))}
       </div>
 
-      {/* Filter Bar */}
-      <div className="bg-white border-2 border-zinc-900 shadow-[3px_3px_0px_0px_#09090b] p-4 flex flex-wrap gap-3 font-mono">
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="bg-white border-2 border-zinc-900 px-3 py-2 text-xs font-mono font-bold text-zinc-950 focus:outline-none focus:ring-2 focus:ring-red-600 min-w-[120px]"
-        >
-          <option value="">All Statuses</option>
-          <option value="pending">Pending</option>
-          <option value="approved">Approved</option>
-          <option value="rejected">Rejected</option>
-        </select>
-        <select
-          value={typeFilter}
-          onChange={(e) => setTypeFilter(e.target.value)}
-          className="bg-white border-2 border-zinc-900 px-3 py-2 text-xs font-mono font-bold text-zinc-950 focus:outline-none focus:ring-2 focus:ring-red-600 min-w-[120px]"
-        >
-          <option value="">All Exception Types</option>
-          <option value="late">Late Arrival</option>
-          <option value="absent">Absence</option>
-        </select>
-        <select
-          value={dateFilter}
-          onChange={(e) => setDateFilter(e.target.value)}
-          className="bg-white border-2 border-zinc-900 px-3 py-2 text-xs font-mono font-bold text-zinc-950 focus:outline-none focus:ring-2 focus:ring-red-600 min-w-[120px]"
-        >
-          <option value="all">All Time</option>
-          <option value="today">Today</option>
-          <option value="week">This Week</option>
-          <option value="month">This Month</option>
-        </select>
-        <select
-          value={workerFilter}
-          onChange={(e) => setWorkerFilter(e.target.value)}
-          className="bg-white border-2 border-zinc-900 px-3 py-2 text-xs font-mono font-bold text-zinc-950 focus:outline-none focus:ring-2 focus:ring-red-600 min-w-[160px]"
-        >
-          <option value="">All Workers</option>
-          {workerOptions.map(([id, name]) => (
-            <option key={id} value={id}>
-              {name}
-            </option>
+      {/* Tabs + filters */}
+      <div className="ui-card mb-4 overflow-hidden">
+        <div className="flex flex-wrap items-center gap-1 border-b border-zinc-100 px-3 pt-2">
+          {tabs.map((t) => (
+            <button
+              key={t.key || "all"}
+              type="button"
+              id={`exceptions-tab-${t.key || "all"}`}
+              onClick={() => setStatusFilter(t.key)}
+              className={`relative flex items-center gap-2 px-3 pb-2.5 pt-1.5 text-[13px] font-medium transition-colors cursor-pointer ${
+                statusFilter === t.key ? "text-zinc-900" : "text-zinc-500 hover:text-zinc-800"
+              }`}
+            >
+              {t.label}
+              <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${statusFilter === t.key ? "bg-zinc-900 text-white" : "bg-zinc-100 text-zinc-600"}`}>{t.count}</span>
+              {statusFilter === t.key && <span className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-red-600" />}
+            </button>
           ))}
-        </select>
+        </div>
+        <div className="flex flex-col gap-2 p-3 md:flex-row md:items-center">
+          <div className="relative flex-1">
+            <Svg d={STATE_ICONS.search} className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+            <input id="exceptions-search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search worker, email or reason…" className="brutal-input pl-9" />
+          </div>
+          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="brutal-input md:w-44">
+            <option value="">All request types</option>
+            <option value="late">Late arrival</option>
+            <option value="absent">Absence</option>
+            <option value="overtime">Overtime</option>
+            <option value="annual_leave">Annual Leave (سنوية)</option>
+            <option value="sick_leave">Sick Leave (مرضية)</option>
+            <option value="emergency_leave">Emergency Leave (عارضة)</option>
+            <option value="advance_request">Salary Advance (سلفة)</option>
+          </select>
+          <select value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} className="brutal-input md:w-36">
+            <option value="all">All time</option>
+            <option value="today">Today</option>
+            <option value="week">Last 7 days</option>
+            <option value="month">Last 30 days</option>
+          </select>
+          <select value={workerFilter} onChange={(e) => setWorkerFilter(e.target.value)} className="brutal-input md:w-48">
+            <option value="">All workers</option>
+            {workerOptions.map(([id, name]) => (
+              <option key={id} value={id}>
+                {name}
+              </option>
+            ))}
+          </select>
+          {hasFilters && (
+            <button
+              type="button"
+              onClick={() => {
+                setTypeFilter("");
+                setWorkerFilter("");
+                setSearch("");
+                setDateFilter("all");
+              }}
+              className="px-2 text-xs font-medium text-zinc-500 hover:text-zinc-900 cursor-pointer"
+            >
+              Reset
+            </button>
+          )}
+        </div>
+        {filtered.length > 0 && (
+          <label className="flex cursor-pointer items-center gap-3 border-t border-zinc-100 bg-zinc-50 px-4 py-2 text-xs text-zinc-600">
+            <input type="checkbox" className="mft-check" checked={allSelected} onChange={toggleAll} />
+            Select all {filtered.length} shown
+          </label>
+        )}
       </div>
 
-      {/* Exception Request Cards */}
-      {filtered.length === 0 ? (
-        <div className="p-16 text-center bg-white border-2 border-zinc-900 shadow-[3px_3px_0px_0px_#09090b]">
-          <p className="text-xs font-mono font-bold uppercase tracking-widest text-zinc-500">
-            No exception requests match current filters.
-          </p>
+      {/* List */}
+      {loading ? (
+        <div className="ui-card">
+          <SkeletonRows rows={5} cols={3} />
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="ui-card">
+          {statusFilter === "pending" && !hasFilters ? (
+            <EmptyState icon={STATE_ICONS.check} title="All caught up" description="There are no exception requests waiting for a decision." />
+          ) : (
+            <EmptyState icon={ICONS.exceptions} title="No requests match" description="Try another tab or clear your filters." />
+          )}
         </div>
       ) : (
-        <div className="space-y-4">
-          {filtered.map((e) => (
-            <div
-              key={e.id}
-              className="bg-white border-2 border-zinc-900 p-5 shadow-[4px_4px_0px_0px_#09090b] font-mono text-xs hover:border-red-600 transition-colors"
-            >
-              <div className="flex flex-wrap justify-between items-start gap-2 pb-3 border-b border-zinc-200">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-lg font-bold font-heading text-zinc-950 uppercase tracking-wide">
-                      {formatExceptionType(e.type)}
-                    </h3>
-                    {e.type === "late" && e.lateMinutes != null && (
-                      <span className="px-2 py-0.5 text-xs font-bold bg-amber-50 text-amber-900 border border-amber-400">
-                        ⏱️ {e.lateMinutes} MINUTES LATE
+        <div className="space-y-3">
+          {filtered.map((e) => {
+            const st = statusOf(e);
+            const isSel = selected.has(e.id);
+            return (
+              <article key={e.id} className={`ui-card overflow-hidden transition-all ${isSel ? "ring-2 ring-red-500/40" : ""}`}>
+                <div className="flex items-start gap-4 p-5">
+                  <input type="checkbox" className="mft-check mt-1" checked={isSel} onChange={() => toggle(e.id)} aria-label={`Select request from ${e.workerName}`} />
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-xs font-bold text-zinc-600">
+                    {(e.workerName || "?")
+                      .split(" ")
+                      .map((p) => p[0])
+                      .join("")
+                      .slice(0, 2)
+                      .toUpperCase()}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-sm font-semibold text-zinc-900">{e.workerName || "Unknown worker"}</h3>
+                      <span className={`rounded-md border px-2 py-0.5 text-[11px] font-medium ${
+                        e.type === "absent"
+                          ? "border-violet-200 bg-violet-50 text-violet-700"
+                          : e.type === "overtime"
+                            ? "border-blue-200 bg-blue-50 text-blue-700"
+                            : e.type === "advance_request"
+                              ? "border-amber-300 bg-amber-50 text-amber-900 font-bold"
+                              : ["annual_leave", "sick_leave", "emergency_leave"].includes(e.type || "")
+                                ? "border-emerald-200 bg-emerald-50 text-emerald-800 font-semibold"
+                                : "border-orange-200 bg-orange-50 text-orange-700"
+                      }`}>
+                        {formatExceptionType(e.type)}
+                        {e.type === "late" && e.lateMinutes != null ? ` · ${e.lateMinutes} min` : ""}
+                        {e.type === "overtime" && e.lateMinutes != null ? ` · +${e.lateMinutes} min` : ""}
+                        {e.type === "advance_request" && e.requestedAmount != null ? ` · $${e.requestedAmount}` : ""}
                       </span>
+                      <span className={`rounded-md border px-2 py-0.5 text-[11px] font-semibold capitalize ${STATUS_STYLE[st] ?? STATUS_STYLE.pending}`}>{st}</span>
+                    </div>
+                    <p className="mt-0.5 text-xs text-zinc-500">
+                      {e.workerEmail ? `${e.workerEmail} · ` : ""}For <span className="font-medium text-zinc-700">{e.exceptionDate || "unspecified date"}</span> · submitted {timeAgo(e.createdAt || e.submittedAt)}
+                    </p>
+
+                    <p className="mt-3 whitespace-pre-wrap rounded-lg bg-zinc-50 px-3 py-2.5 text-[13px] leading-relaxed text-zinc-800">{e.reason || <span className="italic text-zinc-400">No written reason provided</span>}</p>
+
+                    {e.supportingEvidence && (
+                      <div className="mt-2 text-xs">
+                        {e.supportingEvidence.startsWith("http") ? (
+                          <a href={e.supportingEvidence} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 font-medium text-red-600 hover:underline">
+                            <Svg d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" className="h-3.5 w-3.5" />
+                            View attached evidence
+                          </a>
+                        ) : (
+                          <p className="break-all text-zinc-600">
+                            <span className="font-medium">Evidence:</span> {e.supportingEvidence}
+                          </p>
+                        )}
+                      </div>
                     )}
-                  </div>
-                  <p className="text-xs text-zinc-700 mt-1 font-bold">
-                    👤 {e.workerName} {e.workerEmail ? `(${e.workerEmail})` : ""}
-                  </p>
-                </div>
-                <span
-                  className={`px-3 py-1 text-xs font-bold border ${
-                    e.status === "approved"
-                      ? "bg-emerald-50 text-emerald-800 border-emerald-400"
-                      : e.status === "rejected"
-                        ? "bg-red-50 text-red-800 border-red-400"
-                        : "bg-amber-50 text-amber-900 border-amber-400"
-                  }`}
-                >
-                  {(e.status || "pending").toUpperCase()}
-                </span>
-              </div>
 
-              <div className="mt-3 space-y-2 text-zinc-800">
-                <p>
-                  <span className="text-zinc-500 font-medium">EXCEPTION DATE:</span>{" "}
-                  <strong className="text-zinc-950">{e.exceptionDate || "Not specified"}</strong>
-                </p>
-                <div className="bg-zinc-50 border border-zinc-200 p-3">
-                  <span className="text-[10px] uppercase font-bold text-zinc-500 block mb-1">Worker Reason / Excuse:</span>
-                  <p className="whitespace-pre-wrap text-zinc-900">{e.reason || "No written reason provided"}</p>
-                </div>
-
-                {e.supportingEvidence && (
-                  <div className="bg-zinc-50 border border-zinc-200 p-3">
-                    <span className="text-[10px] uppercase font-bold text-zinc-500 block mb-1">Supporting Evidence / Attachment:</span>
-                    {e.supportingEvidence.startsWith("http") ? (
-                      <a
-                        href={e.supportingEvidence}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-red-600 underline font-bold inline-flex items-center gap-1 break-all"
-                      >
-                        🔗 View Evidence Document ↗
-                      </a>
-                    ) : (
-                      <p className="text-zinc-900 break-all">{e.supportingEvidence}</p>
+                    {e.adminResponse && (
+                      <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
+                        <p className="text-[11px] font-semibold text-amber-700">Admin response</p>
+                        <p className="mt-0.5 whitespace-pre-wrap text-[13px] text-zinc-800">{e.adminResponse}</p>
+                        {e.responseBy && (
+                          <p className="mt-1 text-[10px] text-zinc-500">
+                            {e.responseBy} · {formatTs(e.responseAt)}
+                          </p>
+                        )}
+                      </div>
                     )}
-                  </div>
-                )}
 
-                {e.adminResponse && (
-                  <div className="bg-amber-50 border border-amber-300 p-3 text-amber-950">
-                    <span className="text-[10px] uppercase font-bold text-amber-900 block mb-1">Admin Response / Notes:</span>
-                    <p className="whitespace-pre-wrap font-medium">{e.adminResponse}</p>
-                    {e.responseBy && (
-                      <p className="text-[10px] text-amber-800 mt-1">
-                        By {e.responseBy} · {formatTs(e.responseAt)}
+                    {(e.approvedAt || e.rejectedAt) && (
+                      <p className="mt-2 text-[11px] text-zinc-400">
+                        {e.approvedAt && `Approved ${formatTs(e.approvedAt)} by ${e.approvedBy || "admin"}`}
+                        {e.rejectedAt && `Rejected ${formatTs(e.rejectedAt)} by ${e.rejectedBy || "admin"}`}
                       </p>
                     )}
                   </div>
-                )}
-
-                <div className="flex flex-wrap items-center gap-4 text-zinc-500 text-[10px] pt-1">
-                  <span>SUBMITTED: {formatTs(e.createdAt || e.submittedAt)}</span>
-                  {e.approvedAt && <span>APPROVED: {formatTs(e.approvedAt)} ({e.approvedBy || "admin"})</span>}
-                  {e.rejectedAt && <span>REJECTED: {formatTs(e.rejectedAt)} ({e.rejectedBy || "admin"})</span>}
                 </div>
-              </div>
 
-              {/* Action Buttons */}
-              <div className="flex flex-wrap items-center gap-2 mt-4 pt-3 border-t border-zinc-200">
-                {(!e.status || e.status === "pending") && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => void approve(e.id)}
-                      className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-mono text-xs font-bold uppercase border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] cursor-pointer"
-                    >
-                      Approve
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openRejectModal(e.id, e.workerName || "Worker")}
-                      className="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white font-mono text-xs font-bold uppercase border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] cursor-pointer"
-                    >
-                      Reject
-                    </button>
-                  </>
-                )}
-                <button
-                  type="button"
-                  onClick={() => openResponseModal(e.id, e.workerName || "Worker")}
-                  className="px-3.5 py-1.5 border-2 border-zinc-900 bg-white hover:bg-zinc-100 text-zinc-950 font-mono text-xs font-bold uppercase shadow-[2px_2px_0px_0px_#09090b] cursor-pointer"
-                >
-                  Add Response Note
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void remove(e.id)}
-                  className="ml-auto px-3 py-1.5 border border-zinc-300 hover:border-red-500 text-red-700 hover:bg-red-50 font-mono text-xs font-bold uppercase cursor-pointer"
-                >
-                  Delete
-                </button>
-              </div>
-            </div>
-          ))}
+                <div className="flex flex-wrap items-center gap-2 border-t border-zinc-100 bg-zinc-50 px-5 py-2.5">
+                  {st === "pending" && (
+                    <>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void approve([e.id])}
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-emerald-700 disabled:opacity-50 cursor-pointer"
+                      >
+                        <Svg d="M5 13l4 4L19 7" className="h-3.5 w-3.5" /> Approve
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => openRejectModal([e.id], e.workerName || "Worker")}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50 cursor-pointer"
+                      >
+                        <Svg d="M6 18L18 6M6 6l12 12" className="h-3.5 w-3.5" /> Reject
+                      </button>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => openResponseModal(e.id, e.workerName || "Worker")}
+                    className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-zinc-600 transition-colors hover:bg-white hover:text-zinc-900 cursor-pointer"
+                  >
+                    <Svg d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" className="h-3.5 w-3.5" />
+                    {e.adminResponse ? "Edit note" : "Add note"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void remove([e.id])}
+                    className="ml-auto inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-zinc-400 transition-colors hover:bg-red-50 hover:text-red-600 cursor-pointer"
+                    aria-label="Delete request"
+                  >
+                    <Svg d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </article>
+            );
+          })}
         </div>
       )}
 
+      <BulkBar count={selected.size} onClear={() => setSelected(new Set())}>
+        <BulkButton tone="success" disabled={busy || selectedPending.length === 0} onClick={() => void approve(selectedPending)}>
+          Approve{selectedPending.length && selectedPending.length !== selected.size ? ` ${selectedPending.length} pending` : ""}
+        </BulkButton>
+        <BulkButton disabled={busy || selectedPending.length === 0} onClick={() => openRejectModal(selectedPending, `${selectedPending.length} workers`)}>
+          Reject
+        </BulkButton>
+        <BulkButton tone="danger" disabled={busy} onClick={() => void remove(selectedIds)}>
+          Delete
+        </BulkButton>
+      </BulkBar>
+
       {/* Response / Rejection Modal */}
       {responseModal && (
-        <div
-          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 font-mono text-zinc-950"
-          onClick={() => setResponseModal(null)}
-        >
-          <div
-            className="bg-white border-2 border-zinc-900 shadow-[8px_8px_0px_0px_#09090b] w-full max-w-md p-6 space-y-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex justify-between items-center pb-2 border-b-2 border-zinc-900">
-              <h3 className="text-lg font-black font-heading uppercase text-zinc-950">
-                {responseModal.mode === "reject" ? "Reject Exception Request" : "Add Admin Response"}
-              </h3>
-              <button
-                type="button"
-                onClick={() => setResponseModal(null)}
-                className="text-2xl font-bold text-zinc-500 hover:text-red-600 cursor-pointer"
-              >
-                &times;
-              </button>
+        <ModalPortal onClose={() => setResponseModal(null)}>
+          <div className="fixed inset-0 z-[120] flex items-center justify-center bg-zinc-950/45 p-4 backdrop-blur-[2px] animate-fade-in" onMouseDown={(ev) => ev.target === ev.currentTarget && setResponseModal(null)}>
+            <div className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-6 animate-scale-in" style={{ boxShadow: "var(--mft-shadow-lg)" }}>
+              <div className="mb-1 flex items-start justify-between">
+                <h3 className="text-base font-semibold text-zinc-900">
+                  {responseModal.mode === "reject" ? (responseModal.ids.length > 1 ? `Reject ${responseModal.ids.length} requests` : "Reject request") : "Response note"}
+                </h3>
+                <button type="button" onClick={() => setResponseModal(null)} className="rounded-md p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 cursor-pointer" aria-label="Close">
+                  <Svg d="M6 18L18 6M6 6l12 12" />
+                </button>
+              </div>
+              <p className="text-sm text-zinc-500">
+                {responseModal.mode === "reject" ? "The worker will see this request as rejected." : "Visible to"} <span className="font-medium text-zinc-800">{responseModal.workerName}</span>
+              </p>
+              <form onSubmit={submitModalAction} className="mt-4 space-y-4">
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-zinc-700">{responseModal.mode === "reject" ? "Reason (optional)" : "Message"}</label>
+                  <textarea
+                    rows={4}
+                    autoFocus
+                    required={responseModal.mode === "response"}
+                    value={modalText}
+                    onChange={(ev) => setModalText(ev.target.value)}
+                    placeholder={responseModal.mode === "reject" ? "e.g. No supporting evidence was provided" : "Write a note for the worker…"}
+                    className="brutal-input resize-y"
+                  />
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button type="button" onClick={() => setResponseModal(null)} className="brutal-btn-outline normal-case tracking-normal">
+                    Cancel
+                  </button>
+                  <button type="submit" disabled={busy} className={`inline-flex items-center rounded-lg px-4 py-2 text-xs font-semibold text-white transition-colors disabled:opacity-50 cursor-pointer ${responseModal.mode === "reject" ? "bg-red-600 hover:bg-red-700" : "bg-zinc-900 hover:bg-zinc-800"}`}>
+                    {busy ? "Saving…" : responseModal.mode === "reject" ? "Reject" : "Save note"}
+                  </button>
+                </div>
+              </form>
             </div>
-            <p className="text-xs text-zinc-600">
-              Target Operator: <strong>{responseModal.workerName}</strong>
-            </p>
-            <form onSubmit={submitModalAction} className="space-y-4">
-              <div>
-                <label className="block text-xs uppercase font-bold text-zinc-700 mb-1">
-                  {responseModal.mode === "reject" ? "Reason for Rejection (Optional)" : "Response / Decision Notes *"}
-                </label>
-                <textarea
-                  rows={4}
-                  required={responseModal.mode === "response"}
-                  value={modalText}
-                  onChange={(e) => setModalText(e.target.value)}
-                  placeholder="Enter details visible to the operator..."
-                  className="w-full bg-white border-2 border-zinc-900 px-3 py-2 text-xs font-mono text-zinc-950 focus:outline-none focus:ring-2 focus:ring-red-600 resize-y"
-                />
-              </div>
-              <div className="flex gap-2 justify-end pt-2 border-t-2 border-zinc-900">
-                <button
-                  type="button"
-                  onClick={() => setResponseModal(null)}
-                  className="px-4 py-2 border-2 border-zinc-900 bg-white hover:bg-zinc-100 text-zinc-950 text-xs font-bold cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className={`px-4 py-2 text-white font-mono text-xs font-bold uppercase tracking-wider border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] cursor-pointer ${
-                    responseModal.mode === "reject" ? "bg-red-600 hover:bg-red-700" : "bg-zinc-900 hover:bg-zinc-800"
-                  }`}
-                >
-                  {responseModal.mode === "reject" ? "Confirm Rejection" : "Save Response"}
-                </button>
-              </div>
-            </form>
           </div>
-        </div>
+        </ModalPortal>
       )}
     </div>
   );

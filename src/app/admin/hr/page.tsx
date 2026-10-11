@@ -7,7 +7,6 @@ import {
   addDoc,
   deleteDoc,
   doc,
-  updateDoc,
   serverTimestamp,
 } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
@@ -18,25 +17,49 @@ import { sessionHours } from "@/lib/admin/workTime";
 import {
   type HrDateRangeKey,
   type SessionForHr,
-  WORK_POLICY,
+  type HrSettings,
+  type HolidayItem,
+  type PayrollAdjustment,
+  DEFAULT_HR_SETTINGS,
   calculateAttendancePolicy,
   computePayrollForWorker,
   formatDepartment,
   formatEmploymentType,
-  getExpectedWorkDays,
+  getExpectedWorkDaysInPeriod,
+  getPayrollCycleRange,
   getHrDateRange,
+  isDateHoliday,
   isLateTodayHtml,
   performanceRating,
   productivityScore,
   sessionDateYmd,
   workerSessionsInRange,
 } from "@/lib/admin/hrReports";
+import {
+  subscribeHrSettings,
+  subscribeHolidays,
+  subscribePayrollAdjustments,
+  subscribePayrollCycles,
+  setPayrollCycleStatus,
+  type PayrollCycleRecord,
+} from "@/lib/admin/hrSettings";
+import { toast, confirmDialog } from "@/lib/admin/feedback";
+import { logActivity } from "@/lib/admin/activity";
+import { useUrlState } from "@/lib/admin/useUrlState";
+import ModalPortal from "@/components/admin/ui/ModalPortal";
+import HrPolicyModal from "@/components/admin/hr/HrPolicyModal";
+import HrHolidaysManager from "@/components/admin/hr/HrHolidaysManager";
+import HrPayslipModal from "@/components/admin/hr/HrPayslipModal";
+import HrAdjustmentModal from "@/components/admin/hr/HrAdjustmentModal";
+import HrDateRangeSelector from "@/components/admin/hr/HrDateRangeSelector";
+import HrExcuseModal from "@/components/admin/hr/HrExcuseModal";
 
 interface Worker {
   id: string;
   firstName: string;
   lastName: string;
   email?: string;
+  phone?: string;
   role: string;
   status: string;
   department?: string;
@@ -114,7 +137,7 @@ function todayYmd() {
 }
 
 function workerName(w: Worker) {
-  return `${w.firstName} ${w.lastName}`.trim();
+  return `${w.firstName || ""} ${w.lastName || ""}`.trim() || "Worker";
 }
 
 function formatTs(t: { toDate: () => Date } | undefined) {
@@ -134,37 +157,28 @@ function assignedIds(task: TaskDoc): string[] {
   return a ? [a] : [];
 }
 
-function inferSentAlertCategory(a: AlertDoc): "warning" | "info" | "urgent" | "penalty" {
-  if (a.hasPenalty || (a.penalty != null && String(a.penalty).length > 0)) return "penalty";
-  if (a.type === "urgent" || a.priority === "urgent") return "urgent";
-  if (["policy", "general", "schedule"].includes(a.type || "")) return "info";
-  return "warning";
-}
-
-function alertPassesSentFilters(
-  a: AlertDoc,
-  typeFilter: string,
-  priorityFilter: string,
-  dateFilter: string,
-): boolean {
-  if (priorityFilter && (a.priority || "medium") !== priorityFilter) return false;
-  if (dateFilter !== "all") {
-    const alertDate = a.sentAt?.toDate?.() ?? a.createdAt?.toDate?.() ?? new Date(0);
-    const now = new Date();
-    if (dateFilter === "today" && alertDate.toDateString() !== now.toDateString()) return false;
-    if (dateFilter === "week" && alertDate < new Date(now.getTime() - 7 * 86400000)) return false;
-    if (dateFilter === "month" && alertDate < new Date(now.getTime() - 30 * 86400000)) return false;
-  }
-  if (!typeFilter) return true;
-  return inferSentAlertCategory(a) === typeFilter;
-}
-
 const EMPLOYMENT_OPTIONS = [
   { value: "full-time", label: "Full-time" },
   { value: "part-time", label: "Part-time" },
   { value: "contract", label: "Contract" },
   { value: "intern", label: "Intern" },
 ];
+
+const HR_NAV_TABS = [
+  { key: "overview", label: "Today Operations", icon: "M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" },
+  { key: "payroll", label: "Payroll Center", icon: "M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" },
+  { key: "team", label: "Team Analytics", icon: "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" },
+  { key: "holidays", label: "Holidays & Policies", icon: "M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" },
+  { key: "alerts", label: "Alerts & Disciplinary", icon: "M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" },
+];
+
+function SvgI({ d, className = "h-4 w-4" }: { d: string; className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+      <path strokeLinecap="round" strokeLinejoin="round" d={d} />
+    </svg>
+  );
+}
 
 export default function AdminHRPage() {
   const [adminEmail, setAdminEmail] = useState("admin");
@@ -173,27 +187,44 @@ export default function AdminHRPage() {
   const [tasks, setTasks] = useState<TaskDoc[]>([]);
   const [penalties, setPenalties] = useState<PenaltyDoc[]>([]);
   const [alerts, setAlerts] = useState<AlertDoc[]>([]);
+  const [settings, setSettings] = useState<HrSettings>(DEFAULT_HR_SETTINGS);
+  const [holidays, setHolidays] = useState<HolidayItem[]>([]);
+  const [adjustments, setAdjustments] = useState<PayrollAdjustment[]>([]);
+  const [cycleRecords, setCycleRecords] = useState<Record<string, PayrollCycleRecord>>({});
   const [refreshTick, setRefreshTick] = useState(0);
+
+  // Modals
   const [sendOpen, setSendOpen] = useState(false);
-  const [payrollModalOpen, setPayrollModalOpen] = useState(false);
+  const [policyModalOpen, setPolicyModalOpen] = useState(false);
+  const [adjustmentModalOpen, setAdjustmentModalOpen] = useState(false);
+  const [excuseModalWorker, setExcuseModalWorker] = useState<Worker | null>(null);
+  const [payslipModalWorker, setPayslipModalWorker] = useState<Worker | null>(null);
   const [dashboardWorker, setDashboardWorker] = useState<Worker | null>(null);
   const [dashTab, setDashTab] = useState<HrTab>("overview");
 
-  const [workerSearch, setWorkerSearch] = useState("");
-  const [departmentFilter, setDepartmentFilter] = useState("");
-  const [employmentFilter, setEmploymentFilter] = useState("");
-  const [hrDateRange, setHrDateRange] = useState<HrDateRangeKey>("week");
+  // Navigation & Search State
+  const [section, setSection] = useUrlState("tab", "overview");
+  const [workerSearch, setWorkerSearch] = useUrlState("q");
+  const [departmentFilter, setDepartmentFilter] = useUrlState("dept");
+  const [employmentFilter, setEmploymentFilter] = useUrlState("type");
   const [reportType, setReportType] = useState<ReportType>("attendance");
+  const [todayFilter, setTodayFilter] = useState<"all" | "present" | "absent" | "late" | "overtime">("all");
 
+  // Date Range and Cycle Selection State
+  const [rangeKey, setRangeKey] = useState<string>("cycle");
+  const [customStart, setCustomStart] = useState<Date>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    return d;
+  });
+  const [customEnd, setCustomEnd] = useState<Date>(() => new Date());
+
+  // Alerts filtering
   const [sentTypeFilter, setSentTypeFilter] = useState("");
   const [sentDateFilter, setSentDateFilter] = useState("all");
   const [sentPriorityFilter, setSentPriorityFilter] = useState("");
 
-  const [payrollPeriod, setPayrollPeriod] = useState<HrDateRangeKey>("month");
-  const [payrollIncludeOvertime, setPayrollIncludeOvertime] = useState(true);
-  const [payrollIncludeAbsence, setPayrollIncludeAbsence] = useState(true);
-  const [payrollIncludeBonuses, setPayrollIncludeBonuses] = useState(true);
-
+  // Alert Form
   const [alertForm, setAlertForm] = useState({
     type: "",
     title: "",
@@ -202,17 +233,16 @@ export default function AdminHRPage() {
     department: "",
     workerId: "",
     priority: "medium",
-    penalty: "",
-    penaltyReason: "",
   });
 
+  // Auth
   useEffect(() => {
-    const u = onAuthStateChanged(auth, (user) => {
+    return onAuthStateChanged(auth, (user) => {
       setAdminEmail(user?.email || "admin");
     });
-    return () => u();
   }, []);
 
+  // Subscriptions
   useEffect(() => {
     return onSnapshot(collection(db, "workers"), (snap) => {
       const list: Worker[] = [];
@@ -241,11 +271,7 @@ export default function AdminHRPage() {
     return onSnapshot(collection(db, "penalties"), (snap) => {
       const list: PenaltyDoc[] = [];
       snap.forEach((d) => list.push({ id: d.id, ...d.data() } as PenaltyDoc));
-      list.sort((a, b) => {
-        const ta = a.appliedAt?.toDate?.()?.getTime() ?? 0;
-        const tb = b.appliedAt?.toDate?.()?.getTime() ?? 0;
-        return tb - ta;
-      });
+      list.sort((a, b) => (b.appliedAt?.toDate?.()?.getTime() ?? 0) - (a.appliedAt?.toDate?.()?.getTime() ?? 0));
       setPenalties(list);
     });
   }, [refreshTick]);
@@ -254,35 +280,111 @@ export default function AdminHRPage() {
     return onSnapshot(collection(db, "alerts"), (snap) => {
       const list: AlertDoc[] = [];
       snap.forEach((d) => list.push({ id: d.id, ...d.data() } as AlertDoc));
-      list.sort((a, b) => {
-        const ta = a.sentAt?.toDate?.()?.getTime() ?? a.createdAt?.toDate?.()?.getTime() ?? 0;
-        const tb = b.sentAt?.toDate?.()?.getTime() ?? b.createdAt?.toDate?.()?.getTime() ?? 0;
-        return tb - ta;
-      });
+      list.sort((a, b) => (b.sentAt?.toDate?.()?.getTime() ?? 0) - (a.sentAt?.toDate?.()?.getTime() ?? 0));
       setAlerts(list);
     });
   }, [refreshTick]);
 
+  // HR Settings & Holidays subscriptions
+  useEffect(() => {
+    return subscribeHrSettings((s) => setSettings(s));
+  }, []);
+
+  useEffect(() => {
+    return subscribeHolidays((h) => setHolidays(h));
+  }, []);
+
+  useEffect(() => {
+    return subscribePayrollAdjustments((a) => setAdjustments(a));
+  }, []);
+
+  useEffect(() => {
+    return subscribePayrollCycles((c) => setCycleRecords(c));
+  }, []);
+
   const approved = useMemo(() => workers.filter((w) => w.status === "approved"), [workers]);
   const today = todayYmd();
 
+  // Active Date Range Resolution
+  const activeCycle = useMemo(() => {
+    return getPayrollCycleRange(new Date(), settings.monthStartDay);
+  }, [settings.monthStartDay]);
+
+  const activePeriod = useMemo(() => {
+    if (rangeKey === "cycle") return activeCycle;
+    if (rangeKey === "prev-cycle") {
+      const prevDate = new Date();
+      prevDate.setDate(prevDate.getDate() - 32);
+      return getPayrollCycleRange(prevDate, settings.monthStartDay);
+    }
+    if (rangeKey === "month") {
+      return getPayrollCycleRange(new Date(), 1); // 1st to end
+    }
+    if (rangeKey === "week") {
+      const res = getHrDateRange("week", settings);
+      return { start: res.start, end: res.end, label: "Last 7 Days" };
+    }
+    return {
+      start: customStart,
+      end: customEnd,
+      label: `Custom (${customStart.toLocaleDateString()} - ${customEnd.toLocaleDateString()})`,
+    };
+  }, [rangeKey, activeCycle, settings, customStart, customEnd]);
+
+  // Unique cycle ID for status tracking
+  const currentCycleId = useMemo(() => {
+    const s = activePeriod.start.toISOString().split("T")[0];
+    const e = activePeriod.end.toISOString().split("T")[0];
+    return `cycle_${s}_${e}`;
+  }, [activePeriod]);
+
+  const currentCycleStatus = useMemo(() => {
+    return cycleRecords[currentCycleId]?.status || "draft";
+  }, [cycleRecords, currentCycleId]);
+
+  // Check if today is an official holiday
+  const todayHoliday = useMemo(() => {
+    return isDateHoliday(today, holidays);
+  }, [today, holidays]);
+
+  // Today Sessions & Live Attendance
   const todaysSessions = useMemo(() => {
     return sessions.filter((s) => sessionDateYmd(s) === today);
   }, [sessions, today]);
 
-  const presentToday = useMemo(() => {
-    const fromSessions = new Set(todaysSessions.map((s) => s.workerId).filter(Boolean)).size;
-    const fromOnline = approved.filter((w) => w.isOnline === true).length;
-    return Math.max(fromSessions, fromOnline);
+  const presentWorkerIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of todaysSessions) if (s.workerId) set.add(s.workerId);
+    for (const w of approved) if (w.isOnline) set.add(w.id);
+    return set;
   }, [todaysSessions, approved]);
 
+  const lateWorkerIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of todaysSessions) {
+      if (s.workerId && isLateTodayHtml(s, settings)) set.add(s.workerId);
+    }
+    return set;
+  }, [todaysSessions, settings]);
+
+  const overtimeWorkerIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of todaysSessions) {
+      if (s.workerId && sessionHours(s) > (settings.standardHours || 8)) set.add(s.workerId);
+    }
+    return set;
+  }, [todaysSessions, settings.standardHours]);
+
+  // Today KPI Metrics
   const hrSummary = useMemo(() => {
     const expectedWorkers = approved.length;
+    const presentToday = presentWorkerIds.size;
     const absentToday = Math.max(0, expectedWorkers - presentToday);
-    const lateToday = todaysSessions.filter((s) => isLateTodayHtml(s)).length;
-    const overtimeToday = todaysSessions.filter((s) => sessionHours(s) > WORK_POLICY.STANDARD_HOURS).length;
+    const lateToday = lateWorkerIds.size;
+    const overtimeToday = overtimeWorkerIds.size;
     const attendanceRate = expectedWorkers > 0 ? Math.round((presentToday / expectedWorkers) * 100) : 0;
     const payrollHoursToday = todaysSessions.reduce((sum, s) => sum + sessionHours(s), 0);
+
     return {
       presentToday,
       absentToday,
@@ -291,49 +393,24 @@ export default function AdminHRPage() {
       attendanceRate,
       payrollHoursToday: Math.round(payrollHoursToday * 10) / 10,
     };
-  }, [approved.length, presentToday, todaysSessions]);
+  }, [approved.length, presentWorkerIds.size, lateWorkerIds.size, overtimeWorkerIds.size, todaysSessions]);
 
-  const systemInsights = useMemo(() => {
-    const items: { type: "danger" | "warning" | "info"; title: string; message: string }[] = [];
-    const expectedWorkers = approved.length;
-    if (hrSummary.absentToday > 0) {
-      const absentList = approved.filter((w) => !todaysSessions.some((s) => s.workerId === w.id)).map(workerName);
-      items.push({
-        type: "warning",
-        title: "Workers absent today",
-        message: `${hrSummary.absentToday} approved worker(s) have no session today: ${absentList.slice(0, 5).join(", ")}${absentList.length > 5 ? "…" : ""}`,
-      });
-    }
-    const overtimeSessions = todaysSessions.filter((s) => sessionHours(s) > WORK_POLICY.STANDARD_HOURS);
-    if (overtimeSessions.length > 0) {
-      items.push({
-        type: "info",
-        title: "Overtime today",
-        message: `${overtimeSessions.length} session(s) over ${WORK_POLICY.STANDARD_HOURS}h`,
-      });
-    }
-    const lateSessions = todaysSessions.filter((s) => isLateTodayHtml(s));
-    if (lateSessions.length > 0) {
-      items.push({
-        type: "warning",
-        title: "Late arrivals (login ≥ 11:00)",
-        message: `${lateSessions.length} session(s) flagged late`,
-      });
-    }
-    const longSessions = todaysSessions.filter((s) => sessionHours(s) > 10);
-    if (longSessions.length > 0) {
-      items.push({
-        type: "danger",
-        title: "Extended sessions",
-        message: `${longSessions.length} session(s) over 10h today`,
-      });
-    }
-    if (items.length === 0 && expectedWorkers > 0) {
-      items.push({ type: "info", title: "All clear", message: "No automated HR warnings for today." });
-    }
-    return items;
-  }, [approved, hrSummary.absentToday, todaysSessions]);
+  // Filtered Workers for Today Tab
+  const filteredTodayWorkers = useMemo(() => {
+    return approved.filter((w) => {
+      const isPresent = presentWorkerIds.has(w.id);
+      const isLate = lateWorkerIds.has(w.id);
+      const isOvertime = overtimeWorkerIds.has(w.id);
 
+      if (todayFilter === "present") return isPresent;
+      if (todayFilter === "absent") return !isPresent;
+      if (todayFilter === "late") return isLate;
+      if (todayFilter === "overtime") return isOvertime;
+      return true;
+    });
+  }, [approved, todayFilter, presentWorkerIds, lateWorkerIds, overtimeWorkerIds]);
+
+  // Worker Tasks Map
   const workerTaskStats = useMemo(() => {
     const m = new Map<string, { completed: number; total: number }>();
     for (const t of tasks) {
@@ -347,22 +424,7 @@ export default function AdminHRPage() {
     return m;
   }, [tasks]);
 
-  const filteredAlerts = useMemo(() => {
-    return alerts.filter((a) => alertPassesSentFilters(a, sentTypeFilter, sentPriorityFilter, sentDateFilter));
-  }, [alerts, sentTypeFilter, sentPriorityFilter, sentDateFilter]);
-
-  const sentAlertStats = useMemo(() => {
-    const total = filteredAlerts.length;
-    const now = new Date();
-    const todayStr = now.toDateString();
-    const todaySent = filteredAlerts.filter((a) => {
-      const d = a.sentAt?.toDate?.() ?? a.createdAt?.toDate?.() ?? new Date(0);
-      return d.toDateString() === todayStr;
-    }).length;
-    const readAlerts = filteredAlerts.filter((a) => a.readBy && a.readBy.length > 0).length;
-    return { total, todaySent, readAlerts, unread: total - readAlerts };
-  }, [filteredAlerts]);
-
+  // Filtered Workers for Reports
   const filteredHrWorkers = useMemo(() => {
     const q = workerSearch.trim().toLowerCase();
     return approved.filter((w) => {
@@ -374,746 +436,785 @@ export default function AdminHRPage() {
     });
   }, [approved, workerSearch, departmentFilter, employmentFilter]);
 
-  const rangeBounds = useMemo(() => getHrDateRange(hrDateRange), [hrDateRange]);
-
-  const resolveRecipients = useCallback((): string[] | null => {
-    const { recipient, department, workerId } = alertForm;
-    switch (recipient) {
-      case "all":
-        return approved.map((w) => w.id);
-      case "department": {
-        if (!department) return null;
-        return approved.filter((w) => w.department === department).map((w) => w.id);
-      }
-      case "individual": {
-        if (!workerId) return null;
-        return [workerId];
-      }
-      case "absent": {
-        const present = new Set(todaysSessions.map((s) => s.workerId));
-        return approved.filter((w) => !present.has(w.id)).map((w) => w.id);
-      }
-      case "late": {
-        return todaysSessions
-          .filter((s) => isLateTodayHtml(s))
-          .map((s) => s.workerId)
-          .filter((id): id is string => !!id);
-      }
-      case "overtime": {
-        return todaysSessions
-          .filter((s) => sessionHours(s) > WORK_POLICY.STANDARD_HOURS)
-          .map((s) => s.workerId)
-          .filter((id): id is string => !!id);
-      }
-      default:
-        return [];
-    }
-  }, [alertForm, approved, todaysSessions]);
-
-  const sendAlert = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const f = alertForm;
-    if (!f.type || !f.title || !f.message || !f.recipient || !f.priority) {
-      alert("Please fill in all required fields.");
-      return;
-    }
-    if (f.penalty && !f.penaltyReason.trim()) {
-      alert("Please provide a reason for the penalty/bonus.");
-      return;
-    }
-    const recipients = resolveRecipients();
-    if (recipients === null) {
-      alert("Please select department or worker where required.");
-      return;
-    }
-    if (recipients.length === 0) {
-      alert("No recipients found for the selected criteria.");
-      return;
-    }
-
-    const penaltyIds: string[] = [];
-    try {
-      if (f.penalty) {
-        const penaltyValue = parseFloat(f.penalty);
-        if (Number.isNaN(penaltyValue)) {
-          alert("Invalid penalty value.");
-          return;
-        }
-        const penaltyType = penaltyValue > 0 ? "deduction" : "bonus";
-        const absValue = Math.abs(penaltyValue);
-
-        for (const rid of recipients) {
-          const worker = workers.find((w) => w.id === rid);
-          if (!worker) continue;
-          const ref = await addDoc(collection(db, "penalties"), {
-            workerId: rid,
-            workerName: workerName(worker),
-            workerEmail: worker.email || "",
-            type: penaltyType,
-            amount: absValue,
-            reason: f.penaltyReason.trim(),
-            appliedBy: adminEmail,
-            appliedAt: serverTimestamp(),
-            alertId: null,
-            date: today,
-            category: "manual",
-            description: `${penaltyType === "deduction" ? "Penalty" : "Bonus"} of ${absValue} day(s) via alert: ${f.title}`,
-          });
-          penaltyIds.push(ref.id);
-        }
-      }
-
-      const alertRef = await addDoc(collection(db, "alerts"), {
-        type: f.type,
-        title: f.title,
-        message: f.message,
-        recipient: f.recipient,
-        department: f.department || "",
-        workerId: f.workerId || "",
-        priority: f.priority,
-        penalty: f.penalty || "",
-        penaltyReason: f.penaltyReason || "",
-        recipients,
-        sentBy: adminEmail,
-        sentAt: serverTimestamp(),
-        recipientCount: recipients.length,
-        isRead: false,
-        createdAt: serverTimestamp(),
-        hasPenalty: !!f.penalty,
-        penaltyApplied: f.penalty ? parseFloat(f.penalty) : 0,
-        readBy: [],
+  // Comprehensive Payroll Calculations for Active Period
+  const payrollTableData = useMemo(() => {
+    const { start, end } = activePeriod;
+    return approved.map((w) => {
+      const ws = workerSessionsInRange(sessions, w.id, start, end);
+      const workerAdj = adjustments.filter((a) => {
+        if (a.workerId !== w.id) return false;
+        const d = a.date;
+        return d >= start.toISOString().split("T")[0] && d <= end.toISOString().split("T")[0];
       });
 
-      for (const pid of penaltyIds) {
-        await updateDoc(doc(db, "penalties", pid), { alertId: alertRef.id });
-      }
-
-      const extra = f.penalty
-        ? ` with ${parseFloat(f.penalty) > 0 ? "penalty" : "bonus"} of ${Math.abs(parseFloat(f.penalty))} day(s)`
-        : "";
-      alert(`Alert sent to ${recipients.length} worker(s)${extra}.`);
-      setSendOpen(false);
-      setAlertForm({
-        type: "",
-        title: "",
-        message: "",
-        recipient: "all",
-        department: "",
-        workerId: "",
-        priority: "medium",
-        penalty: "",
-        penaltyReason: "",
+      const p = computePayrollForWorker(ws, w.hourlyRate || settings.defaultHourlyRate || 31.25, start, end, {
+        weekendDays: settings.weekendDays,
+        holidays,
+        settings,
+        adjustments: workerAdj,
       });
-    } catch (err) {
-      console.error(err);
-      alert("Failed to send alert.");
-    }
-  };
 
-  const deleteAlert = async (id: string) => {
-    if (!confirm("Delete this alert? This cannot be undone.")) return;
-    await deleteDoc(doc(db, "alerts", id));
-  };
-
-  const resendAlert = async (a: AlertDoc) => {
-    if (!confirm("Resend this alert to all original recipients?")) return;
-    await addDoc(collection(db, "alerts"), {
-      type: a.type || "general",
-      title: a.title || "",
-      message: a.message || "",
-      recipient: a.recipient || "all",
-      department: a.department || "",
-      workerId: a.workerId || "",
-      priority: a.priority || "medium",
-      penalty: a.penalty || "",
-      penaltyReason: a.penaltyReason || "",
-      recipients: a.recipients || [],
-      sentBy: adminEmail,
-      sentAt: serverTimestamp(),
-      recipientCount: a.recipients?.length ?? a.recipientCount ?? 0,
-      isRead: false,
-      createdAt: serverTimestamp(),
-      hasPenalty: !!a.hasPenalty,
-      penaltyApplied: a.penaltyApplied ?? 0,
-      readBy: [],
-      resent: true,
-      originalAlertId: a.id,
+      return {
+        worker: w,
+        payroll: p,
+        adjustments: workerAdj,
+      };
     });
-  };
+  }, [approved, activePeriod, sessions, adjustments, settings, holidays]);
 
-  const exportAttendance = () => {
-    const rows: (string | number)[][] = [
-      ["Date", "Worker", "Email", "Department", "Hours", "Late", "Active"],
-    ];
-    const sorted = [...sessions].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-    for (const s of sorted) {
-      rows.push([
-        s.date || sessionDateYmd(s) || "",
-        s.workerName || "",
-        "",
-        s.department || "",
-        Math.round(sessionHours(s) * 100) / 100,
-        s.isLate ? "yes" : "no",
-        s.isActive ? "yes" : "no",
-      ]);
+  // Overall Payroll Totals
+  const payrollTotals = useMemo(() => {
+    let gross = 0;
+    let net = 0;
+    let overtime = 0;
+    let deductions = 0;
+    let advances = 0;
+
+    for (const row of payrollTableData) {
+      gross += row.payroll.basePay + row.payroll.overtimePay + row.payroll.allowances;
+      net += row.payroll.netPayable;
+      overtime += row.payroll.overtimePay;
+      deductions += row.payroll.absencePenalty + row.payroll.totalLatePenaltyEgp + row.payroll.manualDeductions;
+      advances += row.payroll.salaryAdvances;
     }
-    downloadCsv(rows, `attendance_export_${today}.csv`);
-  };
 
-  const exportPenaltiesCsv = () => {
-    const rows: (string | number)[][] = [
-      ["Worker", "Email", "Dept", "Penalty/Bonus", "Amount (days)", "Date", "Reason", "Description"],
-    ];
-    for (const p of penalties) {
-      const w = workers.find((x) => x.id === p.workerId);
-      rows.push([
-        p.workerName || (w ? workerName(w) : ""),
-        w?.email || "",
-        w?.department || "",
-        p.type || "",
-        p.amount ?? "",
-        p.date || "",
-        p.reason || "",
-        p.description || "",
-      ]);
-    }
-    downloadCsv(rows, `payroll_penalties_${today}.csv`);
-  };
+    return {
+      gross: Math.round(gross),
+      net: Math.round(net),
+      overtime: Math.round(overtime),
+      deductions: Math.round(deductions),
+      advances: Math.round(advances),
+    };
+  }, [payrollTableData]);
 
-  const exportSentAlertsCsv = () => {
-    const rows: (string | number)[][] = [
-      ["Title", "Type", "Priority", "Recipients", "Sent", "Message", "Read by (count)"],
-    ];
-    for (const a of filteredAlerts) {
-      rows.push([
-        a.title || "",
-        a.type || "",
-        a.priority || "",
-        String(a.recipientCount ?? a.recipients?.length ?? 0),
-        formatTs(a.sentAt || a.createdAt),
-        (a.message || "").replace(/\n/g, " "),
-        a.readBy?.length ?? 0,
-      ]);
-    }
-    downloadCsv(rows, `hr_sent_alerts_${today}.csv`);
-  };
-
-  const runPayrollExport = () => {
-    const { start, end } = getHrDateRange(payrollPeriod);
+  // Export CSV Handler
+  const exportPayrollCsv = () => {
     const headers = [
       "Employee Name",
       "Employee ID",
       "Department",
+      "Role",
       "Days Worked",
+      "Expected Days",
       "Total Hours",
       "Hourly Rate (EGP)",
       "Base Pay (EGP)",
-      ...(payrollIncludeOvertime ? ["Overtime Pay (EGP)"] : []),
-      ...(payrollIncludeAbsence ? ["Absence Penalty (EGP)"] : []),
-      ...(payrollIncludeBonuses ? ["Bonuses/Penalties (EGP)"] : []),
-      "Total Pay (EGP)",
+      "Overtime Pay (EGP)",
+      "Allowances (EGP)",
+      "Absence Deductions (EGP)",
+      "Late Penalties (EGP)",
+      "Salary Advances (EGP)",
+      "Net Payable (EGP)",
     ];
+
     const rows: (string | number)[][] = [headers];
 
-    for (const w of approved) {
-      const ws = workerSessionsInRange(sessions, w.id, start, end);
-      const hr = w.hourlyRate && w.hourlyRate > 0 ? w.hourlyRate : 31.25;
-      const p = computePayrollForWorker(ws, hr, start, end);
-      let bonusNet = 0;
-      if (payrollIncludeBonuses) {
-        const periodPenalties = penalties.filter((pen) => {
-          if (!pen.appliedAt?.toDate) return false;
-          const d = pen.appliedAt.toDate();
-          return d >= start && d <= end && pen.workerId === w.id;
-        });
-        for (const pen of periodPenalties) {
-          const days = pen.amount || 0;
-          const val = days * 8 * hr * (pen.type === "bonus" ? 1 : -1);
-          bonusNet += val;
-        }
-      }
-
-      const baseRow: (string | number)[] = [
-        workerName(w),
-        w.id,
-        w.department || "",
-        p.daysWorked,
-        p.totalHours,
-        hr,
-        p.basePay,
-      ];
-      if (payrollIncludeOvertime) baseRow.push(p.overtimePay);
-      if (payrollIncludeAbsence) baseRow.push(p.absencePenalty);
-      if (payrollIncludeBonuses) baseRow.push(Math.round(bonusNet));
-      const total =
-        p.basePay +
-        (payrollIncludeOvertime ? p.overtimePay : 0) -
-        (payrollIncludeAbsence ? p.absencePenalty : 0) -
-        p.totalLatePenaltyEgp +
-        (payrollIncludeBonuses ? Math.round(bonusNet) : 0);
-      baseRow.push(total);
-      rows.push(baseRow);
-    }
-    downloadCsv(rows, `payroll_report_${payrollPeriod}_${today}.csv`);
-    setPayrollModalOpen(false);
-  };
-
-  const openDashboard = (w: Worker) => {
-    setDashboardWorker(w);
-    setDashTab("overview");
-  };
-
-  const dashSessions = useMemo(() => {
-    if (!dashboardWorker) return [];
-    return sessions
-      .filter((s) => s.workerId === dashboardWorker.id)
-      .sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-  }, [dashboardWorker, sessions]);
-
-  const dashTasks = useMemo(() => {
-    if (!dashboardWorker) return [];
-    return tasks.filter((t) => taskAssignsToWorker(t, dashboardWorker.id));
-  }, [dashboardWorker, tasks]);
-
-  const dashPenalties = useMemo(() => {
-    if (!dashboardWorker) return [];
-    return penalties.filter((p) => p.workerId === dashboardWorker.id);
-  }, [dashboardWorker, penalties]);
-
-  const perfWindow = useMemo(() => {
-    const cutoff = Date.now() - 30 * 86400000;
-    return dashSessions.filter((s) => {
-      const y = sessionDateYmd(s);
-      if (!y) return false;
-      return new Date(y + "T12:00:00").getTime() >= cutoff;
-    });
-  }, [dashSessions]);
-
-  const dashStats = useMemo(() => {
-    if (!dashboardWorker) return null;
-    const totalH = dashSessions.reduce((a, s) => a + sessionHours(s), 0);
-    const exp = getExpectedWorkDays("month");
-    const workDays = dashSessions.length;
-    const att = exp > 0 ? Math.min(100, Math.round((workDays / exp) * 100)) : 0;
-    const ts = workerTaskStats.get(dashboardWorker.id) || { completed: 0, total: 0 };
-    const hr = dashboardWorker.hourlyRate && dashboardWorker.hourlyRate > 0 ? dashboardWorker.hourlyRate : 31.25;
-    const earnings = Math.round(totalH * hr);
-    const prod = productivityScore(
-      dashboardWorker.expectedHours || 8,
-      ts.completed,
-      ts.total,
-      perfWindow as SessionForHr[],
-    );
-    return { totalH, att, ts, earnings, prod, hr };
-  }, [dashboardWorker, dashSessions, perfWindow, workerTaskStats]);
-
-  const modalPayroll = useMemo(() => {
-    if (!dashboardWorker) return null;
-    const start = new Date();
-    start.setDate(1);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date();
-    const ws = workerSessionsInRange(sessions, dashboardWorker.id, start, end);
-    const hr = dashboardWorker.hourlyRate && dashboardWorker.hourlyRate > 0 ? dashboardWorker.hourlyRate : 31.25;
-    return computePayrollForWorker(ws, hr, start, end);
-  }, [dashboardWorker, sessions]);
-
-  const insightBorder: Record<string, string> = {
-    danger: "border-2 border-red-500 bg-red-50 text-red-950 shadow-[2px_2px_0px_0px_#dc2626]",
-    warning: "border-2 border-amber-500 bg-amber-50 text-amber-950 shadow-[2px_2px_0px_0px_#d97706]",
-    info: "border-2 border-blue-500 bg-blue-50 text-blue-950 shadow-[2px_2px_0px_0px_#2563eb]",
-  };
-
-  const penaltiesInRange = useMemo(() => {
-    const { start, end } = rangeBounds;
-    return penalties.filter((p) => {
-      if (!p.appliedAt?.toDate) return false;
-      const d = p.appliedAt.toDate();
-      return d >= start && d <= end;
-    });
-  }, [penalties, rangeBounds]);
-
-  const renderReportCards = () => {
-    const { start, end } = rangeBounds;
-    const expectedDays = getExpectedWorkDays(hrDateRange);
-
-    if (reportType === "penalties") {
-      const totalPen = penaltiesInRange.filter((p) => p.type === "deduction").length;
-      const totalBon = penaltiesInRange.filter((p) => p.type === "bonus").length;
-      const dedDays = penaltiesInRange.filter((p) => p.type === "deduction").reduce((s, p) => s + (p.amount || 0), 0);
-      const bonDays = penaltiesInRange.filter((p) => p.type === "bonus").reduce((s, p) => s + (p.amount || 0), 0);
-
-      const byDate: Record<string, PenaltyDoc[]> = {};
-      for (const p of penaltiesInRange) {
-        const d = p.appliedAt?.toDate?.().toDateString() || "unknown";
-        if (!byDate[d]) byDate[d] = [];
-        byDate[d].push(p);
-      }
-      const sortedDates = Object.keys(byDate).sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
-
-      return (
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 p-4 bg-zinc-50 border-2 border-zinc-900 shadow-[3px_3px_0px_0px_#09090b]">
-            <div className="text-center">
-              <div className="text-2xl font-black text-red-600 font-heading">{totalPen}</div>
-              <div className="text-xs text-zinc-600 font-mono font-bold uppercase mt-1">Penalties</div>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-black text-emerald-700 font-heading">{totalBon}</div>
-              <div className="text-xs text-zinc-600 font-mono font-bold uppercase mt-1">Bonuses</div>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-black text-red-600 font-heading">{dedDays.toFixed(1)}</div>
-              <div className="text-xs text-zinc-600 font-mono font-bold uppercase mt-1">Days deducted</div>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-black text-emerald-700 font-heading">{bonDays.toFixed(1)}</div>
-              <div className="text-xs text-zinc-600 font-mono font-bold uppercase mt-1">Bonus days</div>
-            </div>
-          </div>
-          {penaltiesInRange.length === 0 ? (
-            <p className="text-zinc-500 font-mono text-center py-8">No penalties in this period.</p>
-          ) : (
-            sortedDates.map((dateKey) => (
-              <div key={dateKey}>
-                <h4 className="text-zinc-950 font-bold mb-2 px-3 py-1.5 bg-zinc-100 border border-zinc-300 font-mono text-xs uppercase tracking-wider">{dateKey}</h4>
-                <div className="space-y-2">
-                  {byDate[dateKey].map((penalty) => (
-                    <div
-                      key={penalty.id}
-                      className="border-2 border-zinc-900 p-4 bg-white text-sm shadow-[2px_2px_0px_0px_#09090b]"
-                    >
-                      <div className="flex justify-between items-start gap-2">
-                        <span className="font-bold text-zinc-950 font-heading">{penalty.workerName}</span>
-                        <span className={`px-2 py-0.5 text-xs font-mono font-bold border ${
-                          penalty.type === "deduction"
-                            ? "border-red-400 bg-red-50 text-red-700"
-                            : "border-emerald-400 bg-emerald-50 text-emerald-700"
-                        }`}>
-                          {penalty.type === "deduction" ? "Penalty" : "Bonus"} {penalty.amount}d
-                        </span>
-                      </div>
-                      <p className="text-zinc-800 font-mono text-xs mt-2 bg-zinc-50 border border-zinc-200 p-2">{penalty.reason}</p>
-                      <p className="text-xs text-zinc-500 font-mono mt-2">
-                        {penalty.appliedBy} · {formatTs(penalty.appliedAt)} · {penalty.category || "—"}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      );
+    for (const row of payrollTableData) {
+      rows.push([
+        workerName(row.worker),
+        row.worker.id,
+        formatDepartment(row.worker.department),
+        row.worker.role || "Operator",
+        row.payroll.daysWorked,
+        row.payroll.expectedWorkDays,
+        row.payroll.totalHours,
+        row.payroll.hourlyRate,
+        row.payroll.basePay,
+        row.payroll.overtimePay,
+        row.payroll.allowances,
+        row.payroll.absencePenalty,
+        row.payroll.totalLatePenaltyEgp,
+        row.payroll.salaryAdvances,
+        row.payroll.netPayable,
+      ]);
     }
 
-    return (
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {filteredHrWorkers.map((w) => {
-          const ws = workerSessionsInRange(sessions, w.id, start, end);
-          const ts = workerTaskStats.get(w.id) || { completed: 0, total: 0 };
-          const totalHours = ws.reduce((sum, s) => sum + sessionHours(s), 0);
-          const workDays = ws.length;
-          const avgDaily = workDays > 0 ? totalHours / workDays : 0;
-          const attendancePct =
-            expectedDays > 0 ? Math.min(100, Math.round((workDays / expectedDays) * 100)) : 0;
-          const prod = productivityScore(w.expectedHours || 8, ts.completed, ts.total, ws);
-          const hrRate = w.hourlyRate && w.hourlyRate > 0 ? w.hourlyRate : 31.25;
-          const pay = computePayrollForWorker(ws, hrRate, start, end);
+    const s = activePeriod.start.toISOString().split("T")[0];
+    const e = activePeriod.end.toISOString().split("T")[0];
+    downloadCsv(rows, `payroll_${s}_to_${e}.csv`);
+    toast.success("Payroll report downloaded");
+  };
 
-          const longSessions = ws.filter((s) => sessionHours(s) > 12);
-          const otHours = ws.reduce((sum, s) => sum + Math.max(0, sessionHours(s) - 8), 0);
-          const missing: string[] = [];
-          if (!w.emergencyContact) missing.push("Emergency contact");
-          if (!w.lastLogin) missing.push("Last login");
-          if (!w.hourlyRate) missing.push("Hourly rate");
-          const violations: string[] = [];
-          if (longSessions.length) violations.push(`${longSessions.length} sessions over 12h`);
-          if (otHours > 20) violations.push(`Excessive overtime: ${Math.round(otHours)}h`);
-          if (missing.length) violations.push(`Missing: ${missing.join(", ")}`);
-          const compliant = violations.length === 0;
+  // Cycle Approval Handler
+  const handleToggleCycleStatus = async (nextStatus: "draft" | "approved" | "paid") => {
+    const confirmMessages = {
+      approved: "Approve this payroll cycle? This confirms that hours and penalties have been reviewed.",
+      paid: "Mark this payroll as PAID (تم الصرف)? This locks the cycle as disbursed.",
+      draft: "Revert payroll back to Draft review mode?",
+    };
 
-          return (
-            <button
-              key={w.id}
-              type="button"
-              onClick={() => openDashboard(w)}
-              className="text-left border-2 border-zinc-900 p-4 bg-white hover:border-red-600 hover:shadow-[4px_4px_0px_0px_#dc2626] transition-all shadow-[2px_2px_0px_0px_#09090b] flex flex-col justify-between"
-            >
-              <div>
-                {reportType === "attendance" && (
-                  <>
-                    <div className="flex justify-between items-start gap-2">
-                      <span className="font-bold text-zinc-950 font-heading text-base">{workerName(w)}</span>
-                      <span
-                        className={`text-xs px-2 py-0.5 border font-mono font-bold ${
-                          attendancePct >= 90
-                            ? "bg-emerald-50 text-emerald-800 border-emerald-300"
-                            : attendancePct >= 70
-                              ? "bg-amber-50 text-amber-800 border-amber-300"
-                              : "bg-red-50 text-red-800 border-red-300"
-                        }`}
-                      >
-                        {attendancePct}% attendance
-                      </span>
-                    </div>
-                    <div className="text-xs text-zinc-700 font-mono mt-3 space-y-1">
-                      <div><strong className="text-zinc-900">Dept:</strong> {formatDepartment(w.department)}</div>
-                      <div><strong className="text-zinc-900">Employment:</strong> {formatEmploymentType(w.employmentType)}</div>
-                      <div>
-                        <strong className="text-zinc-900">Work days:</strong> {workDays} / {expectedDays}
-                      </div>
-                      <div><strong className="text-zinc-900">Total hours:</strong> {Math.round(totalHours * 10) / 10}h</div>
-                      <div><strong className="text-zinc-900">Avg daily:</strong> {Math.round(avgDaily * 10) / 10}h</div>
-                      <div className="pt-1 font-bold">{w.isOnline ? "🟢 Online" : "⚪ Offline"}</div>
-                    </div>
-                  </>
-                )}
-                {reportType === "productivity" && (
-                  <>
-                    <div className="flex justify-between items-start gap-2">
-                      <span className="font-bold text-zinc-950 font-heading text-base">{workerName(w)}</span>
-                      <span className="text-xs px-2 py-0.5 border border-zinc-300 bg-zinc-100 text-zinc-900 font-bold font-mono">{prod}%</span>
-                    </div>
-                    <div className="text-xs text-zinc-700 font-mono mt-3 space-y-1">
-                      <div><strong className="text-zinc-900">Hours:</strong> {Math.round(totalHours * 10) / 10}h · Sessions: {ws.length}</div>
-                      <div><strong className="text-zinc-900">Tasks done:</strong> {ts.completed} / {ts.total}</div>
-                      <div><strong className="text-zinc-900">Rating:</strong> {performanceRating(prod)}</div>
-                    </div>
-                  </>
-                )}
-                {reportType === "payroll" && (
-                  <>
-                    <div className="flex justify-between items-start gap-2">
-                      <span className="font-bold text-zinc-950 font-heading text-base">{workerName(w)}</span>
-                      <span className="text-emerald-800 font-mono font-bold text-sm bg-emerald-50 border border-emerald-300 px-2 py-0.5">EGP {pay.totalPay}</span>
-                    </div>
-                    <div className="text-xs text-zinc-700 font-mono mt-3 space-y-1">
-                      <div><strong className="text-zinc-900">Days:</strong> {pay.daysWorked} · <strong className="text-zinc-900">Hours:</strong> {pay.totalHours}h</div>
-                      <div><strong className="text-zinc-900">Overtime:</strong> {pay.overtimeHours}h · <strong className="text-zinc-900">Rate:</strong> EGP {pay.hourlyRate}/h</div>
-                      <div><strong className="text-zinc-900">Base:</strong> EGP {pay.basePay} + <strong className="text-zinc-900">OT:</strong> EGP {pay.overtimePay}</div>
-                      {pay.absencePenalty > 0 && <div><strong className="text-red-700">Absence:</strong> -EGP {pay.absencePenalty}</div>}
-                      <div><strong className="text-red-700">Late:</strong> -EGP {pay.totalLatePenaltyEgp}</div>
-                    </div>
-                  </>
-                )}
-                {reportType === "compliance" && (
-                  <>
-                    <div className="flex justify-between items-start gap-2">
-                      <span className="font-bold text-zinc-950 font-heading text-base">{workerName(w)}</span>
-                      <span className={`px-2 py-0.5 text-xs font-mono font-bold border ${
-                        compliant
-                          ? "bg-emerald-50 text-emerald-800 border-emerald-300"
-                          : "bg-red-50 text-red-800 border-red-300"
-                      }`}>
-                        {compliant ? "✓ OK" : "Issues"}
-                      </span>
-                    </div>
-                    <div className="text-xs text-zinc-700 font-mono mt-3 space-y-1">
-                      <div><strong className="text-zinc-900">Sessions:</strong> {ws.length} · <strong className="text-zinc-900">Long (&gt;12h):</strong> {longSessions.length}</div>
-                      <div><strong className="text-zinc-900">Overtime hours:</strong> {Math.round(otHours * 10) / 10}h</div>
-                      <div><strong className="text-zinc-900">Status:</strong> {w.status}</div>
-                      <div><strong className="text-zinc-900">Last login:</strong> {w.lastLogin?.toDate ? w.lastLogin.toDate().toLocaleDateString() : "—"}</div>
-                    </div>
-                    {!compliant && (
-                      <ul className="text-xs text-red-700 mt-2 list-disc pl-4 font-mono font-semibold">
-                        {violations.map((v) => (
-                          <li key={v}>{v}</li>
-                        ))}
-                      </ul>
-                    )}
-                  </>
-                )}
-              </div>
-              <p className="text-[11px] text-red-600 mt-4 pt-2 border-t border-zinc-100 font-bold font-mono">Click for worker dashboard →</p>
-            </button>
-          );
-        })}
-      </div>
-    );
+    const ok = await confirmDialog({
+      title: `Confirm Payroll Status: ${nextStatus.toUpperCase()}`,
+      message: confirmMessages[nextStatus],
+      confirmLabel: `Mark as ${nextStatus.toUpperCase()}`,
+    });
+    if (!ok) return;
+
+    try {
+      const updateData: Partial<PayrollCycleRecord> = {
+        cycleLabel: activePeriod.label,
+        periodStart: activePeriod.start.toISOString().split("T")[0],
+        periodEnd: activePeriod.end.toISOString().split("T")[0],
+        status: nextStatus,
+        totalGrossPay: payrollTotals.gross,
+        totalNetPay: payrollTotals.net,
+        totalWorkers: approved.length,
+      };
+
+      if (nextStatus === "approved") {
+        updateData.approvedAt = { toDate: () => new Date() };
+        updateData.approvedBy = adminEmail;
+      } else if (nextStatus === "paid") {
+        updateData.paidAt = { toDate: () => new Date() };
+        updateData.paidBy = adminEmail;
+      }
+
+      await setPayrollCycleStatus(currentCycleId, updateData, adminEmail);
+      toast.success(`Payroll cycle marked as ${nextStatus.toUpperCase()}`);
+    } catch (err) {
+      toast.error("Failed to update cycle status", {
+        description: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
+
+  // Send Alert Handler
+  const handleSendAlert = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!alertForm.type || !alertForm.title || !alertForm.message) {
+      toast.warning("Please fill in required fields");
+      return;
+    }
+
+    let recipients: string[] = [];
+    if (alertForm.recipient === "all") recipients = approved.map((w) => w.id);
+    else if (alertForm.recipient === "department") recipients = approved.filter((w) => w.department === alertForm.department).map((w) => w.id);
+    else if (alertForm.recipient === "individual") recipients = alertForm.workerId ? [alertForm.workerId] : [];
+
+    try {
+      await addDoc(collection(db, "alerts"), {
+        type: alertForm.type,
+        title: alertForm.title,
+        message: alertForm.message,
+        recipient: alertForm.recipient,
+        department: alertForm.department || "",
+        workerId: alertForm.workerId || "",
+        priority: alertForm.priority,
+        recipients,
+        sentBy: adminEmail,
+        sentAt: serverTimestamp(),
+        createdAt: serverTimestamp(),
+        recipientCount: recipients.length,
+        isRead: false,
+        readBy: [],
+      });
+
+      void logActivity({
+        action: "created",
+        entity: "hr",
+        label: `Sent alert: ${alertForm.title} to ${recipients.length} workers`,
+      });
+
+      toast.success("Broadcast alert sent");
+      setSendOpen(false);
+      setAlertForm({ type: "", title: "", message: "", recipient: "all", department: "", workerId: "", priority: "medium" });
+    } catch (err) {
+      toast.error("Failed to send alert", { description: err instanceof Error ? err.message : String(err) });
+    }
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap justify-between gap-4 items-start pb-4 border-b-2 border-zinc-900">
+    <div className="space-y-5">
+      {/* ── Top Header ── */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h2 className="text-2xl font-black text-zinc-950 font-heading tracking-tight">HR Management Dashboard</h2>
-          <p className="text-xs text-zinc-600 font-mono mt-1">Live Firestore · parity with legacy HR tab (production tools)</p>
+          <span className="text-[10px] font-bold uppercase tracking-widest text-red-600 font-mono">
+            // WORKFORCE COMMAND CENTER
+          </span>
+          <h2 className="text-2xl font-bold tracking-tight text-zinc-950 dark:text-white mt-0.5">
+            HR Operations &amp; Payroll
+          </h2>
+          <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+            Attendance monitoring, statutory holidays, automated payroll, and worker communications.
+          </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+
+        <div className="flex flex-wrap items-center gap-2 font-mono">
+          <button
+            type="button"
+            onClick={() => setPolicyModalOpen(true)}
+            className="px-3 py-2 border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 text-zinc-950 dark:text-zinc-100 text-xs font-bold uppercase tracking-wider cursor-pointer flex items-center gap-1.5 shadow-[2px_2px_0px_0px_#09090b]"
+          >
+            <span>⚙️ Policies (Day {settings.monthStartDay})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setAdjustmentModalOpen(true)}
+            className="px-3 py-2 border-2 border-zinc-900 dark:border-zinc-700 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 text-emerald-800 dark:text-emerald-300 text-xs font-bold uppercase tracking-wider cursor-pointer flex items-center gap-1 shadow-[2px_2px_0px_0px_#059669]"
+          >
+            <span>+ Record Advance (سلفة)</span>
+          </button>
+
           <button
             type="button"
             onClick={() => setSendOpen(true)}
-            className="px-4 py-2 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white font-mono text-xs font-bold uppercase tracking-wider border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all cursor-pointer"
+            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-bold uppercase tracking-wider border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] cursor-pointer flex items-center gap-1.5"
           >
-            Send alert
+            <SvgI d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+            <span>Send Alert</span>
           </button>
+
           <button
             type="button"
-            onClick={() => setPayrollModalOpen(true)}
-            className="px-4 py-2 bg-white hover:bg-zinc-100 text-zinc-950 font-mono text-xs font-bold uppercase tracking-wider border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all cursor-pointer"
+            onClick={() => {
+              setRefreshTick((n) => n + 1);
+              toast.info("Refreshed live data");
+            }}
+            title="Refresh Data"
+            className="p-2 border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 text-zinc-600 dark:text-zinc-300 rounded cursor-pointer"
           >
-            Payroll report
-          </button>
-          <button
-            type="button"
-            onClick={exportAttendance}
-            className="px-4 py-2 bg-white hover:bg-zinc-100 text-zinc-950 font-mono text-xs font-bold uppercase tracking-wider border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all cursor-pointer"
-          >
-            Export attendance
-          </button>
-          <button
-            type="button"
-            onClick={exportPenaltiesCsv}
-            className="px-4 py-2 bg-white hover:bg-zinc-100 text-zinc-950 font-mono text-xs font-bold uppercase tracking-wider border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all cursor-pointer"
-          >
-            Export penalties CSV
-          </button>
-          <button
-            type="button"
-            onClick={() => setRefreshTick((n) => n + 1)}
-            className="px-4 py-2 bg-white hover:bg-zinc-100 text-zinc-950 font-mono text-xs font-bold uppercase tracking-wider border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all cursor-pointer"
-          >
-            Refresh
+            <SvgI d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
           </button>
         </div>
       </div>
 
-      <div className="space-y-2">
-        <h3 className="text-xs font-bold uppercase font-mono tracking-wider text-zinc-700">Today&apos;s insights</h3>
-        <div className="space-y-2">
-          {systemInsights.map((item, i) => (
-            <div key={i} className={`p-3 text-xs font-mono font-medium ${insightBorder[item.type]}`}>
-              <strong className="font-bold uppercase tracking-wide">{item.title}:</strong> {item.message}
+      {/* ── Official Holiday Banner (If Today is a Holiday) ── */}
+      {todayHoliday && (
+        <div className="p-4 bg-emerald-50 dark:bg-emerald-950/50 border-2 border-emerald-600 rounded-lg flex items-center justify-between gap-3 shadow-[3px_3px_0px_0px_#059669] animate-fade-in font-mono">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">🎉</span>
+            <div>
+              <div className="font-bold text-sm text-emerald-950 dark:text-emerald-200 uppercase tracking-wide">
+                Today is an Official Holiday: {todayHoliday.name} (عطلة رسمية)
+              </div>
+              <p className="text-xs text-emerald-800 dark:text-emerald-300 mt-0.5">
+                Work shift is excused. Workers will <strong>NOT</strong> incur absence deductions on this date.
+              </p>
             </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="flex flex-wrap gap-3 items-end bg-white border-2 border-zinc-900 p-4 shadow-[3px_3px_0px_0px_#09090b]">
-        <div className="flex-1 min-w-[200px]">
-          <label className="block text-xs font-bold uppercase font-mono text-zinc-700 mb-1">Search workers</label>
-          <input
-            value={workerSearch}
-            onChange={(e) => setWorkerSearch(e.target.value)}
-            placeholder="Name, email, department, role…"
-            className="w-full bg-white border-2 border-zinc-900 px-3 py-2 text-sm text-zinc-950 font-mono focus:outline-none focus:ring-2 focus:ring-red-600"
-          />
-        </div>
-        <button
-          type="button"
-          onClick={() => setWorkerSearch("")}
-          className="px-4 py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-950 font-mono text-xs font-bold border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none cursor-pointer"
-        >
-          Clear search
-        </button>
-      </div>
-
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        {[
-          ["Present today", hrSummary.presentToday],
-          ["Absent today", hrSummary.absentToday],
-          ["Late today (≥11:00)", hrSummary.lateToday],
-          ["Overtime today (>8h)", hrSummary.overtimeToday],
-          ["Attendance rate", `${hrSummary.attendanceRate}%`],
-          ["Payroll hours (today)", `${hrSummary.payrollHoursToday}h`],
-        ].map(([label, value]) => (
-          <div key={label as string} className="bg-white border-2 border-zinc-900 p-4 text-center shadow-[3px_3px_0px_0px_#09090b]">
-            <div className="text-2xl font-black text-red-600 font-heading">{value as string | number}</div>
-            <div className="text-[10px] text-zinc-600 uppercase font-mono font-bold mt-1 tracking-wider">{label as string}</div>
           </div>
+          <span className="px-2.5 py-1 bg-emerald-600 text-white font-bold rounded text-xs uppercase">
+            Paid Holiday
+          </span>
+        </div>
+      )}
+
+      {/* ── Navigation Tabs ── */}
+      <div className="flex gap-1 overflow-x-auto border-b-2 border-zinc-900 dark:border-zinc-700 pb-1 font-mono">
+        {HR_NAV_TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            id={`hr-nav-tab-${t.key}`}
+            onClick={() => setSection(t.key)}
+            className={`relative flex shrink-0 items-center gap-2 px-4 py-2.5 text-xs font-bold uppercase tracking-wider transition-all cursor-pointer rounded-t ${
+              section === t.key
+                ? "bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950 border-2 border-b-0 border-zinc-900 dark:border-zinc-100 shadow-[2px_-2px_0px_0px_#09090b]"
+                : "text-zinc-600 dark:text-zinc-400 hover:text-zinc-950 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-800"
+            }`}
+          >
+            <SvgI d={t.icon} className={`h-4 w-4 ${section === t.key ? "text-red-500" : ""}`} />
+            <span>{t.label}</span>
+          </button>
         ))}
       </div>
 
-      <div className="bg-white border-2 border-zinc-900 p-5 space-y-4 shadow-[4px_4px_0px_0px_#09090b]">
-        <div className="flex flex-wrap justify-between gap-2 items-center pb-2 border-b-2 border-zinc-900">
-          <h3 className="text-lg font-black text-zinc-950 font-heading uppercase tracking-wide">Sent alerts &amp; notifications</h3>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={exportSentAlertsCsv}
-              className="px-3 py-1.5 bg-white hover:bg-zinc-100 text-zinc-950 font-mono text-xs font-bold uppercase border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] cursor-pointer"
-            >
-              Export
-            </button>
+      {/* ══════════════════════════════════════════════════════════════════
+          TAB 1: TODAY OPERATIONS (LIVE ROSTER & 1-CLICK EXCUSES)
+      ══════════════════════════════════════════════════════════════════ */}
+      {section === "overview" && (
+        <div className="space-y-5 animate-fade-in font-mono">
+          {/* Top KPI Metrics Strip */}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+            {[
+              { label: "Present Today", value: hrSummary.presentToday, bar: "bg-emerald-500" },
+              { label: "Absent Today", value: hrSummary.absentToday, bar: "bg-red-500" },
+              { label: `Late (>${settings.shiftStartTime || "10:00"})`, value: hrSummary.lateToday, bar: "bg-amber-500" },
+              { label: `Overtime (>${settings.standardHours || 8}h)`, value: hrSummary.overtimeToday, bar: "bg-violet-500" },
+              { label: "Attendance Rate", value: `${hrSummary.attendanceRate}%`, bar: "bg-blue-500" },
+              { label: "Hours Today", value: `${hrSummary.payrollHoursToday}h`, bar: "bg-zinc-400" },
+            ].map((s) => (
+              <div key={s.label} className="p-4 bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 shadow-[3px_3px_0px_0px_#09090b] relative overflow-hidden">
+                <span className={`absolute left-0 top-0 h-full w-1.5 ${s.bar}`} />
+                <p className="text-[10px] font-bold uppercase text-zinc-500">{s.label}</p>
+                <p className="text-2xl font-bold font-oswald text-zinc-950 dark:text-white mt-1">{s.value}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Live Roster Filter Pills */}
+          <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 shadow-[2px_2px_0px_0px_#09090b] rounded-lg">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[10px] font-bold uppercase text-zinc-400 mr-1">Roster:</span>
+              {[
+                { id: "all", label: `All Workers (${approved.length})` },
+                { id: "present", label: `Present (${hrSummary.presentToday})` },
+                { id: "absent", label: `Absent (${hrSummary.absentToday})` },
+                { id: "late", label: `Late Arrivals (${hrSummary.lateToday})` },
+                { id: "overtime", label: `On Overtime (${hrSummary.overtimeToday})` },
+              ].map((pill) => (
+                <button
+                  key={pill.id}
+                  type="button"
+                  onClick={() => setTodayFilter(pill.id as any)}
+                  className={`px-3 py-1.5 rounded text-xs font-bold uppercase cursor-pointer border transition-all ${
+                    todayFilter === pill.id
+                      ? "bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950 border-zinc-950 shadow-sm"
+                      : "bg-zinc-50 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100"
+                  }`}
+                >
+                  {pill.label}
+                </button>
+              ))}
+            </div>
+
+            <span className="text-xs text-zinc-500">
+              Shift Policy: Start {settings.shiftStartTime || "10:00"} · {settings.gracePeriodMinutes || 60}m Grace
+            </span>
+          </div>
+
+          {/* Live Workers Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {filteredTodayWorkers.map((w) => {
+              const workerSession = todaysSessions.find((s) => s.workerId === w.id);
+              const isPresent = presentWorkerIds.has(w.id);
+              const isLate = lateWorkerIds.has(w.id);
+              const workedHours = workerSession ? Math.round(sessionHours(workerSession) * 10) / 10 : 0;
+
+              return (
+                <div
+                  key={w.id}
+                  className={`p-4 border-2 border-zinc-900 dark:border-zinc-700 rounded-lg flex flex-col justify-between transition-all ${
+                    !isPresent
+                      ? "bg-red-50/40 dark:bg-red-950/20 border-red-300 dark:border-red-900 shadow-[2px_2px_0px_0px_#dc2626]"
+                      : isLate
+                        ? "bg-amber-50/40 dark:bg-amber-950/20 border-amber-300 shadow-[2px_2px_0px_0px_#d97706]"
+                        : "bg-white dark:bg-zinc-900 shadow-[2px_2px_0px_0px_#09090b]"
+                  }`}
+                >
+                  <div>
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <h4 className="font-bold text-sm text-zinc-950 dark:text-white font-heading">
+                          {workerName(w)}
+                        </h4>
+                        <p className="text-[11px] text-zinc-500">{formatDepartment(w.department)} · {w.role || "Operator"}</p>
+                      </div>
+
+                      <span
+                        className={`px-2 py-0.5 text-[10px] font-bold uppercase rounded border ${
+                          !isPresent
+                            ? "bg-red-100 text-red-800 border-red-300 dark:bg-red-900/60 dark:text-red-300"
+                            : isLate
+                              ? "bg-amber-100 text-amber-800 border-amber-300"
+                              : "bg-emerald-100 text-emerald-800 border-emerald-300"
+                        }`}
+                      >
+                        {!isPresent ? "Absent" : isLate ? "Late" : "On-Time"}
+                      </span>
+                    </div>
+
+                    <div className="mt-3 pt-2 border-t border-zinc-200 dark:border-zinc-800 text-xs space-y-1">
+                      <div className="flex justify-between">
+                        <span className="text-zinc-500">Status:</span>
+                        <strong className={w.isOnline ? "text-emerald-600" : "text-zinc-500"}>
+                          {w.isOnline ? "🟢 Online in shift" : "⚪ Offline"}
+                        </strong>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-zinc-500">Today Hours:</span>
+                        <strong>{workedHours}h / {settings.standardHours || 8}h</strong>
+                      </div>
+                      {workerSession?.loginTime?.toDate && (
+                        <div className="flex justify-between">
+                          <span className="text-zinc-500">Clock-in Time:</span>
+                          <strong>{workerSession.loginTime.toDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</strong>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Actions Bar */}
+                  <div className="mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5">
+                      {w.phone && (
+                        <a
+                          href={`https://wa.me/${w.phone.replace(/\D/g, "")}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          title="WhatsApp Operator"
+                          className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[10px] font-bold cursor-pointer"
+                        >
+                          WhatsApp
+                        </a>
+                      )}
+                      {w.phone && (
+                        <a
+                          href={`tel:${w.phone}`}
+                          title="Call Operator"
+                          className="px-2 py-1 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 text-zinc-900 dark:text-zinc-200 border border-zinc-300 dark:border-zinc-700 rounded text-[10px] font-bold cursor-pointer"
+                        >
+                          Call
+                        </a>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      {!isPresent && (
+                        <button
+                          type="button"
+                          onClick={() => setExcuseModalWorker(w)}
+                          className="px-2 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded text-[10px] font-bold uppercase cursor-pointer"
+                        >
+                          + Excuse Absence
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDashboardWorker(w);
+                          setDashTab("overview");
+                        }}
+                        className="px-2 py-1 text-zinc-600 hover:text-red-600 text-[10px] font-bold uppercase cursor-pointer"
+                      >
+                        Profile →
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {[
-            ["Total (filtered)", sentAlertStats.total],
-            ["Sent today", sentAlertStats.todaySent],
-            ["Read (est.)", sentAlertStats.readAlerts],
-            ["Unread (est.)", sentAlertStats.unread],
-          ].map(([l, v]) => (
-            <div key={l} className="bg-zinc-50 border-2 border-zinc-900 p-3 text-center">
-              <div className="text-xl font-black text-zinc-950 font-heading">{v}</div>
-              <div className="text-[10px] text-zinc-600 font-mono font-bold uppercase mt-0.5">{l}</div>
-            </div>
-          ))}
-        </div>
-        <div className="flex flex-wrap gap-3">
-          <select
-            value={sentTypeFilter}
-            onChange={(e) => setSentTypeFilter(e.target.value)}
-            className="bg-white border-2 border-zinc-900 px-3 py-2 text-xs font-mono font-bold text-zinc-950 focus:outline-none focus:ring-2 focus:ring-red-600"
-          >
-            <option value="">All alert categories</option>
-            <option value="warning">Warning</option>
-            <option value="info">Information</option>
-            <option value="urgent">Urgent</option>
-            <option value="penalty">Penalty</option>
-          </select>
-          <select
-            value={sentDateFilter}
-            onChange={(e) => setSentDateFilter(e.target.value)}
-            className="bg-white border-2 border-zinc-900 px-3 py-2 text-xs font-mono font-bold text-zinc-950 focus:outline-none focus:ring-2 focus:ring-red-600"
-          >
-            <option value="all">All time</option>
-            <option value="today">Today</option>
-            <option value="week">This week</option>
-            <option value="month">This month</option>
-          </select>
-          <select
-            value={sentPriorityFilter}
-            onChange={(e) => setSentPriorityFilter(e.target.value)}
-            className="bg-white border-2 border-zinc-900 px-3 py-2 text-xs font-mono font-bold text-zinc-950 focus:outline-none focus:ring-2 focus:ring-red-600"
-          >
-            <option value="">All priorities</option>
-            <option value="high">High</option>
-            <option value="medium">Medium</option>
-            <option value="low">Low</option>
-            <option value="urgent">Urgent</option>
-          </select>
-        </div>
-        {filteredAlerts.length === 0 ? (
-          <p className="text-zinc-500 font-mono text-center py-6">No alerts match filters.</p>
-        ) : (
-          <div className="space-y-3 max-h-[400px] overflow-y-auto pr-1">
-            {filteredAlerts.map((a) => (
-              <div key={a.id} className="border-2 border-zinc-900 p-4 text-sm bg-white shadow-[2px_2px_0px_0px_#09090b]">
-                <div className="flex flex-wrap justify-between gap-2">
-                  <div>
-                    <p className="font-bold text-zinc-950 font-heading text-sm">{a.title || "Untitled"}</p>
-                    <p className="text-zinc-600 text-xs font-mono mt-1">
-                      {inferSentAlertCategory(a)} · {a.priority} · {a.recipientCount ?? a.recipients?.length ?? 0}{" "}
-                      recipients · readBy: {a.readBy?.length ?? 0}
-                    </p>
-                  </div>
-                  <span className="text-xs font-mono text-zinc-500">{formatTs(a.sentAt || a.createdAt)}</span>
-                </div>
-                <div className="text-zinc-800 font-mono text-xs mt-2 bg-zinc-50 border border-zinc-200 p-2.5 whitespace-pre-wrap">{a.message}</div>
-                <div className="flex flex-wrap gap-2 mt-3">
-                  <button
-                    type="button"
-                    onClick={() => void resendAlert(a)}
-                    className="px-3 py-1.5 border-2 border-zinc-900 bg-white hover:bg-zinc-100 text-zinc-950 text-xs font-mono font-bold shadow-[2px_2px_0px_0px_#09090b] cursor-pointer"
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════
+          TAB 2: PAYROLL CENTER (COMMAND TABLE, ADVANCES, PAYSLIPS & LOCK)
+      ══════════════════════════════════════════════════════════════════ */}
+      {section === "payroll" && (
+        <div className="space-y-5 animate-fade-in font-mono">
+          {/* Active Cycle & Period Selector */}
+          <HrDateRangeSelector
+            rangeKey={rangeKey}
+            onRangeKeyChange={setRangeKey}
+            periodStart={activePeriod.start}
+            periodEnd={activePeriod.end}
+            onCustomDatesChange={(start, end) => {
+              setCustomStart(start);
+              setCustomEnd(end);
+              setRangeKey("custom");
+            }}
+            settings={settings}
+            holidays={holidays}
+            onOpenPolicyModal={() => setPolicyModalOpen(true)}
+          />
+
+          {/* Payroll Financial Summary & Disbursal Status Bar */}
+          <div className="p-5 bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 shadow-[4px_4px_0px_0px_#09090b] rounded-lg space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b-2 border-zinc-900 dark:border-zinc-700 pb-3">
+              <div>
+                <span className="text-[10px] font-bold uppercase text-zinc-400">Payroll Cycle Status</span>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span
+                    className={`px-3 py-1 rounded text-xs font-bold uppercase border ${
+                      currentCycleStatus === "paid"
+                        ? "bg-emerald-600 text-white border-emerald-700"
+                        : currentCycleStatus === "approved"
+                          ? "bg-blue-600 text-white border-blue-700"
+                          : "bg-amber-100 text-amber-800 border-amber-300"
+                    }`}
                   >
-                    Resend
-                  </button>
+                    {currentCycleStatus === "paid" ? "Paid (تم الصرف)" : currentCycleStatus === "approved" ? "Approved for Payout" : "Draft (Under Review)"}
+                  </span>
+                  <span className="text-xs text-zinc-500">
+                    Cycle: {activePeriod.label}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAdjustmentModalOpen(true)}
+                  className="px-3 py-1.5 border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:bg-zinc-100 text-zinc-950 dark:text-zinc-100 text-xs font-bold uppercase cursor-pointer"
+                >
+                  + Add Advance / Allowance
+                </button>
+                <button
+                  type="button"
+                  onClick={exportPayrollCsv}
+                  className="px-3 py-1.5 border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:bg-zinc-100 text-zinc-950 dark:text-zinc-100 text-xs font-bold uppercase cursor-pointer"
+                >
+                  📥 Export CSV
+                </button>
+                {currentCycleStatus === "draft" && (
                   <button
                     type="button"
-                    onClick={() => void deleteAlert(a.id)}
-                    className="px-3 py-1.5 border-2 border-red-600 bg-red-50 hover:bg-red-600 hover:text-white text-red-700 text-xs font-mono font-bold transition-colors cursor-pointer"
+                    onClick={() => void handleToggleCycleStatus("approved")}
+                    className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold uppercase border-2 border-zinc-900 cursor-pointer shadow-[2px_2px_0px_0px_#09090b]"
+                  >
+                    Approve Payroll
+                  </button>
+                )}
+                {currentCycleStatus === "approved" && (
+                  <button
+                    type="button"
+                    onClick={() => void handleToggleCycleStatus("paid")}
+                    className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold uppercase border-2 border-zinc-900 cursor-pointer shadow-[2px_2px_0px_0px_#059669]"
+                  >
+                    ✓ Mark as Paid (تم الصرف)
+                  </button>
+                )}
+                {currentCycleStatus === "paid" && (
+                  <button
+                    type="button"
+                    onClick={() => void handleToggleCycleStatus("draft")}
+                    className="px-2 py-1 text-zinc-400 hover:text-red-600 text-xs underline cursor-pointer"
+                  >
+                    Unlock / Revert
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Financial Numbers Strip */}
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs">
+              <div className="p-3 bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 rounded">
+                <span className="text-zinc-500 text-[10px] uppercase font-bold">Gross Earnings</span>
+                <p className="text-xl font-bold font-oswald text-zinc-900 dark:text-white mt-1">EGP {payrollTotals.gross}</p>
+              </div>
+              <div className="p-3 bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 rounded">
+                <span className="text-zinc-500 text-[10px] uppercase font-bold">Total Overtime (1.5x)</span>
+                <p className="text-xl font-bold font-oswald text-emerald-700 dark:text-emerald-400 mt-1">+EGP {payrollTotals.overtime}</p>
+              </div>
+              <div className="p-3 bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 rounded">
+                <span className="text-zinc-500 text-[10px] uppercase font-bold">Advances (سلف)</span>
+                <p className="text-xl font-bold font-oswald text-red-600 dark:text-red-400 mt-1">-EGP {payrollTotals.advances}</p>
+              </div>
+              <div className="p-3 bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 rounded">
+                <span className="text-zinc-500 text-[10px] uppercase font-bold">Absence Deductions</span>
+                <p className="text-xl font-bold font-oswald text-red-600 dark:text-red-400 mt-1">-EGP {payrollTotals.deductions}</p>
+              </div>
+              <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 rounded col-span-2 md:col-span-1">
+                <span className="text-emerald-800 dark:text-emerald-300 text-[10px] uppercase font-bold">Net Due to Disburse</span>
+                <p className="text-xl font-bold font-oswald text-emerald-800 dark:text-emerald-300 mt-1">EGP {payrollTotals.net}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Full Payroll Data Table */}
+          <div className="bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 shadow-[3px_3px_0px_0px_#09090b] rounded-lg overflow-x-auto text-xs">
+            <table className="w-full text-left divide-y divide-zinc-200 dark:divide-zinc-800 font-mono">
+              <thead className="bg-zinc-100 dark:bg-zinc-800 text-[10px] font-bold uppercase text-zinc-600 dark:text-zinc-400">
+                <tr>
+                  <th className="py-3 px-4">Employee</th>
+                  <th className="py-3 px-3">Dept</th>
+                  <th className="py-3 px-3">Worked</th>
+                  <th className="py-3 px-3">Rate</th>
+                  <th className="py-3 px-3">Base Pay</th>
+                  <th className="py-3 px-3 text-emerald-700 dark:text-emerald-400">OT Pay</th>
+                  <th className="py-3 px-3 text-red-600">Absence</th>
+                  <th className="py-3 px-3 text-red-600">Advances</th>
+                  <th className="py-3 px-4 text-right">Net Payable</th>
+                  <th className="py-3 px-3 text-center">Payslip</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+                {payrollTableData.map(({ worker: w, payroll: p }) => (
+                  <tr key={w.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors">
+                    <td className="py-3 px-4 font-bold text-zinc-950 dark:text-white">
+                      {workerName(w)}
+                    </td>
+                    <td className="py-3 px-3 text-zinc-500">{formatDepartment(w.department)}</td>
+                    <td className="py-3 px-3">
+                      <strong>{p.daysWorked}d</strong> ({p.totalHours}h)
+                    </td>
+                    <td className="py-3 px-3">EGP {p.hourlyRate}/h</td>
+                    <td className="py-3 px-3 font-semibold">EGP {p.basePay}</td>
+                    <td className="py-3 px-3 text-emerald-700 dark:text-emerald-400 font-semibold">
+                      +{p.overtimePay}
+                    </td>
+                    <td className="py-3 px-3 text-red-600">
+                      {p.absencePenalty > 0 ? `-${p.absencePenalty}` : "0"}
+                    </td>
+                    <td className="py-3 px-3 text-red-600 font-semibold">
+                      {p.salaryAdvances > 0 ? `-${p.salaryAdvances}` : "0"}
+                    </td>
+                    <td className="py-3 px-4 text-right font-bold font-oswald text-sm text-emerald-700 dark:text-emerald-400">
+                      EGP {p.netPayable}
+                    </td>
+                    <td className="py-3 px-3 text-center">
+                      <button
+                        type="button"
+                        onClick={() => setPayslipModalWorker(w)}
+                        className="px-2.5 py-1 bg-zinc-100 dark:bg-zinc-800 hover:bg-red-600 hover:text-white border border-zinc-300 dark:border-zinc-700 rounded text-[10px] font-bold uppercase transition-all cursor-pointer"
+                      >
+                        Payslip 📄
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════
+          TAB 3: TEAM ANALYTICS & TIMESHEETS
+      ══════════════════════════════════════════════════════════════════ */}
+      {section === "team" && (
+        <div className="space-y-4 animate-fade-in font-mono">
+          <div className="p-4 bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 shadow-[3px_3px_0px_0px_#09090b] rounded-lg flex flex-col lg:flex-row lg:items-center gap-3">
+            <div className="relative flex-1">
+              <input
+                id="hr-search"
+                value={workerSearch}
+                onChange={(e) => setWorkerSearch(e.target.value)}
+                placeholder="Search name, email, department, role…"
+                className="w-full bg-white dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 px-3 py-2 text-zinc-950 dark:text-zinc-100 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-red-600"
+              />
+            </div>
+            <select
+              value={departmentFilter}
+              onChange={(e) => setDepartmentFilter(e.target.value)}
+              className="bg-white dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 px-3 py-2 text-xs font-bold text-zinc-900 dark:text-zinc-100"
+            >
+              <option value="">All departments</option>
+              {DEPARTMENTS.map((d) => (
+                <option key={d.value} value={d.value}>
+                  {d.label}
+                </option>
+              ))}
+            </select>
+            <select
+              value={employmentFilter}
+              onChange={(e) => setEmploymentFilter(e.target.value)}
+              className="bg-white dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 px-3 py-2 text-xs font-bold text-zinc-900 dark:text-zinc-100"
+            >
+              <option value="">All employment types</option>
+              {EMPLOYMENT_OPTIONS.map((e) => (
+                <option key={e.value} value={e.value}>
+                  {e.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filteredHrWorkers.map((w) => {
+              const ws = workerSessionsInRange(sessions, w.id, activePeriod.start, activePeriod.end);
+              const ts = workerTaskStats.get(w.id) || { completed: 0, total: 0 };
+              const totalHours = ws.reduce((sum, s) => sum + sessionHours(s), 0);
+              const prod = productivityScore(w.expectedHours || 8, ts.completed, ts.total, ws);
+
+              return (
+                <div
+                  key={w.id}
+                  className="p-5 bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 shadow-[3px_3px_0px_0px_#09090b] rounded-lg flex flex-col justify-between"
+                >
+                  <div>
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <h4 className="font-bold text-base text-zinc-950 dark:text-white font-heading">
+                          {workerName(w)}
+                        </h4>
+                        <p className="text-xs text-zinc-500">{formatDepartment(w.department)} · {w.role}</p>
+                      </div>
+                      <span className="px-2 py-0.5 bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200 border border-zinc-300 dark:border-zinc-700 text-xs font-bold">
+                        {prod}% Score
+                      </span>
+                    </div>
+
+                    <div className="mt-4 space-y-1.5 text-xs text-zinc-700 dark:text-zinc-300">
+                      <div><strong>Logged Hours:</strong> {Math.round(totalHours * 10) / 10}h ({ws.length} shifts)</div>
+                      <div><strong>Tasks Finished:</strong> {ts.completed} / {ts.total}</div>
+                      <div><strong>Rating:</strong> {performanceRating(prod)}</div>
+                      <div><strong>Rate:</strong> EGP {w.hourlyRate || settings.defaultHourlyRate}/h</div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800 flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPayslipModalWorker(w)}
+                      className="text-xs font-bold text-emerald-700 dark:text-emerald-400 hover:underline cursor-pointer"
+                    >
+                      Payslip 📄
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDashboardWorker(w);
+                        setDashTab("overview");
+                      }}
+                      className="text-xs font-bold text-red-600 hover:underline cursor-pointer"
+                    >
+                      Full 360 →
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════
+          TAB 4: HOLIDAYS & WORK POLICIES
+      ══════════════════════════════════════════════════════════════════ */}
+      {section === "holidays" && (
+        <div className="space-y-6 animate-fade-in font-mono">
+          <HrHolidaysManager
+            holidays={holidays}
+            adminEmail={adminEmail}
+            onOpenPolicyModal={() => setPolicyModalOpen(true)}
+          />
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════
+          TAB 5: ALERTS & DISCIPLINARY LOGS
+      ══════════════════════════════════════════════════════════════════ */}
+      {section === "alerts" && (
+        <div className="space-y-5 animate-fade-in font-mono">
+          <div className="p-4 bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 shadow-[3px_3px_0px_0px_#09090b] rounded-lg flex flex-wrap items-center justify-between gap-3">
+            <h3 className="font-bold text-base text-zinc-950 dark:text-white uppercase">
+              Broadcast Alerts &amp; Disciplinary Notices ({alerts.length})
+            </h3>
+            <button
+              type="button"
+              onClick={() => setSendOpen(true)}
+              className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-bold text-xs uppercase border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] cursor-pointer"
+            >
+              + Send New Alert
+            </button>
+          </div>
+
+          <div className="bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 shadow-[3px_3px_0px_0px_#09090b] rounded-lg divide-y divide-zinc-200 dark:divide-zinc-800 text-xs">
+            {alerts.map((a) => (
+              <div key={a.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-zinc-50 dark:hover:bg-zinc-800/40">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <strong className="text-sm text-zinc-950 dark:text-white">{a.title}</strong>
+                    <span className="px-1.5 py-0.5 bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 text-[10px] uppercase font-bold">
+                      {a.type || "Notice"}
+                    </span>
+                    <span className="text-[10px] text-zinc-400">{formatTs(a.sentAt || a.createdAt)}</span>
+                  </div>
+                  <p className="text-zinc-600 dark:text-zinc-400 max-w-2xl">{a.message}</p>
+                  <p className="text-[10px] text-zinc-400">Recipients: {a.recipientCount ?? a.recipients?.length ?? 0} operators · Sent by {a.sentBy || "Admin"}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const ok = await confirmDialog({ title: "Delete alert?", message: `Remove "${a.title}" from log?` });
+                      if (!ok) return;
+                      await deleteDoc(doc(db, "alerts", a.id));
+                      toast.success("Alert deleted");
+                    }}
+                    className="px-2.5 py-1 text-red-600 hover:underline cursor-pointer font-bold"
                   >
                     Delete
                   </button>
@@ -1121,559 +1222,259 @@ export default function AdminHRPage() {
               </div>
             ))}
           </div>
-        )}
-      </div>
-
-      <div className="bg-white border-2 border-zinc-900 p-4 flex flex-wrap gap-4 shadow-[3px_3px_0px_0px_#09090b]">
-        <div>
-          <label className="block text-xs font-bold uppercase font-mono text-zinc-700 mb-1">Department</label>
-          <select
-            value={departmentFilter}
-            onChange={(e) => setDepartmentFilter(e.target.value)}
-            className="bg-white border-2 border-zinc-900 px-3 py-2 text-xs font-mono font-bold text-zinc-950 min-w-[140px] focus:outline-none focus:ring-2 focus:ring-red-600"
-          >
-            <option value="">All</option>
-            {DEPARTMENTS.map((d) => (
-              <option key={d.value} value={d.value}>
-                {d.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="block text-xs font-bold uppercase font-mono text-zinc-700 mb-1">Employment</label>
-          <select
-            value={employmentFilter}
-            onChange={(e) => setEmploymentFilter(e.target.value)}
-            className="bg-white border-2 border-zinc-900 px-3 py-2 text-xs font-mono font-bold text-zinc-950 min-w-[140px] focus:outline-none focus:ring-2 focus:ring-red-600"
-          >
-            <option value="">All types</option>
-            {EMPLOYMENT_OPTIONS.map((e) => (
-              <option key={e.value} value={e.value}>
-                {e.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="block text-xs font-bold uppercase font-mono text-zinc-700 mb-1">Date range</label>
-          <select
-            value={hrDateRange}
-            onChange={(e) => setHrDateRange(e.target.value as HrDateRangeKey)}
-            className="bg-white border-2 border-zinc-900 px-3 py-2 text-xs font-mono font-bold text-zinc-950 min-w-[140px] focus:outline-none focus:ring-2 focus:ring-red-600"
-          >
-            <option value="today">Today</option>
-            <option value="week">This week</option>
-            <option value="month">This month</option>
-            <option value="quarter">This quarter</option>
-            <option value="year">This year</option>
-          </select>
-        </div>
-        <div>
-          <label className="block text-xs font-bold uppercase font-mono text-zinc-700 mb-1">Report type</label>
-          <select
-            value={reportType}
-            onChange={(e) => setReportType(e.target.value as ReportType)}
-            className="bg-white border-2 border-zinc-900 px-3 py-2 text-xs font-mono font-bold text-zinc-950 min-w-[180px] focus:outline-none focus:ring-2 focus:ring-red-600"
-          >
-            <option value="attendance">Attendance report</option>
-            <option value="productivity">Productivity report</option>
-            <option value="payroll">Payroll preview</option>
-            <option value="compliance">Compliance report</option>
-            <option value="penalties">Penalties &amp; bonuses</option>
-          </select>
-        </div>
-      </div>
-
-      <div>
-        <p className="text-xs font-bold font-mono uppercase tracking-wider text-zinc-600 mb-3">
-          Showing {filteredHrWorkers.length} worker(s) · {reportType} · {hrDateRange}
-        </p>
-        {filteredHrWorkers.length === 0 ? (
-          <p className="text-zinc-500 font-mono text-center py-12">No workers match filters.</p>
-        ) : (
-          renderReportCards()
-        )}
-      </div>
-
-      {payrollModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4" onClick={() => setPayrollModalOpen(false)}>
-          <div className="bg-white border-2 border-zinc-900 shadow-[8px_8px_0px_0px_#09090b] w-full max-w-md p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-xl font-black text-zinc-950 font-heading">Payroll report (CSV)</h3>
-            <p className="text-xs text-zinc-600 font-mono">Exports all approved workers for the selected rolling period (matches legacy payroll export options).</p>
-            <div>
-              <label className="block text-xs font-bold uppercase font-mono text-zinc-700 mb-1">Period</label>
-              <select
-                value={payrollPeriod}
-                onChange={(e) => setPayrollPeriod(e.target.value as HrDateRangeKey)}
-                className="w-full bg-white border-2 border-zinc-900 px-3 py-2 text-zinc-950 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-red-600"
-              >
-                <option value="week">Last 7 days</option>
-                <option value="month">Last ~30 days</option>
-                <option value="quarter">Last ~90 days</option>
-                <option value="year">Last ~365 days</option>
-                <option value="today">Today only</option>
-              </select>
-            </div>
-            <label className="flex items-center gap-2 text-xs font-mono text-zinc-800 font-bold accent-red-600 cursor-pointer">
-              <input type="checkbox" checked={payrollIncludeOvertime} onChange={(e) => setPayrollIncludeOvertime(e.target.checked)} />
-              Include overtime pay column
-            </label>
-            <label className="flex items-center gap-2 text-xs font-mono text-zinc-800 font-bold accent-red-600 cursor-pointer">
-              <input type="checkbox" checked={payrollIncludeAbsence} onChange={(e) => setPayrollIncludeAbsence(e.target.checked)} />
-              Include absence penalty column
-            </label>
-            <label className="flex items-center gap-2 text-xs font-mono text-zinc-800 font-bold accent-red-600 cursor-pointer">
-              <input type="checkbox" checked={payrollIncludeBonuses} onChange={(e) => setPayrollIncludeBonuses(e.target.checked)} />
-              Include bonus/penalty adjustments (from Firestore penalties)
-            </label>
-            <div className="flex gap-2 justify-end pt-2">
-              <button
-                type="button"
-                onClick={() => setPayrollModalOpen(false)}
-                className="px-4 py-2 border-2 border-zinc-900 bg-white hover:bg-zinc-100 text-zinc-950 font-mono text-xs font-bold cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={runPayrollExport}
-                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-mono text-xs font-bold uppercase tracking-wider border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] cursor-pointer"
-              >
-                Download CSV
-              </button>
-            </div>
-          </div>
         </div>
       )}
 
+      {/* ── MODALS ── */}
+
+      {/* 1. Policy Settings Modal */}
+      {policyModalOpen && (
+        <HrPolicyModal
+          initialSettings={settings}
+          adminEmail={adminEmail}
+          onClose={() => setPolicyModalOpen(false)}
+        />
+      )}
+
+      {/* 2. Record Advance / Allowance Modal */}
+      {adjustmentModalOpen && (
+        <HrAdjustmentModal
+          workers={approved}
+          adminEmail={adminEmail}
+          onClose={() => setAdjustmentModalOpen(false)}
+        />
+      )}
+
+      {/* 3. Excuse Worker Absence Modal */}
+      {excuseModalWorker && (
+        <HrExcuseModal
+          worker={excuseModalWorker}
+          date={today}
+          adminEmail={adminEmail}
+          onClose={() => setExcuseModalWorker(null)}
+          onExcused={() => setRefreshTick((n) => n + 1)}
+        />
+      )}
+
+      {/* 4. Worker Payslip Modal */}
+      {payslipModalWorker && (
+        (() => {
+          const row = payrollTableData.find((r) => r.worker.id === payslipModalWorker.id);
+          const computed = row ? row.payroll : computePayrollForWorker(
+            workerSessionsInRange(sessions, payslipModalWorker.id, activePeriod.start, activePeriod.end),
+            payslipModalWorker.hourlyRate || settings.defaultHourlyRate || 31.25,
+            activePeriod.start,
+            activePeriod.end,
+            { weekendDays: settings.weekendDays, holidays, settings },
+          );
+
+          return (
+            <HrPayslipModal
+              worker={payslipModalWorker}
+              payroll={computed}
+              cycleLabel={activePeriod.label}
+              periodStart={activePeriod.start}
+              periodEnd={activePeriod.end}
+              onClose={() => setPayslipModalWorker(null)}
+            />
+          );
+        })()
+      )}
+
+      {/* 5. Send Alert Modal */}
       {sendOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4" onClick={() => setSendOpen(false)}>
-          <div className="bg-white border-2 border-zinc-900 shadow-[8px_8px_0px_0px_#09090b] w-full max-w-lg max-h-[90vh] overflow-y-auto p-6" onClick={(e) => e.stopPropagation()}>
-            <div className="flex justify-between items-center mb-4 pb-2 border-b-2 border-zinc-900">
-              <h3 className="text-xl font-black text-zinc-950 font-heading">Send alert</h3>
-              <button type="button" className="text-2xl text-zinc-500 hover:text-red-600 font-bold cursor-pointer" onClick={() => setSendOpen(false)}>
-                &times;
-              </button>
+        <ModalPortal onClose={() => setSendOpen(false)}>
+          <div className="fixed inset-0 z-[120] bg-zinc-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in font-mono" onClick={() => setSendOpen(false)}>
+            <div className="bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 animate-scale-in text-zinc-950 dark:text-zinc-100" onClick={(e) => e.stopPropagation()}>
+              <div className="flex justify-between items-center mb-4 pb-2 border-b-2 border-zinc-900 dark:border-zinc-700">
+                <h3 className="text-xl font-black font-heading text-red-600">Send Workforce Alert</h3>
+                <button type="button" className="text-2xl text-zinc-500 hover:text-red-600 font-bold cursor-pointer" onClick={() => setSendOpen(false)}>
+                  &times;
+                </button>
+              </div>
+              <form onSubmit={handleSendAlert} className="space-y-4 text-xs font-mono">
+                <div>
+                  <label className="block text-zinc-700 dark:text-zinc-300 font-bold uppercase mb-1">Alert Type *</label>
+                  <select
+                    required
+                    value={alertForm.type}
+                    onChange={(e) => setAlertForm({ ...alertForm, type: e.target.value })}
+                    className="w-full bg-white dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 px-3 py-2 text-zinc-950 dark:text-zinc-100 font-bold focus:outline-none focus:ring-2 focus:ring-red-600"
+                  >
+                    <option value="">Select type…</option>
+                    <option value="system_announcement">System Announcement (إعلان هام)</option>
+                    <option value="policy_update">Policy Update (تحديث سياسة العمل)</option>
+                    <option value="shift_reminder">Shift Reminder (تذكير بالوردية)</option>
+                    <option value="urgent_directive">Urgent Directive (توجيه عاجل)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-zinc-700 dark:text-zinc-300 font-bold uppercase mb-1">Recipients *</label>
+                  <select
+                    value={alertForm.recipient}
+                    onChange={(e) => setAlertForm({ ...alertForm, recipient: e.target.value })}
+                    className="w-full bg-white dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 px-3 py-2 text-zinc-950 dark:text-zinc-100 font-bold focus:outline-none focus:ring-2 focus:ring-red-600"
+                  >
+                    <option value="all">Broadcast to all approved workers</option>
+                    <option value="department">Specific department</option>
+                    <option value="individual">Individual worker</option>
+                  </select>
+                </div>
+
+                {alertForm.recipient === "department" && (
+                  <div>
+                    <label className="block text-zinc-700 dark:text-zinc-300 font-bold uppercase mb-1">Department *</label>
+                    <select
+                      value={alertForm.department}
+                      onChange={(e) => setAlertForm({ ...alertForm, department: e.target.value })}
+                      className="w-full bg-white dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 px-3 py-2 text-zinc-950 dark:text-zinc-100 font-bold focus:outline-none focus:ring-2 focus:ring-red-600"
+                    >
+                      <option value="">Select department…</option>
+                      {DEPARTMENTS.map((d) => (
+                        <option key={d.value} value={d.value}>{d.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {alertForm.recipient === "individual" && (
+                  <div>
+                    <label className="block text-zinc-700 dark:text-zinc-300 font-bold uppercase mb-1">Worker *</label>
+                    <select
+                      value={alertForm.workerId}
+                      onChange={(e) => setAlertForm({ ...alertForm, workerId: e.target.value })}
+                      className="w-full bg-white dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 px-3 py-2 text-zinc-950 dark:text-zinc-100 font-bold focus:outline-none focus:ring-2 focus:ring-red-600"
+                    >
+                      <option value="">Select worker…</option>
+                      {approved.map((w) => (
+                        <option key={w.id} value={w.id}>{workerName(w)} ({w.department || "General"})</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-zinc-700 dark:text-zinc-300 font-bold uppercase mb-1">Title *</label>
+                  <input
+                    type="text"
+                    required
+                    value={alertForm.title}
+                    onChange={(e) => setAlertForm({ ...alertForm, title: e.target.value })}
+                    className="w-full bg-white dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 px-3 py-2 text-zinc-950 dark:text-zinc-100 font-bold focus:outline-none focus:ring-2 focus:ring-red-600"
+                    placeholder="Brief subject"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-zinc-700 dark:text-zinc-300 font-bold uppercase mb-1">Message *</label>
+                  <textarea
+                    rows={4}
+                    required
+                    value={alertForm.message}
+                    onChange={(e) => setAlertForm({ ...alertForm, message: e.target.value })}
+                    className="w-full bg-white dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 px-3 py-2 text-zinc-950 dark:text-zinc-100 font-mono focus:outline-none focus:ring-2 focus:ring-red-600 resize-none"
+                    placeholder="Full notice text..."
+                  />
+                </div>
+
+                <div className="flex gap-2 justify-end pt-3 border-t-2 border-zinc-900 dark:border-zinc-700">
+                  <button
+                    type="button"
+                    onClick={() => setSendOpen(false)}
+                    className="px-4 py-2 border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:bg-zinc-100 text-zinc-950 dark:text-zinc-100 font-bold cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-bold uppercase tracking-wider border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] cursor-pointer"
+                  >
+                    Send Alert
+                  </button>
+                </div>
+              </form>
             </div>
-            <form onSubmit={sendAlert} className="space-y-4 text-sm font-mono">
-              <div>
-                <label className="block text-zinc-700 font-mono font-bold text-xs uppercase mb-1">Alert type *</label>
-                <select
-                  required
-                  value={alertForm.type}
-                  onChange={(e) => setAlertForm({ ...alertForm, type: e.target.value })}
-                  className="w-full bg-white border-2 border-zinc-900 px-3 py-2 text-zinc-950 font-mono focus:outline-none focus:ring-2 focus:ring-red-600"
-                >
-                  <option value="">Select…</option>
-                  <option value="attendance">Attendance</option>
-                  <option value="performance">Performance</option>
-                  <option value="schedule">Schedule</option>
-                  <option value="policy">Policy</option>
-                  <option value="general">General</option>
-                  <option value="urgent">Urgent</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-zinc-700 font-mono font-bold text-xs uppercase mb-1">Title *</label>
-                <input
-                  required
-                  value={alertForm.title}
-                  onChange={(e) => setAlertForm({ ...alertForm, title: e.target.value })}
-                  className="w-full bg-white border-2 border-zinc-900 px-3 py-2 text-zinc-950 font-mono focus:outline-none focus:ring-2 focus:ring-red-600"
-                />
-              </div>
-              <div>
-                <label className="block text-zinc-700 font-mono font-bold text-xs uppercase mb-1">Message *</label>
-                <textarea
-                  required
-                  rows={4}
-                  value={alertForm.message}
-                  onChange={(e) => setAlertForm({ ...alertForm, message: e.target.value })}
-                  className="w-full bg-white border-2 border-zinc-900 px-3 py-2 text-zinc-950 font-mono resize-y focus:outline-none focus:ring-2 focus:ring-red-600"
-                />
-              </div>
-              <div>
-                <label className="block text-zinc-700 font-mono font-bold text-xs uppercase mb-1">Recipients *</label>
-                <select
-                  value={alertForm.recipient}
-                  onChange={(e) => setAlertForm({ ...alertForm, recipient: e.target.value })}
-                  className="w-full bg-white border-2 border-zinc-900 px-3 py-2 text-zinc-950 font-mono focus:outline-none focus:ring-2 focus:ring-red-600"
-                >
-                  <option value="all">All approved workers</option>
-                  <option value="department">By department</option>
-                  <option value="individual">Individual</option>
-                  <option value="absent">Absent today</option>
-                  <option value="late">Late today (≥11:00)</option>
-                  <option value="overtime">Overtime today (&gt;8h)</option>
-                </select>
-              </div>
-              {alertForm.recipient === "department" && (
-                <div>
-                  <label className="block text-zinc-700 font-mono font-bold text-xs uppercase mb-1">Department</label>
-                  <select
-                    value={alertForm.department}
-                    onChange={(e) => setAlertForm({ ...alertForm, department: e.target.value })}
-                    className="w-full bg-white border-2 border-zinc-900 px-3 py-2 text-zinc-950 font-mono focus:outline-none focus:ring-2 focus:ring-red-600"
-                  >
-                    <option value="">Select…</option>
-                    {DEPARTMENTS.map((d) => (
-                      <option key={d.value} value={d.value}>
-                        {d.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-              {alertForm.recipient === "individual" && (
-                <div>
-                  <label className="block text-zinc-700 font-mono font-bold text-xs uppercase mb-1">Worker</label>
-                  <select
-                    value={alertForm.workerId}
-                    onChange={(e) => setAlertForm({ ...alertForm, workerId: e.target.value })}
-                    className="w-full bg-white border-2 border-zinc-900 px-3 py-2 text-zinc-950 font-mono focus:outline-none focus:ring-2 focus:ring-red-600"
-                  >
-                    <option value="">Select…</option>
-                    {approved.map((w) => (
-                      <option key={w.id} value={w.id}>
-                        {workerName(w)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-              <div>
-                <label className="block text-zinc-700 font-mono font-bold text-xs uppercase mb-1">Priority *</label>
-                <select
-                  required
-                  value={alertForm.priority}
-                  onChange={(e) => setAlertForm({ ...alertForm, priority: e.target.value })}
-                  className="w-full bg-white border-2 border-zinc-900 px-3 py-2 text-zinc-950 font-mono focus:outline-none focus:ring-2 focus:ring-red-600"
-                >
-                  <option value="low">Low</option>
-                  <option value="medium">Medium</option>
-                  <option value="high">High</option>
-                  <option value="urgent">Urgent</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-zinc-700 font-mono font-bold text-xs uppercase mb-1">Penalty / bonus (days)</label>
-                <input
-                  value={alertForm.penalty}
-                  onChange={(e) => setAlertForm({ ...alertForm, penalty: e.target.value })}
-                  placeholder="e.g. 0.25 or -0.5"
-                  className="w-full bg-white border-2 border-zinc-900 px-3 py-2 text-zinc-950 font-mono focus:outline-none focus:ring-2 focus:ring-red-600"
-                />
-              </div>
-              <div>
-                <label className="block text-zinc-700 font-mono font-bold text-xs uppercase mb-1">Penalty / bonus reason</label>
-                <input
-                  value={alertForm.penaltyReason}
-                  onChange={(e) => setAlertForm({ ...alertForm, penaltyReason: e.target.value })}
-                  className="w-full bg-white border-2 border-zinc-900 px-3 py-2 text-zinc-950 font-mono focus:outline-none focus:ring-2 focus:ring-red-600"
-                />
-              </div>
-              <div className="flex gap-2 justify-end pt-3 border-t-2 border-zinc-900">
-                <button
-                  type="button"
-                  onClick={() => setSendOpen(false)}
-                  className="px-4 py-2 border-2 border-zinc-900 bg-white hover:bg-zinc-100 text-zinc-950 font-mono text-xs font-bold cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-mono text-xs font-bold uppercase tracking-wider border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] cursor-pointer"
-                >
-                  Send
-                </button>
-              </div>
-            </form>
           </div>
-        </div>
+        </ModalPortal>
       )}
 
-      {dashboardWorker && dashStats && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4" onClick={() => setDashboardWorker(null)}>
-          <div
-            className="bg-white border-2 border-zinc-900 shadow-[8px_8px_0px_0px_#09090b] w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="p-4 border-b-2 border-zinc-900 flex justify-between items-center bg-zinc-50">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-none bg-red-600 border-2 border-zinc-900 text-white flex items-center justify-center text-lg font-bold font-heading shadow-[2px_2px_0px_0px_#09090b]">
-                  {dashboardWorker.firstName?.[0]}
-                  {dashboardWorker.lastName?.[0]}
+      {/* 6. Complete Worker 360 Dashboard Modal */}
+      {dashboardWorker && (
+        <ModalPortal onClose={() => setDashboardWorker(null)}>
+          <div className="fixed inset-0 z-[120] bg-zinc-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in font-mono" onClick={() => setDashboardWorker(null)}>
+            <div
+              className="bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col animate-scale-in text-zinc-950 dark:text-zinc-100"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="p-4 border-b-2 border-zinc-900 dark:border-zinc-700 flex justify-between items-center bg-zinc-50 dark:bg-zinc-800">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-none bg-red-600 border-2 border-zinc-900 text-white flex items-center justify-center text-lg font-bold font-heading shadow-[2px_2px_0px_0px_#09090b]">
+                    {dashboardWorker.firstName?.[0]}
+                    {dashboardWorker.lastName?.[0]}
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black text-zinc-950 dark:text-white font-heading">{workerName(dashboardWorker)}</h3>
+                    <p className="text-xs text-zinc-600 dark:text-zinc-400">{dashboardWorker.email}</p>
+                    <p className="text-xs mt-0.5">
+                      <span className="text-zinc-600 uppercase font-bold">{dashboardWorker.status}</span>
+                      {dashboardWorker.isOnline ? (
+                        <span className="ml-2 text-emerald-700 font-bold">● Online</span>
+                      ) : (
+                        <span className="ml-2 text-zinc-400 font-bold">○ Offline</span>
+                      )}
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="text-lg font-black text-zinc-950 font-heading">{workerName(dashboardWorker)}</h3>
-                  <p className="text-xs text-zinc-600 font-mono">{dashboardWorker.email}</p>
-                  <p className="text-xs font-mono mt-1">
-                    <span className="text-zinc-600 uppercase font-bold">{dashboardWorker.status}</span>
-                    {dashboardWorker.isOnline ? (
-                      <span className="ml-2 text-emerald-700 font-bold">● Online</span>
-                    ) : (
-                      <span className="ml-2 text-zinc-400 font-bold">○ Offline</span>
-                    )}
-                  </p>
+                <button type="button" className="text-2xl text-zinc-500 hover:text-red-600 font-bold cursor-pointer" onClick={() => setDashboardWorker(null)}>
+                  &times;
+                </button>
+              </div>
+
+              <div className="p-4 overflow-y-auto flex-1 text-xs space-y-3">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 p-3 bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700">
+                  <div>
+                    <span className="text-zinc-500">Department:</span>
+                    <p className="font-bold text-zinc-900 dark:text-white">{formatDepartment(dashboardWorker.department)}</p>
+                  </div>
+                  <div>
+                    <span className="text-zinc-500">Employment:</span>
+                    <p className="font-bold text-zinc-900 dark:text-white">{formatEmploymentType(dashboardWorker.employmentType)}</p>
+                  </div>
+                  <div>
+                    <span className="text-zinc-500">Hourly Rate:</span>
+                    <p className="font-bold text-emerald-700 dark:text-emerald-400">EGP {dashboardWorker.hourlyRate || settings.defaultHourlyRate}/h</p>
+                  </div>
+                  <div>
+                    <span className="text-zinc-500">Phone:</span>
+                    <p className="font-bold text-zinc-900 dark:text-white">{dashboardWorker.phone || "—"}</p>
+                  </div>
+                </div>
+
+                <div className="pt-2 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const w = dashboardWorker;
+                      setDashboardWorker(null);
+                      setPayslipModalWorker(w);
+                    }}
+                    className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold uppercase rounded cursor-pointer"
+                  >
+                    View Current Payslip 📄
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDashboardWorker(null)}
+                    className="px-4 py-1.5 border border-zinc-400 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white font-bold uppercase rounded cursor-pointer"
+                  >
+                    Close
+                  </button>
                 </div>
               </div>
-              <button type="button" className="text-2xl text-zinc-500 hover:text-red-600 font-bold cursor-pointer" onClick={() => setDashboardWorker(null)}>
-                &times;
-              </button>
-            </div>
-
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 p-3 border-b-2 border-zinc-900 bg-zinc-100">
-              {[
-                [`${Math.round(dashStats.totalH * 10) / 10}h`, "Total hours"],
-                [`${dashStats.att}%`, "Attendance (est.)"],
-                [`${dashStats.ts.completed}/${dashStats.ts.total}`, "Tasks done"],
-                [`EGP ${dashStats.earnings}`, "Earnings (est.)"],
-              ].map(([num, lab]) => (
-                <div key={lab} className="text-center p-2 bg-white border border-zinc-300">
-                  <div className="text-lg font-black text-zinc-950 font-heading">{num}</div>
-                  <div className="text-[10px] text-zinc-600 font-mono font-bold uppercase">{lab}</div>
-                </div>
-              ))}
-            </div>
-
-            <div className="flex border-b-2 border-zinc-900 overflow-x-auto bg-zinc-50">
-              {(
-                [
-                  ["overview", "Overview"],
-                  ["attendance", "Attendance"],
-                  ["tasks", "Tasks"],
-                  ["performance", "Performance"],
-                  ["payroll", "Payroll"],
-                ] as const
-              ).map(([key, label]) => (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => setDashTab(key)}
-                  className={`px-4 py-2 text-xs font-mono font-bold uppercase tracking-wider whitespace-nowrap border-b-2 -mb-px transition-colors cursor-pointer ${
-                    dashTab === key
-                      ? "border-red-600 text-red-600 bg-white"
-                      : "border-transparent text-zinc-600 hover:text-zinc-950"
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            <div className="p-4 overflow-y-auto flex-1 text-sm text-zinc-800 font-mono space-y-3 max-h-[55vh]">
-              {dashTab === "overview" && (
-                <div className="grid md:grid-cols-2 gap-4">
-                  <div className="space-y-2 border border-zinc-200 p-3 bg-zinc-50">
-                    <h4 className="font-bold text-xs uppercase text-zinc-900 border-b border-zinc-200 pb-1">Personal Info</h4>
-                    <p>
-                      <strong className="text-zinc-600">Role:</strong> {dashboardWorker.role}
-                    </p>
-                    <p>
-                      <strong className="text-zinc-600">Department:</strong> {dashboardWorker.department || "—"}
-                    </p>
-                    <p>
-                      <strong className="text-zinc-600">Employment:</strong> {formatEmploymentType(dashboardWorker.employmentType)}
-                    </p>
-                    <p>
-                      <strong className="text-zinc-600">Skills:</strong>{" "}
-                      {dashboardWorker.skills?.length ? dashboardWorker.skills.join(", ") : "—"}
-                    </p>
-                  </div>
-                  <div className="space-y-2 border border-zinc-200 p-3 bg-zinc-50">
-                    <h4 className="font-bold text-xs uppercase text-zinc-900 border-b border-zinc-200 pb-1">Emergency Contact</h4>
-                    {dashboardWorker.emergencyContact ? (
-                      typeof dashboardWorker.emergencyContact === "string" ? (
-                        <p>{dashboardWorker.emergencyContact}</p>
-                      ) : (
-                        <ul className="text-xs space-y-1">
-                          {Object.entries(dashboardWorker.emergencyContact).map(([k, v]) => (
-                            <li key={k}>
-                              <strong className="text-zinc-600">{k}:</strong> {v}
-                            </li>
-                          ))}
-                        </ul>
-                      )
-                    ) : (
-                      <p className="text-amber-800 font-medium">Not on file</p>
-                    )}
-                  </div>
-                  <div className="md:col-span-2 border border-zinc-200 p-3 bg-zinc-50">
-                    <h4 className="font-bold text-xs uppercase text-zinc-900 border-b border-zinc-200 pb-1 mb-2">Recent sessions</h4>
-                    <p className="text-xs text-zinc-700">
-                      {dashSessions
-                        .slice(0, 5)
-                        .map((s) => `${s.date}: ${Math.round(sessionHours(s) * 10) / 10}h`)
-                        .join(" · ") || "None"}
-                    </p>
-                  </div>
-                </div>
-              )}
-              {dashTab === "attendance" && (
-                <div className="space-y-3">
-                  <div className="grid grid-cols-4 gap-2 text-center text-xs">
-                    <div className="bg-zinc-50 border border-zinc-200 p-2">
-                      <div className="text-zinc-950 font-black font-heading text-base">{dashSessions.filter((s) => sessionDateYmd(s) === today).length}</div>
-                      <div className="text-zinc-600 text-[10px] uppercase font-bold">Sessions today</div>
-                    </div>
-                    <div className="bg-zinc-50 border border-zinc-200 p-2">
-                      <div className="text-zinc-950 font-black font-heading text-base">{dashSessions.length}</div>
-                      <div className="text-zinc-600 text-[10px] uppercase font-bold">All sessions</div>
-                    </div>
-                    <div className="bg-zinc-50 border border-zinc-200 p-2">
-                      <div className="text-zinc-950 font-black font-heading text-base">
-                        {
-                          dashSessions.filter((s) => {
-                            const pol = calculateAttendancePolicy(s);
-                            return pol.attendanceStatus === "late" || pol.attendanceStatus === "very-late";
-                          }).length
-                        }
-                      </div>
-                      <div className="text-zinc-600 text-[10px] uppercase font-bold">Late (policy)</div>
-                    </div>
-                    <div className="bg-zinc-50 border border-zinc-200 p-2">
-                      <div className="text-zinc-950 font-black font-heading text-base">
-                        {Math.round(dashSessions.reduce((a, s) => a + Math.max(0, sessionHours(s) - 8), 0) * 10) / 10}h
-                      </div>
-                      <div className="text-zinc-600 text-[10px] uppercase font-bold">Overtime (all)</div>
-                    </div>
-                  </div>
-                  {dashSessions.length === 0 ? (
-                    <p className="text-zinc-500">No sessions.</p>
-                  ) : (
-                    <table className="w-full text-xs border border-zinc-300">
-                      <thead>
-                        <tr className="bg-zinc-100 text-zinc-900 border-b border-zinc-300 text-left font-bold">
-                          <th className="p-2">Date</th>
-                          <th className="p-2">Hours</th>
-                          <th className="p-2">Late</th>
-                          <th className="p-2">Policy</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {dashSessions.slice(0, 100).map((s) => {
-                          const pol = calculateAttendancePolicy(s);
-                          return (
-                            <tr key={s.id} className="border-t border-zinc-200 hover:bg-zinc-50">
-                              <td className="p-2">{s.date || sessionDateYmd(s)}</td>
-                              <td className="p-2 font-bold">{Math.round(sessionHours(s) * 100) / 100}</td>
-                              <td className="p-2">{s.isLate || pol.isLate ? "yes" : "no"}</td>
-                              <td className="p-2">{pol.attendanceStatus}</td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
-              )}
-              {dashTab === "tasks" && (
-                <div className="space-y-2">
-                  <div className="grid grid-cols-4 gap-2 text-center text-xs mb-2">
-                    <div className="bg-zinc-50 border border-zinc-200 p-2">
-                      <div className="text-zinc-950 font-black font-heading text-base">{dashStats.ts.total}</div>
-                      <span className="text-zinc-600 text-[10px] uppercase font-bold">Total</span>
-                    </div>
-                    <div className="bg-zinc-50 border border-zinc-200 p-2">
-                      <div className="text-emerald-700 font-black font-heading text-base">{dashStats.ts.completed}</div>
-                      <span className="text-zinc-600 text-[10px] uppercase font-bold">Done</span>
-                    </div>
-                    <div className="bg-zinc-50 border border-zinc-200 p-2">
-                      <div className="text-zinc-950 font-black font-heading text-base">{dashStats.ts.total - dashStats.ts.completed}</div>
-                      <span className="text-zinc-600 text-[10px] uppercase font-bold">Open</span>
-                    </div>
-                    <div className="bg-zinc-50 border border-zinc-200 p-2">
-                      <div className="text-red-600 font-black font-heading text-base">
-                        {dashStats.ts.total ? Math.round((dashStats.ts.completed / dashStats.ts.total) * 100) : 0}%
-                      </div>
-                      <span className="text-zinc-600 text-[10px] uppercase font-bold">Progress</span>
-                    </div>
-                  </div>
-                  {dashTasks.length === 0 ? (
-                    <p className="text-zinc-500">No assigned tasks.</p>
-                  ) : (
-                    dashTasks.map((t) => (
-                      <div key={t.id} className="border border-zinc-200 p-2.5 bg-zinc-50">
-                        <p className="font-bold text-zinc-950">{t.title}</p>
-                        <p className="text-xs text-zinc-600 mt-1">
-                          {t.status} · {t.priority || "—"} · {t.projectName || "—"}
-                        </p>
-                      </div>
-                    ))
-                  )}
-                </div>
-              )}
-              {dashTab === "performance" && (
-                <div className="space-y-4">
-                  <div>
-                    <div className="flex justify-between text-xs mb-1 font-bold">
-                      <span className="text-zinc-700">Productivity score</span>
-                      <span className="text-red-600">{dashStats.prod}%</span>
-                    </div>
-                    <div className="h-2.5 bg-zinc-200 overflow-hidden border border-zinc-300">
-                      <div className="h-full bg-red-600" style={{ width: `${dashStats.prod}%` }} />
-                    </div>
-                    <p className="text-xs text-zinc-600 mt-1 font-medium">{performanceRating(dashStats.prod)}</p>
-                  </div>
-                  <div>
-                    <div className="flex justify-between text-xs mb-1 font-bold">
-                      <span className="text-zinc-700">Task completion</span>
-                      <span className="text-zinc-900">
-                        {dashStats.ts.total ? Math.round((dashStats.ts.completed / dashStats.ts.total) * 100) : 0}%
-                      </span>
-                    </div>
-                    <div className="h-2.5 bg-zinc-200 overflow-hidden border border-zinc-300">
-                      <div
-                        className="h-full bg-zinc-900"
-                        style={{
-                          width: `${dashStats.ts.total ? Math.round((dashStats.ts.completed / dashStats.ts.total) * 100) : 0}%`,
-                        }}
-                      />
-                    </div>
-                  </div>
-                  <p className="text-xs text-zinc-700 pt-2 border-t border-zinc-200">
-                    <strong className="text-zinc-900">Avg session (30d):</strong>{" "}
-                    {perfWindow.length
-                      ? Math.round((perfWindow.reduce((a, s) => a + sessionHours(s), 0) / perfWindow.length) * 10) / 10
-                      : 0}
-                    h
-                  </p>
-                </div>
-              )}
-              {dashTab === "payroll" && modalPayroll && (
-                <div className="space-y-2 text-sm border-2 border-zinc-900 p-4 bg-zinc-50 shadow-[2px_2px_0px_0px_#09090b]">
-                  <p>
-                    <strong className="text-zinc-700">Regular / total hours:</strong> {modalPayroll.totalHours}h
-                  </p>
-                  <p>
-                    <strong className="text-zinc-700">Overtime hours:</strong> {modalPayroll.overtimeHours}h
-                  </p>
-                  <p>
-                    <strong className="text-zinc-700">Hourly rate:</strong> EGP {modalPayroll.hourlyRate}
-                  </p>
-                  <p>
-                    <strong className="text-zinc-700">Base pay (est.):</strong> EGP {modalPayroll.basePay}
-                  </p>
-                  <p>
-                    <strong className="text-zinc-700">Overtime pay:</strong> EGP {modalPayroll.overtimePay}
-                  </p>
-                  <p>
-                    <strong className="text-red-700">Absence penalty:</strong> -EGP {modalPayroll.absencePenalty}
-                  </p>
-                  <p>
-                    <strong className="text-red-700">Late penalties:</strong> -EGP {modalPayroll.totalLatePenaltyEgp} ({modalPayroll.lateDays}{" "}
-                    late, {modalPayroll.veryLateDays} very late)
-                  </p>
-                  <p className="text-emerald-800 font-bold text-base pt-2 border-t-2 border-zinc-900">
-                    Net (est. month-to-date): EGP {modalPayroll.totalPay}
-                  </p>
-                  <p className="text-xs text-zinc-500 mt-1">Uses session login time policy (11:00 / 12:00 thresholds) like legacy dashboard.</p>
-                </div>
-              )}
-              {dashTab === "payroll" && !modalPayroll && <p className="text-zinc-500">No payroll data.</p>}
             </div>
           </div>
-        </div>
+        </ModalPortal>
       )}
     </div>
   );

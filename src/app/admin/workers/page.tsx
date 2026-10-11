@@ -14,6 +14,12 @@ import { db } from "@/lib/firebase";
 import { DEPARTMENTS } from "@/lib/admin/constants";
 import { deleteWorkerCascade } from "@/lib/admin/deleteWorkerCascade";
 import { sendExpoPushToWorkers } from "@/lib/chatNotifications";
+import { useUrlState } from "@/lib/admin/useUrlState";
+import { toast, confirmDialog } from "@/lib/admin/feedback";
+import { logActivity } from "@/lib/admin/activity";
+import { downloadCsv } from "@/lib/admin/csv";
+import { BulkBar, BulkButton, EmptyState, PageHeader, SkeletonRows, STATE_ICONS } from "@/components/admin/ui/States";
+import ModalPortal from "@/components/admin/ui/ModalPortal";
 
 interface WorkerTask {
   id: string;
@@ -41,6 +47,10 @@ interface Worker {
   experience?: string;
   status: string;
   isOnline?: boolean;
+  presenceStatus?: "active" | "idle" | "offline";
+  lastActiveCheckAt?: { toDate: () => Date };
+  currentTaskTitle?: string;
+  currentTaskNote?: string;
   department?: string;
   employmentType?: string;
   skills?: string[];
@@ -119,11 +129,15 @@ export default function AdminWorkersPage() {
   const [allTasks, setAllTasks] = useState<WorkerTask[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Filters
-  const [searchFilter, setSearchFilter] = useState("");
-  const [statusFilter, setStatusFilter] = useState("");
-  const [roleFilter, setRoleFilter] = useState("");
-  const [departmentFilter, setDepartmentFilter] = useState("");
+  // Filters (mirrored to the URL so they survive refresh / can be shared)
+  const [searchFilter, setSearchFilter] = useUrlState("q");
+  const [statusFilter, setStatusFilter] = useUrlState("status");
+  const [roleFilter, setRoleFilter] = useUrlState("role");
+  const [departmentFilter, setDepartmentFilter] = useUrlState("dept");
+  const [onlineOnly, setOnlineOnly] = useUrlState("online");
+  const [viewMode, setViewMode] = useUrlState("view", "table");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [assignModalWorker, setAssignModalWorker] = useState<Worker | null>(null);
@@ -260,11 +274,11 @@ export default function AdminWorkersPage() {
     e.preventDefault();
     if (!editingTask) return;
     if (!editTaskForm.title.trim()) {
-      alert("Please enter a title.");
+      toast.warning("Please enter a task title");
       return;
     }
     if (editTaskForm.assignedWorkerIds.length === 0) {
-      alert("Select at least one worker.");
+      toast.warning("Select at least one worker");
       return;
     }
 
@@ -330,10 +344,12 @@ export default function AdminWorkersPage() {
         }).catch(() => {});
       }
 
+      void logActivity({ action: "updated", entity: "task", entityId: editingTask.id, label: editTaskForm.title.trim(), detail: `Assigned to ${assignedWorkerNames}` });
+      toast.success("Task updated", { description: "Assigned workers were notified." });
       setEditingTask(null);
     } catch (err) {
       console.error("Failed to update task:", err);
-      alert("Failed to update task.");
+      toast.error("Failed to update task", { description: err instanceof Error ? err.message : undefined });
     } finally {
       setSavingTask(false);
     }
@@ -354,43 +370,136 @@ export default function AdminWorkersPage() {
       if (statusFilter && w.status !== statusFilter) return false;
       if (roleFilter && w.role !== roleFilter) return false;
       if (departmentFilter && (w.department || "") !== departmentFilter) return false;
+      if (onlineOnly && !w.isOnline) return false;
       if (!q) return true;
 
       const skillsStr = Array.isArray(w.skills) ? w.skills.join(" ") : "";
       const blob = `${w.firstName} ${w.lastName} ${w.email} ${w.role} ${w.phone || ""} ${w.government || ""} ${w.city || ""} ${w.department || ""} ${skillsStr}`.toLowerCase();
       return blob.includes(q);
     });
-  }, [workers, searchFilter, statusFilter, roleFilter, departmentFilter]);
+  }, [workers, searchFilter, statusFilter, roleFilter, departmentFilter, onlineOnly]);
 
   const clearWorkerFilters = () => {
     setSearchFilter("");
-    setStatusFilter("");
     setRoleFilter("");
     setDepartmentFilter("");
+    setOnlineOnly("");
   };
 
-  const approveWorker = async (id: string) => {
-    await updateDoc(doc(db, "workers", id), { status: "approved" });
+  /** Live open / completed task counts per worker (from the tasks collection). */
+  const taskCounts = useMemo(() => {
+    const m = new Map<string, { open: number; done: number }>();
+    allTasks.forEach((t) => {
+      const ids = Array.isArray(t.assignedTo) ? t.assignedTo : t.assignedTo ? [t.assignedTo] : [];
+      ids.forEach((id) => {
+        const c = m.get(id) ?? { open: 0, done: 0 };
+        if (t.status === "completed") c.done++;
+        else c.open++;
+        m.set(id, c);
+      });
+    });
+    return m;
+  }, [allTasks]);
+
+  const workerLabel = (w: Worker) => `${w.firstName} ${w.lastName}`.trim();
+
+  const setWorkerStatus = async (ids: string[], status: "approved" | "rejected") => {
+    setBulkBusy(true);
+    try {
+      await Promise.all(ids.map((id) => updateDoc(doc(db, "workers", id), { status })));
+      ids.forEach((id) => {
+        const w = workers.find((x) => x.id === id);
+        void logActivity({ action: status === "approved" ? "approved" : "rejected", entity: "worker", entityId: id, label: w ? workerLabel(w) : id, detail: w?.email });
+      });
+      const one = ids.length === 1 ? workers.find((x) => x.id === ids[0]) : null;
+      toast.success(
+        one ? `${workerLabel(one)} ${status === "approved" ? "approved" : "rejected"}` : `${ids.length} workers ${status}`,
+        status === "approved" ? { description: "They can now sign in to the mobile app." } : undefined,
+      );
+      setSelected(new Set());
+    } catch (err) {
+      toast.error("Couldn't update worker status", { description: err instanceof Error ? err.message : undefined });
+    } finally {
+      setBulkBusy(false);
+    }
   };
 
-  const rejectWorker = async (id: string) => {
-    await updateDoc(doc(db, "workers", id), { status: "rejected" });
-  };
+  const approveWorker = (id: string) => setWorkerStatus([id], "approved");
+  const rejectWorker = (id: string) => setWorkerStatus([id], "rejected");
 
   const handleDeleteWorker = async (worker: Worker) => {
-    const name = `${worker.firstName} ${worker.lastName}`;
-    if (!confirm(`TERMINATE OPERATOR RECORD: ${name.toUpperCase()}?\n\nThis will purge all associated work logs and task links. Action is irreversible.`)) return;
-    
+    const name = workerLabel(worker);
+    const ok = await confirmDialog({
+      title: `Delete ${name}?`,
+      message: "This permanently removes the worker together with their work sessions and task links. This can't be undone.",
+      tone: "danger",
+      confirmLabel: "Delete worker",
+      requireText: "DELETE",
+    });
+    if (!ok) return;
+
     setDeletingId(worker.id);
     try {
       await deleteWorkerCascade(worker.id);
       if (detailWorker?.id === worker.id) setDetailWorker(null);
+      void logActivity({ action: "deleted", entity: "worker", entityId: worker.id, label: name, detail: worker.email });
+      toast.success(`${name} deleted`);
     } catch (e) {
       console.error(e);
-      alert(`[ERR] ${e instanceof Error ? e.message : "PURGE_FAILED"}`);
+      toast.error("Delete failed", { description: e instanceof Error ? e.message : undefined });
     } finally {
       setDeletingId(null);
     }
+  };
+
+  const bulkDelete = async (ids: string[]) => {
+    const ok = await confirmDialog({
+      title: `Delete ${ids.length} workers?`,
+      message: "All selected workers and their work sessions and task links will be permanently removed.",
+      tone: "danger",
+      confirmLabel: `Delete ${ids.length}`,
+      requireText: "DELETE",
+    });
+    if (!ok) return;
+    setBulkBusy(true);
+    let failed = 0;
+    for (const id of ids) {
+      try {
+        await deleteWorkerCascade(id);
+        const w = workers.find((x) => x.id === id);
+        void logActivity({ action: "deleted", entity: "worker", entityId: id, label: w ? workerLabel(w) : id });
+      } catch {
+        failed++;
+      }
+    }
+    setBulkBusy(false);
+    setSelected(new Set());
+    if (failed) toast.error(`${failed} of ${ids.length} deletions failed`);
+    else toast.success(`${ids.length} workers deleted`);
+  };
+
+  const exportWorkers = (list: Worker[]) => {
+    downloadCsv(
+      [
+        ["First name", "Last name", "Email", "Phone", "Role", "Department", "Status", "Employment", "Hourly rate", "City", "Skills", "Joined"],
+        ...list.map((w) => [
+          w.firstName,
+          w.lastName,
+          w.email,
+          w.phone || "",
+          w.role || "",
+          w.department || "",
+          w.status,
+          w.employmentType || "",
+          w.hourlyRate ?? "",
+          [w.government, w.city].filter(Boolean).join(", "),
+          (w.skills || []).join("; "),
+          w.createdAt?.toDate ? w.createdAt.toDate().toLocaleDateString() : "",
+        ]),
+      ],
+      `workers_${new Date().toISOString().split("T")[0]}.csv`,
+    );
+    toast.success(`Exported ${list.length} workers`);
   };
 
   const openAssignModal = (worker: Worker) => {
@@ -445,7 +554,8 @@ export default function AdminWorkersPage() {
     });
 
     setAssignModalWorker(null);
-    alert(`Task "${taskForm.title}" successfully dispatched to ${assignModalWorker.firstName} ${assignModalWorker.lastName}.`);
+    void logActivity({ action: "assigned", entity: "task", label: taskForm.title, detail: `To ${assignModalWorker.firstName} ${assignModalWorker.lastName}` });
+    toast.success("Task assigned", { description: `"${taskForm.title}" was sent to ${assignModalWorker.firstName} ${assignModalWorker.lastName}.` });
   };
 
   const stats = {
@@ -456,391 +566,454 @@ export default function AdminWorkersPage() {
     online: workers.filter((w) => w.isOnline).length,
   };
 
-  if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 gap-4">
-        <p className="text-xs font-bold uppercase tracking-[0.3em] text-zinc-600 animate-pulse font-mono">
-          INITIALIZING OPERATOR MANIFEST...
-        </p>
-        <div className="w-48 h-1 bg-zinc-200 overflow-hidden border border-zinc-900">
-          <div className="h-full bg-red-600 w-1/2 animate-[slide_1s_ease-in-out_infinite]" />
-        </div>
-      </div>
-    );
-  }
+  const tabs = [
+    { key: "", label: "All", count: stats.total },
+    { key: "approved", label: "Approved", count: stats.approved },
+    { key: "pending", label: "Pending", count: stats.pending },
+    { key: "rejected", label: "Rejected", count: stats.rejected },
+  ];
+  const hasFilters = !!(searchFilter || roleFilter || departmentFilter || onlineOnly);
+  const allSelected = filteredWorkers.length > 0 && filteredWorkers.every((w) => selected.has(w.id));
+  const toggleSel = (id: string) =>
+    setSelected((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  const selectedIds = [...selected];
+  const selectedPending = selectedIds.filter((id) => workers.find((w) => w.id === id)?.status === "pending");
+  const STATUS_CHIP: Record<string, string> = {
+    approved: "bg-emerald-50 text-emerald-700 border-emerald-200",
+    pending: "bg-amber-50 text-amber-700 border-amber-200",
+    rejected: "bg-red-50 text-red-700 border-red-200",
+  };
+  const initialsOf = (w: Worker) => `${w.firstName?.[0] ?? ""}${w.lastName?.[0] ?? ""}`.toUpperCase() || "?";
+  const relTime = (ts?: { toDate: () => Date }) => {
+    if (!ts?.toDate) return "Never";
+    const s = Math.floor((Date.now() - ts.toDate().getTime()) / 1000);
+    if (s < 60) return "Just now";
+    if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+    if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+    if (s < 86400 * 30) return `${Math.floor(s / 86400)}d ago`;
+    return ts.toDate().toLocaleDateString();
+  };
+  const IconBtn = ({ onClick, title, d, tone = "default", disabled }: { onClick: () => void; title: string; d: string; tone?: "default" | "success" | "danger"; disabled?: boolean }) => (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      disabled={disabled}
+      onClick={onClick}
+      className={`rounded-lg p-1.5 transition-colors disabled:opacity-40 cursor-pointer ${
+        tone === "success" ? "text-emerald-600 hover:bg-emerald-50" : tone === "danger" ? "text-zinc-400 hover:bg-red-50 hover:text-red-600" : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
+      }`}
+    >
+      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+        <path strokeLinecap="round" strokeLinejoin="round" d={d} />
+      </svg>
+    </button>
+  );
+  const ICON_PATH = {
+    approve: "M5 13l4 4L19 7",
+    reject: "M6 18L18 6M6 6l12 12",
+    assign: "M12 4v16m8-8H4",
+    view: "M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z",
+    trash: "M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16",
+    whatsapp: "M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z",
+  };
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-300">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b-2 border-zinc-900">
-        <div>
-          <h2 className="text-2xl font-black text-zinc-950 font-heading tracking-tight uppercase">Operator Manifest</h2>
-          <p className="text-xs text-zinc-600 font-mono mt-0.5">
-            Real-time Personnel Roster &amp; Operational Telemetry
-          </p>
-        </div>
-        <p className="text-xs font-bold font-mono uppercase tracking-widest text-zinc-600 bg-zinc-100 border border-zinc-300 px-3 py-1.5">
-          SYNCING: {filteredWorkers.length} OF {workers.length} RECORDS
-        </p>
-      </div>
+    <div className="space-y-5 pb-24">
+      <PageHeader
+        title="Workers"
+        description="Team roster, registration approvals, profiles and task assignment."
+        actions={
+          <>
+            <div className="flex gap-1 rounded-lg bg-zinc-100 p-1">
+              {[
+                ["table", "Table", "M3 10h18M3 14h18M3 6h18M3 18h18"],
+                ["cards", "Cards", "M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"],
+              ].map(([k, l, d]) => (
+                <button
+                  key={k}
+                  type="button"
+                  title={l}
+                  onClick={() => setViewMode(k)}
+                  className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold transition-all cursor-pointer ${viewMode === k ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-800"}`}
+                >
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d={d} />
+                  </svg>
+                  {l}
+                </button>
+              ))}
+            </div>
+            <button type="button" onClick={() => exportWorkers(filteredWorkers)} disabled={!filteredWorkers.length} className="brutal-btn-outline normal-case tracking-normal disabled:opacity-50">
+              Export CSV
+            </button>
+          </>
+        }
+      />
 
-      {/* Stats Bar */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+      {/* Stat strip */}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
         {[
-          { label: "Total Operators", value: stats.total, color: "text-zinc-950" },
-          { label: "Approved Active", value: stats.approved, color: "text-emerald-700" },
-          { label: "Verify Pending", value: stats.pending, color: "text-amber-700" },
-          { label: "Rejected Units", value: stats.rejected, color: "text-red-700" },
-          { label: "Online Uplink", value: stats.online, color: "text-emerald-700" },
+          { label: "Total workers", value: stats.total, bar: "bg-zinc-400", onClick: () => setStatusFilter("") },
+          { label: "Approved", value: stats.approved, bar: "bg-emerald-500", onClick: () => setStatusFilter("approved") },
+          { label: "Awaiting approval", value: stats.pending, bar: "bg-amber-500", onClick: () => setStatusFilter("pending") },
+          { label: "Rejected", value: stats.rejected, bar: "bg-red-500", onClick: () => setStatusFilter("rejected") },
+          { label: "Online now", value: stats.online, bar: "bg-sky-500", onClick: () => setOnlineOnly(onlineOnly ? "" : "1") },
         ].map((s) => (
-          <div key={s.label} className="bg-white border-2 border-zinc-900 p-4 text-center shadow-[3px_3px_0px_0px_#09090b]">
-            <div className={`text-2xl font-black font-heading ${s.color}`}>{s.value}</div>
-            <div className="text-[10px] font-bold uppercase font-mono tracking-wider text-zinc-600 mt-1">{s.label}</div>
-          </div>
+          <button key={s.label} type="button" onClick={s.onClick} className="ui-card ui-card-hover relative overflow-hidden px-4 py-3 text-left cursor-pointer">
+            <span className={`absolute left-0 top-0 h-full w-1 ${s.bar}`} />
+            <p className="text-[11px] font-medium text-zinc-500">{s.label}</p>
+            <p className="mt-1 text-2xl font-bold tracking-tight text-zinc-900">{loading ? "–" : s.value}</p>
+          </button>
         ))}
       </div>
 
-      {/* Filters Bar */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-3 p-4 bg-white border-2 border-zinc-900 shadow-[3px_3px_0px_0px_#09090b]">
-        <div className="flex flex-col gap-1">
-          <label className="text-[10px] font-bold uppercase font-mono tracking-wider text-zinc-700">Search</label>
-          <input
-            value={searchFilter}
-            onChange={(e) => setSearchFilter(e.target.value)}
-            placeholder="Name, email, city, skills..."
-            className="w-full bg-white border-2 border-zinc-900 px-3 py-2 text-xs font-mono text-zinc-950 focus:outline-none focus:ring-2 focus:ring-red-600"
-          />
+      {/* Pending banner */}
+      {!loading && stats.pending > 0 && statusFilter !== "pending" && (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-amber-100 text-amber-700">
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </span>
+          <p className="flex-1 text-sm text-zinc-800">
+            <span className="font-semibold">{stats.pending} new registration{stats.pending === 1 ? "" : "s"}</span> waiting for your approval.
+          </p>
+          <button type="button" onClick={() => setStatusFilter("pending")} className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-amber-700 cursor-pointer">
+            Review now
+          </button>
         </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-[10px] font-bold uppercase font-mono tracking-wider text-zinc-700">Status</label>
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="w-full bg-white border-2 border-zinc-900 px-3 py-2 text-xs font-mono font-bold text-zinc-950 focus:outline-none focus:ring-2 focus:ring-red-600"
-          >
-            <option value="">ALL STATUSES</option>
-            <option value="approved">APPROVED</option>
-            <option value="pending">PENDING</option>
-            <option value="rejected">REJECTED</option>
-          </select>
+      )}
+
+      {/* Tabs + filters */}
+      <div className="ui-card overflow-hidden">
+        <div className="flex flex-wrap items-center gap-1 border-b border-zinc-100 px-3 pt-2">
+          {tabs.map((t) => (
+            <button
+              key={t.key || "all"}
+              type="button"
+              id={`workers-tab-${t.key || "all"}`}
+              onClick={() => setStatusFilter(t.key)}
+              className={`relative flex items-center gap-2 px-3 pb-2.5 pt-1.5 text-[13px] font-medium transition-colors cursor-pointer ${statusFilter === t.key ? "text-zinc-900" : "text-zinc-500 hover:text-zinc-800"}`}
+            >
+              {t.label}
+              <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${statusFilter === t.key ? "bg-zinc-900 text-white" : t.key === "pending" && t.count ? "bg-amber-100 text-amber-700" : "bg-zinc-100 text-zinc-600"}`}>{t.count}</span>
+              {statusFilter === t.key && <span className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-red-600" />}
+            </button>
+          ))}
+          <span className="ml-auto pb-2 text-[11px] text-zinc-400">
+            {filteredWorkers.length} of {workers.length} shown
+          </span>
         </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-[10px] font-bold uppercase font-mono tracking-wider text-zinc-700">Department</label>
-          <select
-            value={departmentFilter}
-            onChange={(e) => setDepartmentFilter(e.target.value)}
-            className="w-full bg-white border-2 border-zinc-900 px-3 py-2 text-xs font-mono font-bold text-zinc-950 focus:outline-none focus:ring-2 focus:ring-red-600"
-          >
-            <option value="">ALL DEPARTMENTS</option>
+        <div className="flex flex-col gap-2 p-3 md:flex-row md:items-center">
+          <div className="relative flex-1">
+            <svg className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d={STATE_ICONS.search} />
+            </svg>
+            <input id="workers-search" value={searchFilter} onChange={(e) => setSearchFilter(e.target.value)} placeholder="Search name, email, city, skills…" className="brutal-input pl-9" />
+          </div>
+          <select value={departmentFilter} onChange={(e) => setDepartmentFilter(e.target.value)} className="brutal-input md:w-44" aria-label="Department">
+            <option value="">All departments</option>
             {DEPARTMENTS.map((d) => (
               <option key={d.value} value={d.value}>
-                {d.label.toUpperCase()}
+                {d.label}
               </option>
             ))}
           </select>
-        </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-[10px] font-bold uppercase font-mono tracking-wider text-zinc-700">Role</label>
-          <select
-            value={roleFilter}
-            onChange={(e) => setRoleFilter(e.target.value)}
-            className="w-full bg-white border-2 border-zinc-900 px-3 py-2 text-xs font-mono font-bold text-zinc-950 focus:outline-none focus:ring-2 focus:ring-red-600"
-          >
-            <option value="">ALL ROLES</option>
+          <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} className="brutal-input md:w-44" aria-label="Role">
+            <option value="">All roles</option>
             {uniqueRoles.map((r) => (
               <option key={r} value={r}>
-                {formatRole(r).toUpperCase()}
+                {formatRole(r)}
               </option>
             ))}
           </select>
-        </div>
-        <div className="flex items-end">
-          <button
-            type="button"
-            onClick={clearWorkerFilters}
-            className="w-full py-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-950 font-mono text-xs font-bold uppercase border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] cursor-pointer"
-          >
-            Reset Filters
-          </button>
+          <label className="flex shrink-0 cursor-pointer items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-xs font-medium text-zinc-600">
+            <input type="checkbox" className="mft-check" checked={!!onlineOnly} onChange={(e) => setOnlineOnly(e.target.checked ? "1" : "")} />
+            Online only
+          </label>
+          {hasFilters && (
+            <button type="button" onClick={clearWorkerFilters} className="px-2 text-xs font-medium text-zinc-500 hover:text-zinc-900 cursor-pointer">
+              Reset
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Workers Manifest Cards */}
-      <div className="space-y-4">
-        {workers.length === 0 ? (
-          <div className="p-16 text-center bg-white border-2 border-zinc-900 shadow-[3px_3px_0px_0px_#09090b]">
-            <p className="text-xs font-bold font-mono uppercase tracking-widest text-emerald-700">
-              WAITING FOR INBOUND OPERATOR REGISTRATIONS...
-            </p>
-          </div>
-        ) : filteredWorkers.length === 0 ? (
-          <div className="p-16 text-center bg-white border-2 border-zinc-900 shadow-[3px_3px_0px_0px_#09090b]">
-            <p className="text-xs font-bold font-mono uppercase tracking-widest text-amber-700">
-              NO OPERATORS MATCHING SEARCH PARAMS
-            </p>
-          </div>
-        ) : (
-          filteredWorkers.map((worker) => {
-            const hasLocation = worker.government || worker.city;
-            const waPhone = cleanPhoneForWhatsApp(worker.phone);
-
+      {/* Roster */}
+      {loading ? (
+        <div className="ui-card">
+          <SkeletonRows rows={8} cols={4} />
+        </div>
+      ) : workers.length === 0 ? (
+        <div className="ui-card">
+          <EmptyState icon={STATE_ICONS.users} title="No workers yet" description="Workers appear here as soon as they register from the mobile app." />
+        </div>
+      ) : filteredWorkers.length === 0 ? (
+        <div className="ui-card">
+          <EmptyState
+            icon={STATE_ICONS.search}
+            title={statusFilter === "pending" && !hasFilters ? "No pending registrations" : "No workers match"}
+            description={statusFilter === "pending" && !hasFilters ? "Every registration has been reviewed." : "Try a different tab or clear filters."}
+            action={
+              hasFilters ? (
+                <button type="button" onClick={clearWorkerFilters} className="brutal-btn-outline normal-case tracking-normal">
+                  Clear filters
+                </button>
+              ) : undefined
+            }
+          />
+        </div>
+      ) : viewMode === "cards" ? (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {filteredWorkers.map((worker) => {
+            const tc = taskCounts.get(worker.id) ?? { open: 0, done: 0 };
+            const isSel = selected.has(worker.id);
             return (
-              <div
-                key={worker.id}
-                className="bg-white border-2 border-zinc-900 p-5 shadow-[4px_4px_0px_0px_#09090b] transition-all hover:translate-x-0.5 hover:translate-y-0.5"
-              >
-                {/* Header Section */}
-                <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-3 pb-3 border-b border-zinc-200">
-                  <div className="flex items-center gap-3">
-                    <div
-                      className={`h-3.5 w-3.5 rounded-full border border-zinc-900 ${
-                        worker.isOnline
-                          ? "bg-emerald-500 shadow-sm shadow-emerald-500 animate-pulse"
-                          : "bg-zinc-300"
-                      }`}
-                    />
-                    <div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="text-xl font-bold font-heading text-zinc-950 uppercase tracking-tight">
-                          {worker.firstName} {worker.lastName}
-                        </h3>
-                        <span className="text-xs font-bold font-mono text-red-600 bg-red-50 border border-red-300 px-2 py-0.5">
-                          {formatRole(worker.role)}
-                        </span>
-                        <span className="text-xs font-bold font-mono text-zinc-800 bg-zinc-100 border border-zinc-300 px-2 py-0.5">
-                          {formatDepartment(worker.department)}
-                        </span>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-3 mt-1 text-xs font-mono text-zinc-500">
-                        <span>ID: {worker.id.slice(-8)}</span>
-                        {hasLocation && (
-                          <span className="text-zinc-700 font-bold">
-                            📍 {worker.government || ""}{worker.city ? `, ${worker.city}` : ""}
-                          </span>
-                        )}
-                        {worker.employmentType && (
-                          <span className="text-zinc-600">
-                            • {formatEmploymentType(worker.employmentType)}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap gap-2">
-                    <span
-                      className={`px-2.5 py-1 text-xs font-mono font-bold border ${
-                        worker.status === "approved"
-                          ? "text-emerald-800 border-emerald-400 bg-emerald-50"
-                          : worker.status === "pending"
-                            ? "text-amber-800 border-amber-400 bg-amber-50"
-                            : "text-red-800 border-red-400 bg-red-50"
-                      }`}
-                    >
-                      {worker.status.toUpperCase()}
-                    </span>
-                    <span
-                      className={`px-2.5 py-1 text-xs font-mono font-bold border ${
-                        worker.isOnline
-                          ? "text-emerald-800 border-emerald-400 bg-emerald-50"
-                          : "text-zinc-600 border-zinc-300 bg-zinc-100"
-                      }`}
-                    >
-                      {worker.isOnline ? "LINK_ACTIVE" : "DISPATCH_OFFLINE"}
-                    </span>
-                    {worker.expoPushToken && (
-                      <span className="px-2 py-1 text-xs font-mono font-bold bg-blue-50 text-blue-800 border border-blue-300">
-                        📱 PUSH ACTIVE
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                {/* Main Operator Data Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 py-4 text-xs font-mono border-b border-zinc-200">
-                  {/* Contact Info */}
-                  <div className="space-y-1.5 bg-zinc-50 p-3 border border-zinc-200">
-                    <div className="text-[10px] font-bold uppercase text-zinc-500 border-b border-zinc-200 pb-1 mb-1.5">
-                      Contact Directives
-                    </div>
-                    <div>
-                      <span className="text-zinc-500">EMAIL:</span>{" "}
-                      <a href={`mailto:${worker.email}`} className="text-zinc-950 font-bold hover:underline break-all">
-                        {worker.email}
-                      </a>
-                    </div>
-                    <div>
-                      <span className="text-zinc-500">PHONE:</span>{" "}
-                      <span className="text-zinc-950 font-bold">{worker.phone || "UNSET"}</span>
-                    </div>
-                    {waPhone && (
-                      <div className="pt-1">
-                        <a
-                          href={`https://wa.me/${waPhone}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-300 px-2 py-0.5 hover:bg-emerald-100"
-                        >
-                          💬 WhatsApp Link
-                        </a>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Professional & Experience */}
-                  <div className="space-y-1.5 bg-zinc-50 p-3 border border-zinc-200">
-                    <div className="text-[10px] font-bold uppercase text-zinc-500 border-b border-zinc-200 pb-1 mb-1.5">
-                      Qualifications
-                    </div>
-                    <div>
-                      <span className="text-zinc-500">EXPERIENCE:</span>{" "}
-                      <span className="text-zinc-950 font-bold">{worker.experience || "N/A"}</span>
-                    </div>
-                    <div>
-                      <span className="text-zinc-500">NOTICE:</span>{" "}
-                      <span className="text-zinc-950 font-bold">{worker.netspend || "Immediate"}</span>
-                    </div>
-                    {worker.portfolioLink && (
-                      <div className="pt-1">
-                        <a
-                          href={worker.portfolioLink.startsWith("http") ? worker.portfolioLink : `https://${worker.portfolioLink}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-[11px] font-bold text-red-600 bg-red-50 border border-red-300 px-2 py-0.5 hover:bg-red-100"
-                        >
-                          🔗 View Portfolio ↗
-                        </a>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Financial & Compensation */}
-                  <div className="space-y-1.5 bg-zinc-50 p-3 border border-zinc-200">
-                    <div className="text-[10px] font-bold uppercase text-zinc-500 border-b border-zinc-200 pb-1 mb-1.5">
-                      Compensation
-                    </div>
-                    <div>
-                      <span className="text-zinc-500">EXPECTED SAL:</span>{" "}
-                      <span className="text-zinc-950 font-bold">
-                        {worker.expectedSalary ? `EGP ${worker.expectedSalary}` : "UNSET"}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-zinc-500">HOURLY RATE:</span>{" "}
-                      <span className="text-zinc-950 font-bold">
-                        {worker.hourlyRate ? `EGP ${worker.hourlyRate}/h` : "EGP 31.25/h (Std)"}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-zinc-500">TARGET HRS:</span>{" "}
-                      <span className="text-zinc-950 font-bold">
-                        {worker.expectedHours ? `${worker.expectedHours}h/day` : "8h/day"}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* System & Timeline */}
-                  <div className="space-y-1.5 bg-zinc-50 p-3 border border-zinc-200">
-                    <div className="text-[10px] font-bold uppercase text-zinc-500 border-b border-zinc-200 pb-1 mb-1.5">
-                      System Timeline
-                    </div>
-                    <div>
-                      <span className="text-zinc-500">JOINED:</span>{" "}
-                      <span className="text-zinc-900 font-bold">
-                        {worker.createdAt?.toDate ? worker.createdAt.toDate().toLocaleDateString() : "UNKNOWN"}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-zinc-500">LAST LOGIN:</span>{" "}
-                      <span className="text-zinc-900 font-bold">
-                        {worker.lastLogin?.toDate
-                          ? worker.lastLogin.toDate().toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
-                          : "UNKNOWN"}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-zinc-500">TASKS RATIO:</span>{" "}
-                      <span className="text-zinc-900 font-bold">
-                        {worker.completedTasks ?? 0} / {worker.totalTasks ?? 0} Done
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Skills Tags Bar (if available) */}
-                {worker.skills && worker.skills.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-1.5 py-3 border-b border-zinc-200">
-                    <span className="text-[10px] font-bold uppercase font-mono text-zinc-500 mr-1">Skills:</span>
-                    {worker.skills.map((s, idx) => (
+              <article key={worker.id} className={`ui-card ui-card-hover flex flex-col p-4 ${isSel ? "ring-2 ring-red-500/40" : ""}`}>
+                <div className="flex items-start gap-3">
+                  <input type="checkbox" className="mft-check mt-1" checked={isSel} onChange={() => toggleSel(worker.id)} aria-label={`Select ${workerLabel(worker)}`} />
+                  <button type="button" onClick={() => setDetailWorker(worker)} className="flex min-w-0 flex-1 items-start gap-3 text-left cursor-pointer">
+                    <span className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-zinc-700 to-zinc-900 text-sm font-bold text-white">
+                      {initialsOf(worker)}
                       <span
-                        key={idx}
-                        className="px-2 py-0.5 bg-zinc-100 border border-zinc-300 text-zinc-800 text-xs font-mono font-medium"
-                      >
+                        className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full ring-2 ring-white ${
+                          worker.isOnline
+                            ? worker.presenceStatus === "idle"
+                              ? "bg-red-600 animate-ping"
+                              : "bg-emerald-500"
+                            : "bg-zinc-300"
+                        }`}
+                      />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block truncate font-semibold text-zinc-900">{workerLabel(worker)}</span>
+                      <span className="block truncate text-xs text-zinc-500">
+                        {formatRole(worker.role)} · {formatDepartment(worker.department)}
+                      </span>
+                      {worker.isOnline && (
+                        <span className={`block truncate text-[11px] font-medium mt-0.5 ${worker.presenceStatus === "idle" ? "text-red-600 font-bold" : "text-emerald-600"}`}>
+                          {worker.presenceStatus === "idle"
+                            ? "⚠️ Station Idle (Missed check)"
+                            : worker.currentTaskTitle
+                            ? `📌 ${worker.currentTaskTitle}`
+                            : "🟢 Active (2h verified)"}
+                        </span>
+                      )}
+                    </span>
+                  </button>
+                  <span className={`shrink-0 rounded-md border px-2 py-0.5 text-[10px] font-semibold capitalize ${STATUS_CHIP[worker.status] ?? STATUS_CHIP.pending}`}>{worker.status}</span>
+                </div>
+                <div className="mt-4 grid grid-cols-3 gap-2 rounded-lg bg-zinc-50 p-2.5 text-center">
+                  <div>
+                    <p className="text-sm font-semibold text-zinc-900">{tc.open}</p>
+                    <p className="text-[10px] text-zinc-500">Open tasks</p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-emerald-600">{tc.done}</p>
+                    <p className="text-[10px] text-zinc-500">Completed</p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-zinc-900">{worker.hourlyRate ?? 31.25}</p>
+                    <p className="text-[10px] text-zinc-500">EGP / h</p>
+                  </div>
+                </div>
+                {worker.skills && worker.skills.length > 0 && (
+                  <div className="mt-3 flex flex-wrap gap-1">
+                    {worker.skills.slice(0, 4).map((s, i) => (
+                      <span key={i} className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-600">
                         {s}
                       </span>
                     ))}
+                    {worker.skills.length > 4 && <span className="text-[10px] text-zinc-400">+{worker.skills.length - 4}</span>}
                   </div>
                 )}
-
-                {/* Command Action Buttons */}
-                <div className="flex flex-wrap items-center gap-2 pt-3">
-                  {worker.status === "pending" && (
+                <div className="mt-auto flex items-center gap-1 border-t border-zinc-100 pt-3 mt-4">
+                  {worker.status === "pending" ? (
                     <>
-                      <button
-                        type="button"
-                        onClick={() => approveWorker(worker.id)}
-                        className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-mono text-xs font-bold uppercase border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] cursor-pointer"
-                      >
-                        Verify Operator
+                      <button type="button" disabled={bulkBusy} onClick={() => void approveWorker(worker.id)} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 cursor-pointer">
+                        Approve
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => rejectWorker(worker.id)}
-                        className="px-3.5 py-1.5 bg-red-50 hover:bg-red-600 hover:text-white text-red-700 font-mono text-xs font-bold uppercase border-2 border-red-600 cursor-pointer"
-                      >
-                        Reject Unit
+                      <button type="button" disabled={bulkBusy} onClick={() => void rejectWorker(worker.id)} className="rounded-lg px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50 cursor-pointer">
+                        Reject
                       </button>
                     </>
+                  ) : (
+                    <button type="button" onClick={() => openAssignModal(worker)} className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-zinc-800 cursor-pointer">
+                      Assign task
+                    </button>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => openAssignModal(worker)}
-                    className="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white font-mono text-xs font-bold uppercase tracking-wider border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] cursor-pointer active:translate-x-0.5 active:translate-y-0.5"
-                  >
-                    Assign Task
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDetailWorker(worker)}
-                    className="px-4 py-1.5 bg-white hover:bg-zinc-100 text-zinc-950 font-mono text-xs font-bold uppercase tracking-wider border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] cursor-pointer active:translate-x-0.5 active:translate-y-0.5"
-                  >
-                    View All Data
-                  </button>
-                  <button
-                    type="button"
-                    disabled={deletingId === worker.id}
-                    onClick={() => void handleDeleteWorker(worker)}
-                    className="ml-auto px-3 py-1.5 bg-white hover:bg-red-50 text-red-700 border border-zinc-300 hover:border-red-500 font-mono text-xs font-bold uppercase cursor-pointer"
-                  >
-                    {deletingId === worker.id ? "Purging..." : "Terminate Record"}
-                  </button>
+                  <span className="ml-auto flex items-center">
+                    {cleanPhoneForWhatsApp(worker.phone) && (
+                      <a href={`https://wa.me/${cleanPhoneForWhatsApp(worker.phone)}`} target="_blank" rel="noreferrer" title="WhatsApp" className="rounded-lg p-1.5 text-zinc-500 hover:bg-emerald-50 hover:text-emerald-600">
+                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d={ICON_PATH.whatsapp} />
+                        </svg>
+                      </a>
+                    )}
+                    <IconBtn title="View profile" d={ICON_PATH.view} onClick={() => setDetailWorker(worker)} />
+                    <IconBtn title="Delete worker" d={ICON_PATH.trash} tone="danger" disabled={deletingId === worker.id} onClick={() => void handleDeleteWorker(worker)} />
+                  </span>
                 </div>
-              </div>
+              </article>
             );
-          })
-        )}
-      </div>
+          })}
+        </div>
+      ) : (
+        <div className="ui-card overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[920px] text-sm">
+              <thead className="border-b border-zinc-100 bg-zinc-50 text-left text-[11px] font-semibold text-zinc-500">
+                <tr>
+                  <th className="w-10 px-4 py-2.5">
+                    <input type="checkbox" className="mft-check" checked={allSelected} onChange={() => setSelected(allSelected ? new Set() : new Set(filteredWorkers.map((w) => w.id)))} aria-label="Select all" />
+                  </th>
+                  <th className="px-2 py-2.5">Worker</th>
+                  <th className="px-4 py-2.5">Role & department</th>
+                  <th className="px-4 py-2.5">Status</th>
+                  <th className="px-4 py-2.5">Tasks</th>
+                  <th className="px-4 py-2.5">Location</th>
+                  <th className="px-4 py-2.5">Last seen</th>
+                  <th className="px-4 py-2.5 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100">
+                {filteredWorkers.map((worker) => {
+                  const tc = taskCounts.get(worker.id) ?? { open: 0, done: 0 };
+                  const total = tc.open + tc.done;
+                  const isSel = selected.has(worker.id);
+                  return (
+                    <tr key={worker.id} className={`group transition-colors ${isSel ? "bg-red-50/50" : "hover:bg-zinc-50"}`}>
+                      <td className="px-4 py-3">
+                        <input type="checkbox" className="mft-check" checked={isSel} onChange={() => toggleSel(worker.id)} aria-label={`Select ${workerLabel(worker)}`} />
+                      </td>
+                      <td className="px-2 py-3">
+                        <button type="button" onClick={() => setDetailWorker(worker)} className="flex items-center gap-3 text-left cursor-pointer">
+                          <span className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-[11px] font-bold text-zinc-600">
+                            {initialsOf(worker)}
+                            <span
+                              className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-white ${
+                                worker.isOnline
+                                  ? worker.presenceStatus === "idle"
+                                    ? "bg-red-600 animate-ping"
+                                    : "bg-emerald-500"
+                                  : "bg-zinc-300"
+                              }`}
+                            />
+                          </span>
+                          <span className="min-w-0">
+                            <span className="block truncate font-medium text-zinc-900 group-hover:text-red-600">{workerLabel(worker)}</span>
+                            <span className="block truncate text-[11px] text-zinc-500">{worker.email}</span>
+                          </span>
+                        </button>
+                      </td>
+                      <td className="px-4 py-3">
+                        <p className="text-zinc-800">{formatRole(worker.role)}</p>
+                        <p className="text-[11px] text-zinc-500">
+                          {formatDepartment(worker.department)}
+                          {worker.employmentType ? ` · ${formatEmploymentType(worker.employmentType)}` : ""}
+                        </p>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-flex rounded-md border px-2 py-0.5 text-[11px] font-semibold capitalize ${STATUS_CHIP[worker.status] ?? STATUS_CHIP.pending}`}>{worker.status}</span>
+                        {worker.expoPushToken && <span className="ml-1 text-[10px] text-zinc-400" title="Push notifications enabled">📱</span>}
+                      </td>
+                      <td className="px-4 py-3">
+                        {total ? (
+                          <div className="flex items-center gap-2">
+                            <div className="h-1.5 w-14 overflow-hidden rounded-full bg-zinc-100">
+                              <div className="h-full rounded-full bg-emerald-500" style={{ width: `${(tc.done / total) * 100}%` }} />
+                            </div>
+                            <span className="text-xs tabular-nums text-zinc-600">
+                              {tc.done}/{total}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-zinc-400">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-zinc-600">{[worker.government, worker.city].filter(Boolean).join(", ") || "—"}</td>
+                      <td className="px-4 py-3 text-xs text-zinc-600">
+                        {worker.isOnline ? (
+                          worker.presenceStatus === "idle" ? (
+                            <div className="flex flex-col">
+                              <span className="inline-flex items-center gap-1 font-bold text-red-600">
+                                <span className="h-1.5 w-1.5 rounded-full bg-red-600 animate-ping" />
+                                Idle (Missed check)
+                              </span>
+                              <span className="text-[10px] text-zinc-400">Station unconfirmed</span>
+                            </div>
+                          ) : (
+                            <div className="flex flex-col">
+                              <span className="inline-flex items-center gap-1 font-semibold text-emerald-600">
+                                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                Active (2h OK)
+                              </span>
+                              {worker.currentTaskTitle && (
+                                <span className="text-[10px] text-zinc-500 truncate max-w-[140px]" title={worker.currentTaskTitle}>
+                                  📌 {worker.currentTaskTitle}
+                                </span>
+                              )}
+                            </div>
+                          )
+                        ) : (
+                          relTime(worker.lastLogin)
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-end gap-0.5">
+                          {worker.status === "pending" && (
+                            <>
+                              <IconBtn title="Approve" d={ICON_PATH.approve} tone="success" disabled={bulkBusy} onClick={() => void approveWorker(worker.id)} />
+                              <IconBtn title="Reject" d={ICON_PATH.reject} tone="danger" disabled={bulkBusy} onClick={() => void rejectWorker(worker.id)} />
+                            </>
+                          )}
+                          <IconBtn title="Assign task" d={ICON_PATH.assign} onClick={() => openAssignModal(worker)} />
+                          <IconBtn title="View profile" d={ICON_PATH.view} onClick={() => setDetailWorker(worker)} />
+                          <IconBtn title="Delete worker" d={ICON_PATH.trash} tone="danger" disabled={deletingId === worker.id} onClick={() => void handleDeleteWorker(worker)} />
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <BulkBar count={selected.size} onClear={() => setSelected(new Set())}>
+        <BulkButton tone="success" disabled={bulkBusy || selectedPending.length === 0} onClick={() => void setWorkerStatus(selectedPending, "approved")}>
+          Approve{selectedPending.length ? ` ${selectedPending.length}` : ""}
+        </BulkButton>
+        <BulkButton disabled={bulkBusy || selectedPending.length === 0} onClick={() => void setWorkerStatus(selectedPending, "rejected")}>
+          Reject
+        </BulkButton>
+        <BulkButton disabled={bulkBusy} onClick={() => exportWorkers(workers.filter((w) => selected.has(w.id)))}>
+          Export
+        </BulkButton>
+        <BulkButton tone="danger" disabled={bulkBusy} onClick={() => void bulkDelete(selectedIds)}>
+          Delete
+        </BulkButton>
+      </BulkBar>
+
 
       {/* Complete Worker 360 Detail Modal */}
       {detailWorker && (
-        <div
-          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4"
-          onClick={() => setDetailWorker(null)}
-        >
+        <ModalPortal onClose={() => setDetailWorker(null)}>
           <div
-            className="border-2 border-zinc-900 bg-white w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 shadow-[8px_8px_0px_0px_#09090b] text-zinc-950 font-mono"
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-[120] bg-zinc-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in"
+            onClick={() => setDetailWorker(null)}
           >
+            <div
+              className="border-2 border-zinc-900 bg-white dark:bg-zinc-900 w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 shadow-2xl text-zinc-950 dark:text-zinc-100 font-mono animate-scale-in"
+              onClick={(e) => e.stopPropagation()}
+            >
             {/* Modal Header */}
             <div className="flex items-start justify-between pb-4 border-b-2 border-zinc-900 mb-5">
               <div className="flex items-center gap-3">
@@ -862,11 +1035,17 @@ export default function AdminWorkersPage() {
                     <span
                       className={`px-2 py-0.5 font-bold border ${
                         detailWorker.isOnline
-                          ? "bg-emerald-50 text-emerald-800 border-emerald-300"
+                          ? detailWorker.presenceStatus === "idle"
+                            ? "bg-red-50 text-red-800 border-red-300 animate-pulse"
+                            : "bg-emerald-50 text-emerald-800 border-emerald-300"
                           : "bg-zinc-100 text-zinc-600 border-zinc-300"
                       }`}
                     >
-                      {detailWorker.isOnline ? "● ONLINE" : "○ OFFLINE"}
+                      {detailWorker.isOnline
+                        ? detailWorker.presenceStatus === "idle"
+                          ? "⚠️ IDLE (MISSED 2H CHECK)"
+                          : "● ONLINE (2H ACTIVE)"
+                        : "○ OFFLINE"}
                     </span>
                   </div>
                 </div>
@@ -879,6 +1058,37 @@ export default function AdminWorkersPage() {
                 &times;
               </button>
             </div>
+
+            {/* Active Presence Banner in Drawer */}
+            {detailWorker.isOnline && (
+              <div
+                className={`mb-5 p-3.5 border-2 ${
+                  detailWorker.presenceStatus === "idle"
+                    ? "bg-red-50 border-red-500 text-red-950"
+                    : "bg-emerald-50 border-emerald-500 text-emerald-950"
+                }`}
+              >
+                <div className="flex items-center justify-between text-xs font-mono font-bold uppercase tracking-wider mb-1.5">
+                  <span className="flex items-center gap-1.5">
+                    <span className={`h-2 w-2 rounded-full ${detailWorker.presenceStatus === "idle" ? "bg-red-600 animate-ping" : "bg-emerald-600"}`} />
+                    2-Hour Presence Status
+                  </span>
+                  <span className="font-extrabold">{detailWorker.presenceStatus === "idle" ? "Station Idle / Unresponsive" : "Active & Verified"}</span>
+                </div>
+                {detailWorker.currentTaskTitle ? (
+                  <p className="text-xs font-semibold">
+                    Current Task: <span className="font-normal">{detailWorker.currentTaskTitle}</span>
+                  </p>
+                ) : (
+                  <p className="text-xs text-zinc-600">Currently active on general shift operations.</p>
+                )}
+                {detailWorker.currentTaskNote && (
+                  <p className="text-xs italic text-zinc-600 mt-1 font-mono">
+                    Note: &ldquo;{detailWorker.currentTaskNote}&rdquo;
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* Quick Action Toolbar */}
             <div className="flex flex-wrap gap-2 mb-5 p-3 bg-zinc-50 border border-zinc-200">
@@ -1162,18 +1372,20 @@ export default function AdminWorkersPage() {
             </div>
           </div>
         </div>
-      )}
+      </ModalPortal>
+    )}
 
       {/* Assign Task Modal */}
       {assignModalWorker && (
-        <div
-          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4"
-          onClick={() => setAssignModalWorker(null)}
-        >
+        <ModalPortal onClose={() => setAssignModalWorker(null)}>
           <div
-            className="border-2 border-zinc-900 bg-white w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 shadow-[8px_8px_0px_0px_#09090b] text-zinc-950 font-mono"
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-[120] bg-zinc-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in"
+            onClick={() => setAssignModalWorker(null)}
           >
+            <div
+              className="border-2 border-zinc-900 bg-white dark:bg-zinc-900 w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 shadow-2xl text-zinc-950 dark:text-zinc-100 font-mono animate-scale-in"
+              onClick={(e) => e.stopPropagation()}
+            >
             <div className="flex items-center justify-between pb-3 border-b-2 border-zinc-900 mb-4">
               <div>
                 <h3 className="text-xl font-black font-heading text-red-600 uppercase tracking-wide">
@@ -1325,18 +1537,20 @@ export default function AdminWorkersPage() {
             </form>
           </div>
         </div>
-      )}
+      </ModalPortal>
+    )}
 
       {/* Edit Directive / Task Modal */}
       {editingTask && (
-        <div
-          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4"
-          onClick={() => setEditingTask(null)}
-        >
+        <ModalPortal onClose={() => setEditingTask(null)}>
           <div
-            className="border-2 border-zinc-900 bg-white w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 shadow-[8px_8px_0px_0px_#09090b] text-zinc-950 font-mono"
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-[120] bg-zinc-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in"
+            onClick={() => setEditingTask(null)}
           >
+            <div
+              className="border-2 border-zinc-900 bg-white dark:bg-zinc-900 w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 shadow-2xl text-zinc-950 dark:text-zinc-100 font-mono animate-scale-in"
+              onClick={(e) => e.stopPropagation()}
+            >
             <div className="flex items-center justify-between pb-3 border-b-2 border-zinc-900 mb-4">
               <div>
                 <h3 className="text-xl font-black font-heading text-red-600 uppercase tracking-wide">
@@ -1555,7 +1769,8 @@ export default function AdminWorkersPage() {
             </form>
           </div>
         </div>
-      )}
+      </ModalPortal>
+    )}
     </div>
   );
 }
