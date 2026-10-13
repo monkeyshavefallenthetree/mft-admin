@@ -29,6 +29,7 @@ import {
   getAssigneeIds,
   parseDate,
   SubtaskItem,
+  sanitizeSubtasks,
 } from "@/components/admin/projects/types";
 import ProjectHeaderBar from "@/components/admin/projects/ProjectHeaderBar";
 import ProjectFilterToolbar from "@/components/admin/projects/ProjectFilterToolbar";
@@ -351,7 +352,7 @@ export default function AdminProjectsPage() {
       status: formData.status || "assigned",
       dueDate: formData.dueDate ? new Date(formData.dueDate) : null,
       photo: formData.photo || null,
-      subtasks: formData.subtasks || [],
+      subtasks: sanitizeSubtasks(formData.subtasks),
       createdAt: serverTimestamp(),
       assignedAt: serverTimestamp(),
     });
@@ -423,7 +424,7 @@ export default function AdminProjectsPage() {
       status: formData.status,
       dueDate: formData.dueDate ? new Date(formData.dueDate) : null,
       photo: formData.photo || null,
-      subtasks: formData.subtasks || [],
+      subtasks: sanitizeSubtasks(formData.subtasks),
       updatedAt: serverTimestamp(),
     });
 
@@ -459,22 +460,32 @@ export default function AdminProjectsPage() {
   ) => {
     if (!activeTaskDrawer) return;
 
-    await updateDoc(doc(db, "tasks", activeTaskDrawer.id), {
-      ...updatedFields,
-      updatedAt: serverTimestamp(),
-    });
-
-    if (notificationMsg) {
-      const ids = getAssigneeIds(activeTaskDrawer.assignedTo);
-      if (ids.length > 0) {
-        void sendExpoPushToWorkers(db, {
-          recipientUids: ids,
-          title: `Update: ${activeTaskDrawer.title}`,
-          body: notificationMsg,
-          taskId: activeTaskDrawer.id,
-          taskTitle: activeTaskDrawer.title,
-        }).catch(() => {});
+    try {
+      const payload: Record<string, unknown> = {
+        ...updatedFields,
+        updatedAt: serverTimestamp(),
+      };
+      if (updatedFields.subtasks !== undefined) {
+        payload.subtasks = sanitizeSubtasks(updatedFields.subtasks);
       }
+
+      await updateDoc(doc(db, "tasks", activeTaskDrawer.id), payload);
+
+      if (notificationMsg) {
+        const ids = getAssigneeIds(activeTaskDrawer.assignedTo);
+        if (ids.length > 0) {
+          void sendExpoPushToWorkers(db, {
+            recipientUids: ids,
+            title: `Update: ${activeTaskDrawer.title}`,
+            body: notificationMsg,
+            taskId: activeTaskDrawer.id,
+            taskTitle: activeTaskDrawer.title,
+          }).catch(() => {});
+        }
+      }
+    } catch (err) {
+      console.error("Failed to update task field:", err);
+      toast.error("Failed to save update");
     }
   };
 

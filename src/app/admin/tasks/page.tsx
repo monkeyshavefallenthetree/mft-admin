@@ -28,7 +28,7 @@ import { logActivity } from "@/lib/admin/activity";
 import { useUrlState } from "@/lib/admin/useUrlState";
 import ModalPortal from "@/components/admin/ui/ModalPortal";
 import ProjectBoardView from "@/components/admin/projects/ProjectBoardView";
-import { SubtaskItem, TaskRow, Worker as ProjectWorker } from "@/components/admin/projects/types";
+import { SubtaskItem, TaskRow, Worker as ProjectWorker, sanitizeSubtask, sanitizeSubtasks } from "@/components/admin/projects/types";
 
 function formatExternalUrl(url?: string): string {
   if (!url) return "";
@@ -180,6 +180,15 @@ export default function AdminTasksPage() {
   const [detailSubtaskTitle, setDetailSubtaskTitle] = useState("");
   const [detailSubtaskDesc, setDetailSubtaskDesc] = useState("");
   const [detailSubtaskLink, setDetailSubtaskLink] = useState("");
+  const [detailSubtaskBusy, setDetailSubtaskBusy] = useState(false);
+  const [editingDetailStId, setEditingDetailStId] = useState<string | null>(null);
+  const [editDetailStTitle, setEditDetailStTitle] = useState("");
+  const [editDetailStDesc, setEditDetailStDesc] = useState("");
+  const [editDetailStLink, setEditDetailStLink] = useState("");
+
+  const [formSubtaskTitle, setFormSubtaskTitle] = useState("");
+  const [formSubtaskDesc, setFormSubtaskDesc] = useState("");
+  const [formSubtaskLink, setFormSubtaskLink] = useState("");
 
   const [form, setForm] = useState({
     title: "",
@@ -193,6 +202,7 @@ export default function AdminTasksPage() {
     dueDate: "",
     photo: "",
     notificationMessage: "",
+    subtasks: [] as SubtaskItem[],
   });
 
   useEffect(() => {
@@ -241,34 +251,130 @@ export default function AdminTasksPage() {
   }, [tasks]);
 
   const handleToggleDetailSubtask = async (stId: string) => {
-    if (!detailTask) return;
-    const current = detailTask.subtasks || [];
-    const updated = current.map((st) => (st.id === stId ? { ...st, completed: !st.completed } : st));
-    await updateDoc(doc(db, "tasks", detailTask.id), { subtasks: updated });
+    if (!detailTask || detailSubtaskBusy) return;
+    setDetailSubtaskBusy(true);
+    try {
+      const current = sanitizeSubtasks(detailTask.subtasks);
+      const updated = current.map((st) => (st.id === stId ? { ...st, completed: !st.completed } : st));
+      await updateDoc(doc(db, "tasks", detailTask.id), { subtasks: sanitizeSubtasks(updated) });
+    } catch (err) {
+      console.error("Failed to toggle subtask:", err);
+      toast.error("Failed to update checklist item");
+    } finally {
+      setDetailSubtaskBusy(false);
+    }
   };
 
   const handleAddDetailSubtask = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!detailTask || !detailSubtaskTitle.trim()) return;
-    const current = detailTask.subtasks || [];
-    const newSt: SubtaskItem = {
-      id: "st_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7),
-      title: detailSubtaskTitle.trim(),
-      description: detailSubtaskDesc.trim() || undefined,
-      link: detailSubtaskLink.trim() || undefined,
-      completed: false,
-    };
-    await updateDoc(doc(db, "tasks", detailTask.id), { subtasks: [...current, newSt] });
-    setDetailSubtaskTitle("");
-    setDetailSubtaskDesc("");
-    setDetailSubtaskLink("");
+    if (!detailTask || !detailSubtaskTitle.trim() || detailSubtaskBusy) return;
+    setDetailSubtaskBusy(true);
+    try {
+      const current = sanitizeSubtasks(detailTask.subtasks);
+      const newSt = sanitizeSubtask({
+        title: detailSubtaskTitle,
+        description: detailSubtaskDesc,
+        link: detailSubtaskLink,
+        completed: false,
+      });
+      await updateDoc(doc(db, "tasks", detailTask.id), { subtasks: sanitizeSubtasks([...current, newSt]) });
+      setDetailSubtaskTitle("");
+      setDetailSubtaskDesc("");
+      setDetailSubtaskLink("");
+      toast.success("Checklist item added");
+    } catch (err) {
+      console.error("Failed to add subtask:", err);
+      toast.error("Failed to add checklist item");
+    } finally {
+      setDetailSubtaskBusy(false);
+    }
+  };
+
+  const handleStartEditDetailSubtask = (st: SubtaskItem) => {
+    setEditingDetailStId(st.id);
+    setEditDetailStTitle(st.title);
+    setEditDetailStDesc(st.description || "");
+    setEditDetailStLink(st.link || "");
+  };
+
+  const handleSaveEditDetailSubtask = async () => {
+    if (!detailTask || !editingDetailStId || !editDetailStTitle.trim() || detailSubtaskBusy) return;
+    setDetailSubtaskBusy(true);
+    try {
+      const current = sanitizeSubtasks(detailTask.subtasks);
+      const updated = current.map((st) =>
+        st.id === editingDetailStId
+          ? sanitizeSubtask({
+              ...st,
+              title: editDetailStTitle,
+              description: editDetailStDesc,
+              link: editDetailStLink,
+            })
+          : st
+      );
+      await updateDoc(doc(db, "tasks", detailTask.id), { subtasks: sanitizeSubtasks(updated) });
+      setEditingDetailStId(null);
+      setEditDetailStTitle("");
+      setEditDetailStDesc("");
+      setEditDetailStLink("");
+      toast.success("Checklist item updated");
+    } catch (err) {
+      console.error("Failed to edit subtask:", err);
+      toast.error("Failed to update checklist item");
+    } finally {
+      setDetailSubtaskBusy(false);
+    }
+  };
+
+  const handleCancelEditDetailSubtask = () => {
+    setEditingDetailStId(null);
+    setEditDetailStTitle("");
+    setEditDetailStDesc("");
+    setEditDetailStLink("");
   };
 
   const handleDeleteDetailSubtask = async (stId: string) => {
-    if (!detailTask) return;
-    const current = detailTask.subtasks || [];
-    const updated = current.filter((st) => st.id !== stId);
-    await updateDoc(doc(db, "tasks", detailTask.id), { subtasks: updated });
+    if (!detailTask || detailSubtaskBusy) return;
+    setDetailSubtaskBusy(true);
+    try {
+      const current = sanitizeSubtasks(detailTask.subtasks);
+      const updated = current.filter((st) => st.id !== stId);
+      await updateDoc(doc(db, "tasks", detailTask.id), { subtasks: sanitizeSubtasks(updated) });
+      toast.success("Checklist item removed");
+    } catch (err) {
+      console.error("Failed to delete subtask:", err);
+      toast.error("Failed to remove checklist item");
+    } finally {
+      setDetailSubtaskBusy(false);
+    }
+  };
+
+  const handleAddFormSubtask = () => {
+    if (!formSubtaskTitle.trim()) return;
+    const item = sanitizeSubtask({
+      title: formSubtaskTitle,
+      description: formSubtaskDesc,
+      link: formSubtaskLink,
+      completed: false,
+    });
+    setForm((prev) => ({ ...prev, subtasks: [...prev.subtasks, item] }));
+    setFormSubtaskTitle("");
+    setFormSubtaskDesc("");
+    setFormSubtaskLink("");
+  };
+
+  const handleToggleFormSubtask = (stId: string) => {
+    setForm((prev) => ({
+      ...prev,
+      subtasks: prev.subtasks.map((st) => (st.id === stId ? { ...st, completed: !st.completed } : st)),
+    }));
+  };
+
+  const handleRemoveFormSubtask = (stId: string) => {
+    setForm((prev) => ({
+      ...prev,
+      subtasks: prev.subtasks.filter((st) => st.id !== stId),
+    }));
   };
 
   // Subscribe to admin chat notifications (wait for auth to be ready)
@@ -383,7 +489,11 @@ export default function AdminTasksPage() {
       dueDate: "",
       photo: "",
       notificationMessage: "",
+      subtasks: [],
     });
+    setFormSubtaskTitle("");
+    setFormSubtaskDesc("");
+    setFormSubtaskLink("");
     setWorkerSearch("");
     setModalMode("create");
   };
@@ -403,7 +513,11 @@ export default function AdminTasksPage() {
       dueDate: dueDateStr,
       photo: task.photo || "",
       notificationMessage: "",
+      subtasks: sanitizeSubtasks(task.subtasks),
     });
+    setFormSubtaskTitle("");
+    setFormSubtaskDesc("");
+    setFormSubtaskLink("");
     setEditId(task.id);
     setWorkerSearch("");
     setModalMode("edit");
@@ -463,6 +577,7 @@ export default function AdminTasksPage() {
           priority: form.priority,
           status: "assigned",
           dueDate: form.dueDate ? new Date(form.dueDate) : null,
+          subtasks: sanitizeSubtasks(form.subtasks),
           createdAt: serverTimestamp(),
           assignedAt: serverTimestamp(),
         };
@@ -508,6 +623,7 @@ export default function AdminTasksPage() {
           priority: form.priority,
           status: form.status,
           dueDate: form.dueDate ? new Date(form.dueDate) : null,
+          subtasks: sanitizeSubtasks(form.subtasks),
           updatedAt: serverTimestamp(),
         };
         if (form.projectId) {
@@ -696,7 +812,11 @@ export default function AdminTasksPage() {
       dueDate: "",
       photo: "",
       notificationMessage: "",
+      subtasks: [],
     });
+    setFormSubtaskTitle("");
+    setFormSubtaskDesc("");
+    setFormSubtaskLink("");
     setWorkerSearch("");
     setModalMode("create");
   };
@@ -1227,70 +1347,131 @@ export default function AdminTasksPage() {
               )}
 
               <div className="space-y-2">
-                {(detailTask.subtasks || []).map((st) => (
-                  <div
-                    key={st.id}
-                    className={`p-2.5 bg-white border border-zinc-200 rounded-md transition-all group ${
-                      st.completed ? "bg-zinc-50/80 border-zinc-200 opacity-80" : "hover:border-zinc-400 shadow-2xs"
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2.5">
-                      <label className="flex items-start gap-2.5 flex-1 min-w-0 cursor-pointer select-none">
+                {(detailTask.subtasks || []).map((st) => {
+                  const isEditing = editingDetailStId === st.id;
+                  if (isEditing) {
+                    return (
+                      <div key={st.id} className="p-3 bg-white border-2 border-red-500 rounded-md space-y-2 shadow-xs">
                         <input
-                          type="checkbox"
-                          checked={st.completed}
-                          onChange={() => handleToggleDetailSubtask(st.id)}
-                          className="accent-emerald-600 w-4 h-4 mt-0.5 rounded cursor-pointer shrink-0"
+                          type="text"
+                          value={editDetailStTitle}
+                          onChange={(e) => setEditDetailStTitle(e.target.value)}
+                          placeholder="Subtask title (required)"
+                          className="w-full text-xs font-mono px-2.5 py-1.5 border border-zinc-300 rounded focus:border-red-600 focus:outline-none"
+                          autoFocus
                         />
-                        <div className="flex-1 min-w-0">
-                          <span
-                            className={`text-xs font-mono font-semibold block break-words ${
-                              st.completed ? "line-through text-zinc-400" : "text-zinc-900"
-                            }`}
+                        <input
+                          type="text"
+                          value={editDetailStDesc}
+                          onChange={(e) => setEditDetailStDesc(e.target.value)}
+                          placeholder="Description or notes (optional)"
+                          className="w-full text-[11px] font-mono px-2.5 py-1.5 border border-zinc-200 rounded focus:border-red-600 focus:outline-none text-zinc-700"
+                        />
+                        <input
+                          type="text"
+                          value={editDetailStLink}
+                          onChange={(e) => setEditDetailStLink(e.target.value)}
+                          placeholder="Link URL (e.g. figma.com/... or PR link, optional)"
+                          className="w-full text-[11px] font-mono px-2.5 py-1.5 border border-zinc-200 rounded focus:border-red-600 focus:outline-none text-blue-700"
+                        />
+                        <div className="flex justify-end gap-1.5 pt-1">
+                          <button
+                            type="button"
+                            onClick={handleCancelEditDetailSubtask}
+                            className="text-[10px] font-mono px-2.5 py-1 rounded border border-zinc-300 hover:bg-zinc-100 text-zinc-600 cursor-pointer"
                           >
-                            {st.title}
-                          </span>
-                          {st.description && (
-                            <p
-                              className={`text-[11px] font-mono mt-0.5 whitespace-pre-wrap break-words ${
-                                st.completed ? "text-zinc-400 line-through" : "text-zinc-600"
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleSaveEditDetailSubtask}
+                            disabled={!editDetailStTitle.trim() || detailSubtaskBusy}
+                            className="text-[10px] font-mono font-bold px-3 py-1 rounded bg-red-600 hover:bg-red-700 text-white disabled:opacity-40 cursor-pointer"
+                          >
+                            Save Changes
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div
+                      key={st.id}
+                      className={`p-2.5 bg-white border border-zinc-200 rounded-md transition-all group ${
+                        st.completed ? "bg-zinc-50/80 border-zinc-200 opacity-80" : "hover:border-zinc-400 shadow-2xs"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2.5">
+                        <label className="flex items-start gap-2.5 flex-1 min-w-0 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={st.completed}
+                            onChange={() => handleToggleDetailSubtask(st.id)}
+                            className="accent-emerald-600 w-4 h-4 mt-0.5 rounded cursor-pointer shrink-0"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <span
+                              className={`text-xs font-mono font-semibold block break-words ${
+                                st.completed ? "line-through text-zinc-400" : "text-zinc-900"
                               }`}
                             >
-                              {st.description}
-                            </p>
-                          )}
-                          {st.link && (
-                            <div className="mt-1.5">
-                              <a
-                                href={formatExternalUrl(st.link)}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={(e) => e.stopPropagation()}
-                                className="inline-flex items-center gap-1.5 text-[10px] font-mono font-semibold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-0.5 rounded transition-colors cursor-pointer max-w-full truncate"
-                                title={st.link}
+                              {st.title}
+                            </span>
+                            {st.description && (
+                              <p
+                                className={`text-[11px] font-mono mt-0.5 whitespace-pre-wrap break-words ${
+                                  st.completed ? "text-zinc-400 line-through" : "text-zinc-600"
+                                }`}
                               >
-                                <svg className="w-3 h-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                  <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                                </svg>
-                                <span className="truncate">{st.link.replace(/^https?:\/\//i, "")}</span>
-                              </a>
-                            </div>
-                          )}
+                                {st.description}
+                              </p>
+                            )}
+                            {st.link && (
+                              <div className="mt-1.5">
+                                <a
+                                  href={formatExternalUrl(st.link)}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="inline-flex items-center gap-1.5 text-[10px] font-mono font-semibold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-0.5 rounded transition-colors cursor-pointer max-w-full truncate"
+                                  title={st.link}
+                                >
+                                  <svg className="w-3 h-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                  </svg>
+                                  <span className="truncate">{st.link.replace(/^https?:\/\//i, "")}</span>
+                                </a>
+                              </div>
+                            )}
+                          </div>
+                        </label>
+                        <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            type="button"
+                            onClick={() => handleStartEditDetailSubtask(st)}
+                            className="p-1 text-zinc-400 hover:text-zinc-800 hover:bg-zinc-100 rounded text-xs cursor-pointer transition-colors"
+                            title="Edit subtask"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                            </svg>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteDetailSubtask(st.id)}
+                            className="p-1 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded text-xs cursor-pointer transition-colors"
+                            title="Delete subtask"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
                         </div>
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteDetailSubtask(st.id)}
-                        className="opacity-0 group-hover:opacity-100 p-1 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded text-xs cursor-pointer transition-opacity"
-                        title="Delete subtask"
-                      >
-                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
 
                 {(!detailTask.subtasks || detailTask.subtasks.length === 0) && (
                   <p className="text-xs font-mono text-zinc-400 italic py-1">No subtasks or checklist steps yet.</p>
@@ -1682,6 +1863,107 @@ export default function AdminTasksPage() {
                   placeholder="https://firebasestorage.googleapis.com/..."
                   className="w-full px-3 py-2 bg-white border-2 border-zinc-900 rounded text-xs text-zinc-900 focus:outline-none focus:ring-2 focus:ring-red-600"
                 />
+              </div>
+
+              {/* Checklist & Subtasks Builder */}
+              <div className="border-2 border-zinc-900 rounded p-3 bg-zinc-50 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-zinc-800">
+                    Checklist &amp; Subtasks ({form.subtasks.length})
+                  </label>
+                  <span className="text-[10px] font-mono text-zinc-500">
+                    Title, description &amp; links
+                  </span>
+                </div>
+
+                <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                  {form.subtasks.map((st) => (
+                    <div
+                      key={st.id}
+                      className={`p-2 bg-white border border-zinc-200 rounded text-xs flex items-start justify-between gap-2 ${
+                        st.completed ? "bg-zinc-50 opacity-70" : ""
+                      }`}
+                    >
+                      <label className="flex items-start gap-2 flex-1 min-w-0 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={st.completed}
+                          onChange={() => handleToggleFormSubtask(st.id)}
+                          className="accent-emerald-600 w-3.5 h-3.5 mt-0.5 rounded cursor-pointer shrink-0"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <span className={`font-semibold block truncate ${st.completed ? "line-through text-zinc-400" : "text-zinc-900"}`}>
+                            {st.title}
+                          </span>
+                          {st.description && (
+                            <p className={`text-[11px] whitespace-pre-wrap ${st.completed ? "line-through text-zinc-400" : "text-zinc-500"}`}>
+                              {st.description}
+                            </p>
+                          )}
+                          {st.link && (
+                            <a
+                              href={formatExternalUrl(st.link)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="inline-flex items-center gap-1 text-[10px] text-blue-600 hover:underline mt-0.5 truncate"
+                            >
+                              <span>🔗</span>
+                              <span className="truncate">{st.link.replace(/^https?:\/\//i, "")}</span>
+                            </a>
+                          )}
+                        </div>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveFormSubtask(st.id)}
+                        className="text-zinc-400 hover:text-red-600 px-1 cursor-pointer text-sm font-bold shrink-0"
+                        title="Remove item"
+                      >
+                        &times;
+                      </button>
+                    </div>
+                  ))}
+                  {form.subtasks.length === 0 && (
+                    <p className="text-xs text-zinc-400 italic py-0.5">No subtasks added yet.</p>
+                  )}
+                </div>
+
+                <div className="bg-white border border-zinc-200 rounded p-2.5 space-y-2">
+                  <input
+                    type="text"
+                    value={formSubtaskTitle}
+                    onChange={(e) => setFormSubtaskTitle(e.target.value)}
+                    placeholder="+ Subtask title (required)..."
+                    className="w-full text-xs px-2 py-1.5 border border-zinc-300 rounded focus:border-red-600 focus:outline-none"
+                  />
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <input
+                      type="text"
+                      value={formSubtaskDesc}
+                      onChange={(e) => setFormSubtaskDesc(e.target.value)}
+                      placeholder="Description / criteria (optional)..."
+                      className="text-[11px] px-2 py-1 border border-zinc-200 rounded focus:border-red-600 focus:outline-none text-zinc-700"
+                    />
+                    <input
+                      type="text"
+                      value={formSubtaskLink}
+                      onChange={(e) => setFormSubtaskLink(e.target.value)}
+                      placeholder="Link URL (e.g. figma.com/..., optional)"
+                      className="text-[11px] px-2 py-1 border border-zinc-200 rounded focus:border-red-600 focus:outline-none text-zinc-700"
+                    />
+                  </div>
+                  <div className="flex justify-end pt-0.5">
+                    <button
+                      type="button"
+                      onClick={handleAddFormSubtask}
+                      disabled={!formSubtaskTitle.trim()}
+                      className="px-2.5 py-1 bg-zinc-900 hover:bg-black text-white text-[11px] font-bold uppercase rounded disabled:opacity-40 cursor-pointer transition-colors"
+                    >
+                      + Add Subtask
+                    </button>
+                  </div>
+                </div>
               </div>
 
               <div>

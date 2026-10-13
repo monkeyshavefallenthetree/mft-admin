@@ -29,6 +29,28 @@ export interface SubtaskItem {
   completed: boolean;
 }
 
+export function sanitizeSubtask(st: Partial<SubtaskItem>): SubtaskItem {
+  const item: SubtaskItem = {
+    id: st.id || "st_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7),
+    title: (st.title || "").trim(),
+    completed: Boolean(st.completed),
+  };
+  const desc = (st.description || "").trim();
+  if (desc) {
+    item.description = desc;
+  }
+  const link = (st.link || "").trim();
+  if (link) {
+    item.link = link;
+  }
+  return item;
+}
+
+export function sanitizeSubtasks(list?: SubtaskItem[] | null): SubtaskItem[] {
+  if (!Array.isArray(list)) return [];
+  return list.map(sanitizeSubtask);
+}
+
 export interface TaskRow {
   id: string;
   projectId?: string;

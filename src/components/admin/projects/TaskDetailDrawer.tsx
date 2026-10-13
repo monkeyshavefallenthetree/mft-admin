@@ -10,6 +10,8 @@ import {
   getAssigneeIds,
   parseDate,
   SubtaskItem,
+  sanitizeSubtask,
+  sanitizeSubtasks,
 } from "./types";
 import { subscribeTaskChat, sendTaskMessage, type ChatMessage } from "@/lib/taskChat";
 import {
@@ -68,6 +70,7 @@ export default function TaskDetailDrawer({
   const [editTitle, setEditTitle] = useState("");
   const [editDesc, setEditDesc] = useState("");
   const [editLink, setEditLink] = useState("");
+  const [subtasksBusy, setSubtasksBusy] = useState(false);
 
   const chatBottomRef = useRef<HTMLDivElement>(null);
 
@@ -185,28 +188,46 @@ export default function TaskDetailDrawer({
   };
 
   const handleToggleSubtask = async (subtaskId: string) => {
-    const currentSubtasks: SubtaskItem[] = task.subtasks || [];
-    const updated = currentSubtasks.map((st) =>
-      st.id === subtaskId ? { ...st, completed: !st.completed } : st
-    );
-    await onUpdateTask({ subtasks: updated });
+    if (subtasksBusy) return;
+    setSubtasksBusy(true);
+    try {
+      const currentSubtasks: SubtaskItem[] = sanitizeSubtasks(task.subtasks);
+      const updated = currentSubtasks.map((st) =>
+        st.id === subtaskId ? { ...st, completed: !st.completed } : st
+      );
+      await onUpdateTask({ subtasks: sanitizeSubtasks(updated) });
+    } catch (err) {
+      console.error("Failed to toggle subtask:", err);
+      toast.error("Failed to update checklist item");
+    } finally {
+      setSubtasksBusy(false);
+    }
   };
 
   const handleAddSubtask = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newSubtaskTitle.trim()) return;
-    const currentSubtasks: SubtaskItem[] = task.subtasks || [];
-    const newSubtask: SubtaskItem = {
-      id: "st_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7),
-      title: newSubtaskTitle.trim(),
-      description: newSubtaskDesc.trim() || undefined,
-      link: newSubtaskLink.trim() || undefined,
-      completed: false,
-    };
-    await onUpdateTask({ subtasks: [...currentSubtasks, newSubtask] });
-    setNewSubtaskTitle("");
-    setNewSubtaskDesc("");
-    setNewSubtaskLink("");
+    if (!newSubtaskTitle.trim() || subtasksBusy) return;
+    setSubtasksBusy(true);
+    try {
+      const currentSubtasks: SubtaskItem[] = sanitizeSubtasks(task.subtasks);
+      const newSubtask = sanitizeSubtask({
+        title: newSubtaskTitle,
+        description: newSubtaskDesc,
+        link: newSubtaskLink,
+        completed: false,
+      });
+      const updated = [...currentSubtasks, newSubtask];
+      await onUpdateTask({ subtasks: sanitizeSubtasks(updated) });
+      setNewSubtaskTitle("");
+      setNewSubtaskDesc("");
+      setNewSubtaskLink("");
+      toast.success("Checklist item added");
+    } catch (err) {
+      console.error("Failed to add subtask:", err);
+      toast.error("Failed to add checklist item");
+    } finally {
+      setSubtasksBusy(false);
+    }
   };
 
   const handleStartEditSubtask = (st: SubtaskItem) => {
@@ -217,23 +238,32 @@ export default function TaskDetailDrawer({
   };
 
   const handleSaveEditSubtask = async () => {
-    if (!editingSubtaskId || !editTitle.trim()) return;
-    const currentSubtasks: SubtaskItem[] = task.subtasks || [];
-    const updated = currentSubtasks.map((st) =>
-      st.id === editingSubtaskId
-        ? {
-            ...st,
-            title: editTitle.trim(),
-            description: editDesc.trim() || undefined,
-            link: editLink.trim() || undefined,
-          }
-        : st
-    );
-    await onUpdateTask({ subtasks: updated });
-    setEditingSubtaskId(null);
-    setEditTitle("");
-    setEditDesc("");
-    setEditLink("");
+    if (!editingSubtaskId || !editTitle.trim() || subtasksBusy) return;
+    setSubtasksBusy(true);
+    try {
+      const currentSubtasks: SubtaskItem[] = sanitizeSubtasks(task.subtasks);
+      const updated = currentSubtasks.map((st) =>
+        st.id === editingSubtaskId
+          ? sanitizeSubtask({
+              ...st,
+              title: editTitle,
+              description: editDesc,
+              link: editLink,
+            })
+          : st
+      );
+      await onUpdateTask({ subtasks: sanitizeSubtasks(updated) });
+      setEditingSubtaskId(null);
+      setEditTitle("");
+      setEditDesc("");
+      setEditLink("");
+      toast.success("Checklist item updated");
+    } catch (err) {
+      console.error("Failed to update subtask:", err);
+      toast.error("Failed to update checklist item");
+    } finally {
+      setSubtasksBusy(false);
+    }
   };
 
   const handleCancelEditSubtask = () => {
@@ -244,9 +274,19 @@ export default function TaskDetailDrawer({
   };
 
   const handleDeleteSubtask = async (subtaskId: string) => {
-    const currentSubtasks: SubtaskItem[] = task.subtasks || [];
-    const updated = currentSubtasks.filter((st) => st.id !== subtaskId);
-    await onUpdateTask({ subtasks: updated });
+    if (subtasksBusy) return;
+    setSubtasksBusy(true);
+    try {
+      const currentSubtasks: SubtaskItem[] = sanitizeSubtasks(task.subtasks);
+      const updated = currentSubtasks.filter((st) => st.id !== subtaskId);
+      await onUpdateTask({ subtasks: sanitizeSubtasks(updated) });
+      toast.success("Checklist item removed");
+    } catch (err) {
+      console.error("Failed to delete subtask:", err);
+      toast.error("Failed to remove checklist item");
+    } finally {
+      setSubtasksBusy(false);
+    }
   };
 
   const assignedIds = getAssigneeIds(task.assignedTo);

@@ -2,7 +2,7 @@
 
 import { toast } from "@/lib/admin/feedback";
 import { useState } from "react";
-import { TaskRow, Worker, parseDate, getAssigneeIds, SubtaskItem } from "./types";
+import { TaskRow, Worker, parseDate, getAssigneeIds, SubtaskItem, sanitizeSubtask, sanitizeSubtasks } from "./types";
 import { TASK_DEPARTMENTS } from "@/lib/admin/constants";
 import ModalPortal from "@/components/admin/ui/ModalPortal";
 
@@ -69,17 +69,20 @@ export default function TaskModalForm({
 
   const handleAddSubtask = () => {
     if (!newSubtaskTitle.trim()) return;
-    const item: SubtaskItem = {
-      id: "st_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7),
-      title: newSubtaskTitle.trim(),
-      description: newSubtaskDesc.trim() || undefined,
-      link: newSubtaskLink.trim() || undefined,
+    const item = sanitizeSubtask({
+      title: newSubtaskTitle,
+      description: newSubtaskDesc,
+      link: newSubtaskLink,
       completed: false,
-    };
+    });
     setSubtasks((prev) => [...prev, item]);
     setNewSubtaskTitle("");
     setNewSubtaskDesc("");
     setNewSubtaskLink("");
+  };
+
+  const handleToggleSubtask = (id: string) => {
+    setSubtasks((prev) => prev.map((s) => (s.id === id ? { ...s, completed: !s.completed } : s)));
   };
 
   const handleRemoveSubtask = (id: string) => {
@@ -109,7 +112,7 @@ export default function TaskModalForm({
         photo: photo.trim(),
         workerIds,
         notificationMessage: notificationMessage.trim(),
-        subtasks,
+        subtasks: sanitizeSubtasks(subtasks),
       });
       onClose();
     } catch {
@@ -323,29 +326,44 @@ export default function TaskModalForm({
               {subtasks.map((st) => (
                 <div
                   key={st.id}
-                  className="p-2 bg-white border border-zinc-200 rounded text-xs flex items-start justify-between gap-2"
+                  className={`p-2 bg-white border border-zinc-200 rounded text-xs flex items-start justify-between gap-2 ${
+                    st.completed ? "bg-zinc-50 opacity-70" : ""
+                  }`}
                 >
-                  <div className="flex-1 min-w-0">
-                    <span className="font-semibold block truncate text-zinc-900">{st.title}</span>
-                    {st.description && (
-                      <p className="text-[11px] text-zinc-500 whitespace-pre-wrap">{st.description}</p>
-                    )}
-                    {st.link && (
-                      <a
-                        href={/^https?:\/\//i.test(st.link.trim()) ? st.link.trim() : `https://${st.link.trim()}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-[10px] text-blue-600 hover:underline mt-0.5 truncate"
-                      >
-                        <span>🔗</span>
-                        <span className="truncate">{st.link.replace(/^https?:\/\//i, "")}</span>
-                      </a>
-                    )}
-                  </div>
+                  <label className="flex items-start gap-2 flex-1 min-w-0 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={st.completed}
+                      onChange={() => handleToggleSubtask(st.id)}
+                      className="accent-emerald-600 w-3.5 h-3.5 mt-0.5 rounded cursor-pointer shrink-0"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <span className={`font-semibold block truncate ${st.completed ? "line-through text-zinc-400" : "text-zinc-900"}`}>
+                        {st.title}
+                      </span>
+                      {st.description && (
+                        <p className={`text-[11px] whitespace-pre-wrap ${st.completed ? "line-through text-zinc-400" : "text-zinc-500"}`}>
+                          {st.description}
+                        </p>
+                      )}
+                      {st.link && (
+                        <a
+                          href={/^https?:\/\//i.test(st.link.trim()) ? st.link.trim() : `https://${st.link.trim()}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="inline-flex items-center gap-1 text-[10px] text-blue-600 hover:underline mt-0.5 truncate"
+                        >
+                          <span>🔗</span>
+                          <span className="truncate">{st.link.replace(/^https?:\/\//i, "")}</span>
+                        </a>
+                      )}
+                    </div>
+                  </label>
                   <button
                     type="button"
                     onClick={() => handleRemoveSubtask(st.id)}
-                    className="text-zinc-400 hover:text-red-600 px-1 cursor-pointer text-sm font-bold"
+                    className="text-zinc-400 hover:text-red-600 px-1 cursor-pointer text-sm font-bold shrink-0"
                     title="Remove item"
                   >
                     &times;
