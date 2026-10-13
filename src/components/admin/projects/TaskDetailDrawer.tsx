@@ -23,6 +23,7 @@ import { db } from "@/lib/firebase";
 import { getAuth } from "firebase/auth";
 import { TASK_DEPARTMENTS } from "@/lib/admin/constants";
 import ModalPortal from "@/components/admin/ui/ModalPortal";
+import LinkifiedText from "@/components/admin/ui/LinkifiedText";
 
 interface Props {
   task: TaskRow;
@@ -508,7 +509,11 @@ export default function TaskDetailDrawer({
                   onClick={() => setIsEditingDesc(true)}
                   className="p-3.5 bg-zinc-50 border border-zinc-200 rounded text-xs text-zinc-800 font-mono leading-relaxed whitespace-pre-wrap cursor-pointer hover:bg-zinc-100/70 transition-colors"
                 >
-                  {task.description || "Click to add directive description..."}
+                  {task.description ? (
+                    <LinkifiedText text={task.description} />
+                  ) : (
+                    <span className="italic text-zinc-400">Click to add directive description...</span>
+                  )}
                 </div>
               )}
             </div>
@@ -618,7 +623,7 @@ export default function TaskDetailDrawer({
                                   st.completed ? "text-zinc-400 line-through" : "text-zinc-600"
                                 }`}
                               >
-                                {st.description}
+                                <LinkifiedText text={st.description} />
                               </p>
                             )}
                             {st.link && (

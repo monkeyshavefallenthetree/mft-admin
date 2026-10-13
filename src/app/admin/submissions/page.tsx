@@ -8,6 +8,7 @@ import { toast, confirmDialog } from "@/lib/admin/feedback";
 import { logActivity } from "@/lib/admin/activity";
 import { downloadCsv } from "@/lib/admin/csv";
 import { BulkBar, BulkButton, EmptyState, PageHeader, SkeletonRows, STATE_ICONS } from "@/components/admin/ui/States";
+import LinkifiedText from "@/components/admin/ui/LinkifiedText";
 import { ICONS } from "@/lib/admin/nav";
 
 interface Submission {
@@ -460,7 +461,9 @@ export default function AdminSubmissionsPage() {
                 {active.projectDescription && (
                   <div>
                     <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Project brief</p>
-                    <p className="whitespace-pre-wrap rounded-lg border-l-2 border-red-500 bg-zinc-50 px-4 py-3 text-sm leading-relaxed text-zinc-800">{active.projectDescription}</p>
+                    <p className="whitespace-pre-wrap rounded-lg border-l-2 border-red-500 bg-zinc-50 px-4 py-3 text-sm leading-relaxed text-zinc-800">
+                      <LinkifiedText text={active.projectDescription} />
+                    </p>
                   </div>
                 )}
 

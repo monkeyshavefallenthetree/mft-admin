@@ -9,6 +9,7 @@ import {
   getAssigneeIds,
   formatSmartDate,
 } from "./types";
+import LinkifiedText from "@/components/admin/ui/LinkifiedText";
 
 interface Props {
   tasks: TaskRow[];
@@ -217,7 +218,7 @@ export default function ProjectBoardView({
                       {/* Description Snippet */}
                       {task.description && (
                         <p className="text-[11px] text-zinc-500 font-mono line-clamp-2 mt-1 leading-snug">
-                          {task.description}
+                          <LinkifiedText text={task.description} />
                         </p>
                       )}
 

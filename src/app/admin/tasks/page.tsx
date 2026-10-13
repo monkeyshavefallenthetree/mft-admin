@@ -27,6 +27,7 @@ import { toast, confirmDialog, promptDialog } from "@/lib/admin/feedback";
 import { logActivity } from "@/lib/admin/activity";
 import { useUrlState } from "@/lib/admin/useUrlState";
 import ModalPortal from "@/components/admin/ui/ModalPortal";
+import LinkifiedText from "@/components/admin/ui/LinkifiedText";
 import ProjectBoardView from "@/components/admin/projects/ProjectBoardView";
 import { SubtaskItem, TaskRow, Worker as ProjectWorker, sanitizeSubtask, sanitizeSubtasks } from "@/components/admin/projects/types";
 
@@ -1101,7 +1102,8 @@ export default function AdminTasksPage() {
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4 text-sm text-zinc-700 font-mono">
                 <p>
-                  <span className="text-zinc-500 font-medium">Description:</span> {task.description}
+                  <span className="text-zinc-500 font-medium">Description:</span>{" "}
+                  <LinkifiedText text={task.description} />
                 </p>
                 <p>
                   <span className="text-zinc-500 font-medium">Project:</span>{" "}
@@ -1239,7 +1241,7 @@ export default function AdminTasksPage() {
               <p>
                 <span className="text-zinc-500 font-bold uppercase">Description:</span>{" "}
                 <span className="text-zinc-800 block mt-1 bg-zinc-50 p-2.5 border border-zinc-200 rounded whitespace-pre-wrap">
-                  {detailTask.description}
+                  <LinkifiedText text={detailTask.description} />
                 </span>
               </p>
               <div className="grid grid-cols-2 gap-2 pt-1">
@@ -1424,7 +1426,7 @@ export default function AdminTasksPage() {
                                   st.completed ? "text-zinc-400 line-through" : "text-zinc-600"
                                 }`}
                               >
-                                {st.description}
+                                <LinkifiedText text={st.description} />
                               </p>
                             )}
                             {st.link && (
@@ -1897,7 +1899,7 @@ export default function AdminTasksPage() {
                           </span>
                           {st.description && (
                             <p className={`text-[11px] whitespace-pre-wrap ${st.completed ? "line-through text-zinc-400" : "text-zinc-500"}`}>
-                              {st.description}
+                              <LinkifiedText text={st.description} />
                             </p>
                           )}
                           {st.link && (

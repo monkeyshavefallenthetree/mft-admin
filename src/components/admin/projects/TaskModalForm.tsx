@@ -5,6 +5,7 @@ import { useState } from "react";
 import { TaskRow, Worker, parseDate, getAssigneeIds, SubtaskItem, sanitizeSubtask, sanitizeSubtasks } from "./types";
 import { TASK_DEPARTMENTS } from "@/lib/admin/constants";
 import ModalPortal from "@/components/admin/ui/ModalPortal";
+import LinkifiedText from "@/components/admin/ui/LinkifiedText";
 
 interface Props {
   initialTask?: TaskRow | null;
@@ -343,7 +344,7 @@ export default function TaskModalForm({
                       </span>
                       {st.description && (
                         <p className={`text-[11px] whitespace-pre-wrap ${st.completed ? "line-through text-zinc-400" : "text-zinc-500"}`}>
-                          {st.description}
+                          <LinkifiedText text={st.description} />
                         </p>
                       )}
                       {st.link && (
