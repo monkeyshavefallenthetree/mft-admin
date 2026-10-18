@@ -112,16 +112,14 @@ export default function TaskDetailDrawer({
       });
 
       const recipientUids = getAssigneeIds(task.assignedTo);
-      if (recipientUids.length > 0) {
-        void sendChatNotificationToWorkers(db, {
-          recipientUids,
-          taskId: task.id,
-          taskTitle: task.title || "Task",
-          senderUid,
-          senderName,
-          messageText: chatInput,
-        }).catch(() => {});
-      }
+      void sendChatNotificationToWorkers(db, {
+        recipientUids,
+        taskId: task.id,
+        taskTitle: task.title || "Task",
+        senderUid,
+        senderName,
+        messageText: chatInput,
+      }).catch(() => {});
       setChatInput("");
     } finally {
       setChatBusy(false);

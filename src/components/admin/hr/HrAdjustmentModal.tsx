@@ -5,6 +5,9 @@ import ModalPortal from "@/components/admin/ui/ModalPortal";
 import { addPayrollAdjustment } from "@/lib/admin/hrSettings";
 import { logActivity } from "@/lib/admin/activity";
 import { toast } from "@/lib/admin/feedback";
+import { auth, db } from "@/lib/firebase";
+import { sendExpoPushToWorkers } from "@/lib/chatNotifications";
+import { notifyAdmins } from "@/lib/adminNotifications";
 
 interface WorkerOption {
   id: string;
@@ -67,6 +70,25 @@ export default function HrAdjustmentModal({
         bonus: "Bonus (مكافأة)",
         deduction: "Deduction (خصم)",
       };
+
+      void sendExpoPushToWorkers(db, {
+        recipientUids: [workerId],
+        title: `💰 ${labels[type]} Recorded`,
+        body: `EGP ${amount} (${date}): ${reason.trim()}`,
+        tab: "profile",
+        urgent: type === "deduction",
+      }).catch(() => {});
+
+      void notifyAdmins(db, {
+        targetRoles: ["super_admin", "hr_admin"],
+        category: "hr",
+        eventType: "payroll_adjustment_recorded",
+        title: `💰 ${labels[type]}: ${workerFullName}`,
+        body: `EGP ${amount} recorded for ${workerFullName} (${date}) — ${reason.trim()}`,
+        href: "/admin/hr?tab=payroll",
+        actorUid: auth.currentUser?.uid,
+        actorName: adminEmail || auth.currentUser?.email || "HR",
+      });
 
       void logActivity({
         action: "created",

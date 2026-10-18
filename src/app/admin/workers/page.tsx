@@ -11,10 +11,11 @@ import {
   addDoc,
   serverTimestamp,
 } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { auth, db } from "@/lib/firebase";
 import { DEPARTMENTS } from "@/lib/admin/constants";
 import { deleteWorkerCascade } from "@/lib/admin/deleteWorkerCascade";
 import { sendExpoPushToWorkers } from "@/lib/chatNotifications";
+import { notifyAdmins } from "@/lib/adminNotifications";
 import { useUrlState } from "@/lib/admin/useUrlState";
 import { toast, confirmDialog } from "@/lib/admin/feedback";
 import { logActivity } from "@/lib/admin/activity";
@@ -354,6 +355,19 @@ export default function AdminWorkersPage() {
         }).catch(() => {});
       }
 
+      void notifyAdmins(db, {
+        targetRoles: ["super_admin", "ops_admin"],
+        category: "task",
+        eventType: "task_updated",
+        title: `✏️ Task Updated: ${editTaskForm.title.trim()}`,
+        body: `${auth.currentUser?.email || "Admin"} updated "${editTaskForm.title.trim()}" (assigned to ${assignedWorkerNames}).`,
+        href: `/admin/tasks?task=${encodeURIComponent(editingTask.id)}`,
+        actorUid: auth.currentUser?.uid,
+        actorName: auth.currentUser?.email || "Admin",
+        taskId: editingTask.id,
+        projectId: editTaskForm.projectId || undefined,
+      });
+
       void logActivity({ action: "updated", entity: "task", entityId: editingTask.id, label: editTaskForm.title.trim(), detail: `Assigned to ${assignedWorkerNames}` });
       toast.success("Task updated", { description: "Assigned workers were notified." });
       setEditingTask(null);
@@ -417,9 +431,30 @@ export default function AdminWorkersPage() {
     setBulkBusy(true);
     try {
       await Promise.all(ids.map((id) => updateDoc(doc(db, "workers", id), { status })));
+      void sendExpoPushToWorkers(db, {
+        recipientUids: ids,
+        title: status === "approved" ? "Account Approved 🎉" : "Account Status Update",
+        body:
+          status === "approved"
+            ? "Your MFT worker account has been approved! You can now sign in and start your shift."
+            : "Your MFT worker registration was not approved.",
+        tab: "tasks",
+        urgent: status === "rejected",
+      }).catch(() => {});
       ids.forEach((id) => {
         const w = workers.find((x) => x.id === id);
-        void logActivity({ action: status === "approved" ? "approved" : "rejected", entity: "worker", entityId: id, label: w ? workerLabel(w) : id, detail: w?.email });
+        const label = w ? workerLabel(w) : id;
+        void logActivity({ action: status === "approved" ? "approved" : "rejected", entity: "worker", entityId: id, label, detail: w?.email });
+        void notifyAdmins(db, {
+          targetRoles: ["super_admin", "hr_admin"],
+          category: "hr",
+          eventType: `worker_${status}`,
+          title: `${status === "approved" ? "✅ Worker Approved" : "❌ Worker Rejected"}: ${label}`,
+          body: `${auth.currentUser?.email || "HR"} ${status} worker account for ${label} (${w?.email || ""}).`,
+          href: `/admin/workers?status=${status}`,
+          actorUid: auth.currentUser?.uid,
+          actorName: auth.currentUser?.email || "HR",
+        });
       });
       const one = ids.length === 1 ? workers.find((x) => x.id === ids[0]) : null;
       toast.success(
@@ -536,7 +571,8 @@ export default function AdminWorkersPage() {
       if (proj) selectedProjectName = proj.name;
     }
 
-    await addDoc(collection(db, "tasks"), {
+    const assignedWorkerFullName = `${assignModalWorker.firstName} ${assignModalWorker.lastName}`.trim();
+    const taskRef = await addDoc(collection(db, "tasks"), {
       title: taskForm.title,
       description: taskForm.description,
       projectId: taskForm.projectId || null,
@@ -544,7 +580,7 @@ export default function AdminWorkersPage() {
       department: taskForm.department || "general",
       priority: taskForm.priority || "medium",
       assignedTo: assignModalWorker.id,
-      assignedWorkerName: `${assignModalWorker.firstName} ${assignModalWorker.lastName}`.trim(),
+      assignedWorkerName: assignedWorkerFullName,
       dueDate: taskForm.dueDate ? new Date(taskForm.dueDate) : null,
       status: "assigned",
       createdAt: serverTimestamp(),
@@ -563,9 +599,31 @@ export default function AdminWorkersPage() {
       sentBy: "System",
     });
 
+    void sendExpoPushToWorkers(db, {
+      recipientUids: [assignModalWorker.id],
+      title: "New Task Assigned 📋",
+      body: taskForm.notificationMessage || `You have been assigned to task: ${taskForm.title}`,
+      taskId: taskRef.id,
+      taskTitle: taskForm.title,
+      tab: "tasks",
+    }).catch(() => {});
+
+    void notifyAdmins(db, {
+      targetRoles: ["super_admin", "ops_admin"],
+      category: "task",
+      eventType: "task_created",
+      title: `📋 New Task Assigned: ${taskForm.title}`,
+      body: `${auth.currentUser?.email || "Admin"} assigned "${taskForm.title}" to ${assignedWorkerFullName}.`,
+      href: `/admin/tasks?task=${encodeURIComponent(taskRef.id)}`,
+      actorUid: auth.currentUser?.uid,
+      actorName: auth.currentUser?.email || "Admin",
+      taskId: taskRef.id,
+      projectId: taskForm.projectId || undefined,
+    });
+
     setAssignModalWorker(null);
-    void logActivity({ action: "assigned", entity: "task", label: taskForm.title, detail: `To ${assignModalWorker.firstName} ${assignModalWorker.lastName}` });
-    toast.success("Task assigned", { description: `"${taskForm.title}" was sent to ${assignModalWorker.firstName} ${assignModalWorker.lastName}.` });
+    void logActivity({ action: "assigned", entity: "task", label: taskForm.title, detail: `To ${assignedWorkerFullName}` });
+    toast.success("Task assigned", { description: `"${taskForm.title}" was sent to ${assignedWorkerFullName}.` });
   };
 
   const { isAr, dir, toggleLang, t } = useHrLang();

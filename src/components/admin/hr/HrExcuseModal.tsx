@@ -5,6 +5,9 @@ import ModalPortal from "@/components/admin/ui/ModalPortal";
 import { excuseWorkerAbsence } from "@/lib/admin/hrSettings";
 import { logActivity } from "@/lib/admin/activity";
 import { toast } from "@/lib/admin/feedback";
+import { auth, db } from "@/lib/firebase";
+import { sendExpoPushToWorkers } from "@/lib/chatNotifications";
+import { notifyAdmins } from "@/lib/adminNotifications";
 
 interface Props {
   worker: { id: string; firstName?: string; lastName?: string; email?: string; department?: string };
@@ -46,6 +49,24 @@ export default function HrExcuseModal({ worker, date, adminEmail, onClose, onExc
         leaveType,
         reason: reason.trim(),
         adminEmail,
+      });
+
+      void sendExpoPushToWorkers(db, {
+        recipientUids: [worker.id],
+        title: `Absence Excused (${leaveType.toUpperCase()}) ✓`,
+        body: `Your absence on ${date} was excused by HR: ${reason.trim()}`,
+        tab: "exceptions",
+      }).catch(() => {});
+
+      void notifyAdmins(db, {
+        targetRoles: ["super_admin", "hr_admin"],
+        category: "hr",
+        eventType: "absence_excused",
+        title: `✅ Absence Excused: ${workerFullName}`,
+        body: `${workerFullName} excused on ${date} (${leaveType.toUpperCase()}): ${reason.trim()}`,
+        href: "/admin/hr?tab=overview",
+        actorUid: auth.currentUser?.uid,
+        actorName: adminEmail || auth.currentUser?.email || "HR",
       });
 
       void logActivity({

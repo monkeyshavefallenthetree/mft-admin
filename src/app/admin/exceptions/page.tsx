@@ -8,6 +8,7 @@ import { useUrlState } from "@/lib/admin/useUrlState";
 import { toast, confirmDialog } from "@/lib/admin/feedback";
 import { logActivity } from "@/lib/admin/activity";
 import { sendExpoPushToWorkers } from "@/lib/chatNotifications";
+import { notifyAdmins } from "@/lib/adminNotifications";
 import { BulkBar, BulkButton, EmptyState, PageHeader, SkeletonRows, STATE_ICONS } from "@/components/admin/ui/States";
 import { ICONS } from "@/lib/admin/nav";
 import ModalPortal from "@/components/admin/ui/ModalPortal";
@@ -229,6 +230,16 @@ export default function AdminExceptionsPage() {
             tab: "exceptions",
           });
         }
+        void notifyAdmins(db, {
+          targetRoles: ["super_admin", "hr_admin"],
+          category: "hr",
+          eventType: "exception_approved",
+          title: `✅ ${formatExceptionType(e?.type)} Approved: ${e?.workerName ?? "Worker"}`,
+          body: `Approved by ${adminId()} for ${e?.exceptionDate ?? "today"}.`,
+          href: "/admin/exceptions?status=approved",
+          actorUid: auth.currentUser?.uid,
+          actorName: adminId(),
+        });
         // Automatically sync salary advances to payroll adjustments
         if (e?.type === "advance_request" && e.workerId && Number(e.requestedAmount) > 0) {
           void addDoc(collection(db, "payrollAdjustments"), {
@@ -288,6 +299,17 @@ export default function AdminExceptionsPage() {
               urgent: true,
             });
           }
+          void notifyAdmins(db, {
+            targetRoles: ["super_admin", "hr_admin"],
+            category: "hr",
+            eventType: "exception_rejected",
+            title: `❌ ${formatExceptionType(x?.type)} Rejected: ${x?.workerName ?? "Worker"}`,
+            body: modalText.trim() || `Rejected by ${adminId()} for ${x?.exceptionDate ?? "today"}.`,
+            href: "/admin/exceptions?status=rejected",
+            actorUid: auth.currentUser?.uid,
+            actorName: adminId(),
+            urgent: true,
+          });
         });
         toast.success(responseModal.ids.length === 1 ? "Request rejected" : `${responseModal.ids.length} requests rejected`);
         setSelected(new Set());
@@ -305,6 +327,16 @@ export default function AdminExceptionsPage() {
             tab: "exceptions",
           });
         }
+        void notifyAdmins(db, {
+          targetRoles: ["super_admin", "hr_admin"],
+          category: "hr",
+          eventType: "exception_note",
+          title: `💬 HR Note on ${formatExceptionType(x?.type)}: ${responseModal.workerName}`,
+          body: modalText.trim(),
+          href: "/admin/exceptions",
+          actorUid: auth.currentUser?.uid,
+          actorName: adminId(),
+        });
         toast.success("Response saved", { description: "The worker can now see your note." });
       }
       setResponseModal(null);

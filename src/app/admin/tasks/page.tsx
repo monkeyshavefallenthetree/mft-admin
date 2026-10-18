@@ -410,16 +410,14 @@ export default function AdminTasksPage() {
         senderRole: "admin",
       });
       const recipientUids = assignedWorkerIds(detailTask.assignedTo);
-      if (recipientUids.length > 0) {
-        void sendChatNotificationToWorkers(db, {
-          recipientUids,
-          taskId: detailTask.id,
-          taskTitle: detailTask.title || "Task",
-          senderUid,
-          senderName,
-          messageText: chatInput,
-        }).catch(() => {});
-      }
+      void sendChatNotificationToWorkers(db, {
+        recipientUids,
+        taskId: detailTask.id,
+        taskTitle: detailTask.title || "Task",
+        senderUid,
+        senderName,
+        messageText: chatInput,
+      }).catch(() => {});
       setChatInput("");
     } finally {
       setChatBusy(false);
@@ -657,6 +655,20 @@ export default function AdminTasksPage() {
             taskTitle: form.title,
           }).catch(() => {});
         }
+        const currentAdmin = getAuth().currentUser;
+        const actorName = currentAdmin?.displayName || currentAdmin?.email || "Admin";
+        void notifyAdmins(db, {
+          targetRoles: ["super_admin", "ops_admin"],
+          category: "task",
+          eventType: "task_updated",
+          title: `✏️ Task Updated: ${form.title.trim()}`,
+          body: `${actorName} updated task "${form.title.trim()}" (assigned to ${assignedWorkerNames || "Unassigned"}).`,
+          href: `/admin/tasks?task=${encodeURIComponent(editId)}`,
+          actorUid: currentAdmin?.uid,
+          actorName,
+          taskId: editId,
+          projectId: form.projectId || undefined,
+        });
         toast.success("Task updated");
         void logActivity({ action: "updated", entity: "task", entityId: editId, label: form.title.trim() });
       }
@@ -816,14 +828,36 @@ export default function AdminTasksPage() {
         submittedForApprovalAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
-      toast.success("Task moved to review", { description: t.title });
-      void logActivity({ action: "updated", entity: "task", entityId: taskId, label: t.title, detail: "Moved to pending review" });
-      return;
+    } else {
+      await updateDoc(doc(db, "tasks", taskId), {
+        status: newStatus,
+        updatedAt: serverTimestamp(),
+        ...(newStatus === "in-progress" && !t.startedAt ? { startedAt: serverTimestamp() } : {}),
+      });
     }
-    await updateDoc(doc(db, "tasks", taskId), {
-      status: newStatus,
-      updatedAt: serverTimestamp(),
-      ...(newStatus === "in-progress" && !t.startedAt ? { startedAt: serverTimestamp() } : {}),
+    const ids = assignedWorkerIds(t.assignedTo);
+    if (ids.length > 0) {
+      void sendExpoPushToWorkers(db, {
+        recipientUids: ids,
+        title: `Task Status: ${newStatus.replace(/-/g, " ").toUpperCase()}`,
+        body: `"${t.title}" was moved to ${newStatus.replace(/-/g, " ")}.`,
+        taskId,
+        taskTitle: t.title,
+      }).catch(() => {});
+    }
+    const currentAdmin = getAuth().currentUser;
+    const actorName = currentAdmin?.displayName || currentAdmin?.email || "Admin";
+    void notifyAdmins(db, {
+      targetRoles: ["super_admin", "ops_admin"],
+      category: "task",
+      eventType: "task_status_changed",
+      title: `🔄 Task Status Changed: ${t.title}`,
+      body: `${actorName} moved "${t.title}" to ${newStatus.replace(/-/g, " ")}.`,
+      href: `/admin/tasks?task=${encodeURIComponent(taskId)}`,
+      actorUid: currentAdmin?.uid,
+      actorName,
+      taskId,
+      projectId: t.projectId,
     });
     toast.success(`Task moved to ${newStatus.replace(/-/g, " ")}`, { description: t.title });
     void logActivity({ action: "updated", entity: "task", entityId: taskId, label: t.title, detail: `Moved to ${newStatus}` });

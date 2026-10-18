@@ -64,9 +64,23 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const { theme, setTheme } = useTheme();
   const [desktopOn, setDesktopOn] = useState(false);
   const [soundOn, setSoundOn] = useState(true);
+  const [iosNeedsInstall, setIosNeedsInstall] = useState(false);
+  const [pushBannerDismissed, setPushBannerDismissed] = useState(false);
   useEffect(() => {
     setDesktopOn(desktopNotifyEnabled());
     setSoundOn(isSoundEnabled());
+    if (typeof window !== "undefined") {
+      const ua = window.navigator.userAgent || "";
+      const isIOS =
+        /iPad|iPhone|iPod/.test(ua) ||
+        (window.navigator.platform === "MacIntel" && window.navigator.maxTouchPoints > 1);
+      const isStandalone =
+        window.matchMedia?.("(display-mode: standalone)")?.matches === true ||
+        (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
+      if (isIOS && !isStandalone) {
+        setIosNeedsInstall(true);
+      }
+    }
   }, []);
 
   useEffect(() => {
@@ -708,6 +722,78 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             )}
           </div>
         </header>
+
+        {!pushBannerDismissed && (iosNeedsInstall || !desktopOn) && (
+          <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-red-200 bg-gradient-to-r from-red-50 via-white to-red-50 px-4 py-2.5 text-xs text-zinc-800 md:px-6">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-red-600 text-xs text-white shadow-xs">
+                🔔
+              </span>
+              {iosNeedsInstall ? (
+                <p className="font-medium leading-snug text-zinc-800">
+                  <strong className="font-bold text-red-700">iPhone / iPad Lock-Screen Push:</strong> Tap{" "}
+                  <strong className="font-semibold">Share (⬆️)</strong> →{" "}
+                  <strong className="font-semibold">Add to Home Screen</strong>, then open MFT Admin from your Home Screen to enable lock-screen alerts.
+                </p>
+              ) : (
+                <p className="font-medium leading-snug text-zinc-800">
+                  <strong className="font-bold text-red-700">Lock-Screen &amp; Background Alerts:</strong> Enable push notifications on this device to receive real-time alerts for {roleMeta.label} even when your phone screen is locked.
+                </p>
+              )}
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {!iosNeedsInstall && (
+                <>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const next = await setDesktopNotify(true);
+                      setDesktopOn(next);
+                      if (next) {
+                        toast.success("Lock-Screen Push Enabled!", {
+                          description: "You will now receive background & lock-screen notifications on this device.",
+                        });
+                      } else {
+                        toast.error("Permission denied", {
+                          description: "Please allow notifications in your browser/phone settings.",
+                        });
+                      }
+                    }}
+                    className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-bold text-white shadow-xs transition-colors hover:bg-red-700 cursor-pointer"
+                  >
+                    Enable Lock-Screen Push
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      toast.info("🔒 Lock your phone screen now!", {
+                        description: "Sending test lock-screen push alert in 4 seconds...",
+                      });
+                      const ok = await testAdminLockScreenPush();
+                      setDesktopOn(desktopNotifyEnabled());
+                      if (!ok) {
+                        toast.warning("Enable push alerts first", {
+                          description: "Allow notifications in your browser/phone settings.",
+                        });
+                      }
+                    }}
+                    className="rounded-lg border border-zinc-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-zinc-700 transition-colors hover:bg-zinc-100 cursor-pointer"
+                  >
+                    Test (4s)
+                  </button>
+                </>
+              )}
+              <button
+                type="button"
+                onClick={() => setPushBannerDismissed(true)}
+                aria-label="Dismiss banner"
+                className="rounded p-1 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-700 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        )}
 
         {!online && (
           <div role="status" className="flex items-center justify-center gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs font-medium text-amber-800">

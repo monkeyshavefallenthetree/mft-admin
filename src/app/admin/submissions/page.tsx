@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { collection, query, orderBy, onSnapshot, doc, updateDoc, writeBatch } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { auth, db } from "@/lib/firebase";
 import { useUrlState } from "@/lib/admin/useUrlState";
 import { toast, confirmDialog } from "@/lib/admin/feedback";
 import { logActivity } from "@/lib/admin/activity";
+import { notifyAdmins } from "@/lib/adminNotifications";
 import { downloadCsv } from "@/lib/admin/csv";
 import { BulkBar, BulkButton, EmptyState, PageHeader, SkeletonRows, STATE_ICONS } from "@/components/admin/ui/States";
 import LinkifiedText from "@/components/admin/ui/LinkifiedText";
@@ -179,6 +180,16 @@ export default function AdminSubmissionsPage() {
         ids.forEach((id) => {
           const s = submissions.find((x) => x.id === id);
           void logActivity({ action: "status", entity: "submission", entityId: id, label: s?.fullName ?? "Submission", detail: `→ ${statusMeta(status).label}` });
+          void notifyAdmins(db, {
+            targetRoles: ["super_admin", "ops_admin"],
+            category: "client",
+            eventType: "submission_status_updated",
+            title: `📩 Lead Updated: ${s?.fullName ?? "Client"}`,
+            body: `${auth.currentUser?.email || "Admin"} marked "${s?.fullName ?? "Lead"}" as ${statusMeta(status).label}.`,
+            href: `/admin/submissions?id=${encodeURIComponent(id)}`,
+            actorUid: auth.currentUser?.uid,
+            actorName: auth.currentUser?.email || "Admin",
+          });
         });
         toast.success(ids.length === 1 ? `Marked as ${statusMeta(status).label.toLowerCase()}` : `${ids.length} submissions updated`);
         setSelected(new Set());
@@ -215,6 +226,16 @@ export default function AdminSubmissionsPage() {
         await updateDoc(doc(db, "submissions", id), updateData);
         const label = PHASES.find((p) => p.key === phase)?.label ?? phase;
         void logActivity({ action: "updated", entity: "submission", entityId: id, label: sub?.fullName ?? "Submission", detail: `${label} → ${status}` });
+        void notifyAdmins(db, {
+          targetRoles: ["super_admin", "ops_admin"],
+          category: "client",
+          eventType: "submission_phase_updated",
+          title: `📩 Lead Phase Updated: ${sub?.fullName ?? "Client"}`,
+          body: `${auth.currentUser?.email || "Admin"} updated ${label} to ${status} for ${sub?.fullName ?? "Client"}.`,
+          href: `/admin/submissions?id=${encodeURIComponent(id)}`,
+          actorUid: auth.currentUser?.uid,
+          actorName: auth.currentUser?.email || "Admin",
+        });
         toast.success(`${label} ${status === "completed" ? "completed" : "started"}`);
       } catch (err) {
         toast.error("Couldn't update phase", { description: err instanceof Error ? err.message : undefined });

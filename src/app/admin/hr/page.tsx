@@ -52,6 +52,7 @@ import Link from "next/link";
 import { toast, confirmDialog } from "@/lib/admin/feedback";
 import { logActivity } from "@/lib/admin/activity";
 import { sendExpoPushToWorkers } from "@/lib/chatNotifications";
+import { notifyAdmins } from "@/lib/adminNotifications";
 import { useUrlState } from "@/lib/admin/useUrlState";
 import ModalPortal from "@/components/admin/ui/ModalPortal";
 import HrPolicyModal from "@/components/admin/hr/HrPolicyModal";
@@ -625,6 +626,24 @@ export default function AdminHRPage() {
       }
 
       await setPayrollCycleStatus(currentCycleId, updateData, adminEmail);
+      void notifyAdmins(db, {
+        targetRoles: ["super_admin", "hr_admin"],
+        category: "hr",
+        eventType: `payroll_cycle_${nextStatus}`,
+        title: `💳 Payroll Cycle ${nextStatus.toUpperCase()}: ${activePeriod.label}`,
+        body: `${adminEmail} marked payroll cycle (${activePeriod.label}) as ${nextStatus.toUpperCase()} — Net EGP ${payrollTotals.net}.`,
+        href: "/admin/hr?tab=payroll",
+        actorUid: auth.currentUser?.uid,
+        actorName: adminEmail,
+      });
+      if (nextStatus === "paid" && approved.length > 0) {
+        void sendExpoPushToWorkers(db, {
+          recipientUids: approved.map((w) => w.id),
+          title: "💳 Monthly Payroll Disbursed",
+          body: `Payroll for cycle ${activePeriod.label} has been marked as PAID.`,
+          tab: "profile",
+        }).catch(() => {});
+      }
       toast.success(t("تم تحديث حالة دورة الرواتب", `Payroll cycle marked as ${nextStatus.toUpperCase()}`));
     } catch (err) {
       toast.error(t("فشل تحديث حالة الدورة", "Failed to update cycle status"), {
@@ -673,6 +692,18 @@ export default function AdminHRPage() {
           urgent: alertForm.priority === "high" || alertForm.type === "urgent" || alertForm.type === "penalty",
         });
       }
+
+      void notifyAdmins(db, {
+        targetRoles: ["super_admin", "hr_admin"],
+        category: "hr",
+        eventType: "hr_alert_sent",
+        title: `📢 HR Alert Sent: ${alertForm.title}`,
+        body: `${adminEmail} sent "${alertForm.title}" to ${recipients.length} worker(s): ${alertForm.message}`,
+        href: "/admin/hr?tab=alerts",
+        actorUid: auth.currentUser?.uid,
+        actorName: adminEmail,
+        urgent: alertForm.priority === "high" || alertForm.type === "urgent" || alertForm.type === "penalty",
+      });
 
       void logActivity({
         action: "created",

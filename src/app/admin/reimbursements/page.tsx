@@ -5,6 +5,7 @@ import { auth, db } from "@/lib/firebase";
 import { toast } from "@/lib/admin/feedback";
 import { logActivity } from "@/lib/admin/activity";
 import { sendExpoPushToWorkers } from "@/lib/chatNotifications";
+import { notifyAdmins } from "@/lib/adminNotifications";
 import { EmptyState, PageHeader, SkeletonRows, STATE_ICONS } from "@/components/admin/ui/States";
 import ModalPortal from "@/components/admin/ui/ModalPortal";
 import { ICONS } from "@/lib/admin/nav";
@@ -332,6 +333,16 @@ function ReviewDrawer({ r, flags, onClose }: { r: ReimbursementDoc; flags: Reimb
           tab: "expenses",
         });
       }
+      void notifyAdmins(db, {
+        targetRoles: ["super_admin", "hr_admin"],
+        category: "hr",
+        eventType: "reimbursement_quote_approved",
+        title: `✅ Quote Pre-Approved: ${r.workerName ?? "Worker"}`,
+        body: `${egp(amt)} pre-approved for "${r.purpose}" by ${adminId()}.`,
+        href: "/admin/reimbursements",
+        actorUid: auth.currentUser?.uid,
+        actorName: adminId(),
+      });
       void logActivity({ action: "approved", entity: "hr", entityId: r.id, label: `Quote pre-approved — ${label}`, detail: egp(amt) });
       toast.success("Quote approved", { description: "The worker can now buy and upload the invoice." });
       onClose();
@@ -358,6 +369,16 @@ function ReviewDrawer({ r, flags, onClose }: { r: ReimbursementDoc; flags: Reimb
           tab: "expenses",
         });
       }
+      void notifyAdmins(db, {
+        targetRoles: ["super_admin", "hr_admin"],
+        category: "hr",
+        eventType: "reimbursement_approved",
+        title: `💰 Reimbursement Approved: ${r.workerName ?? "Worker"}`,
+        body: `${egp(amt)} approved for "${r.purpose}" and added to payroll by ${adminId()}.`,
+        href: "/admin/reimbursements",
+        actorUid: auth.currentUser?.uid,
+        actorName: adminId(),
+      });
       void logActivity({ action: "approved", entity: "hr", entityId: r.id, label: `Reimbursement approved — ${label}`, detail: `${egp(amt)} → payroll allowance${override.trim() ? ` · override: ${override.trim()}` : ""}` });
       toast.success("Reimbursement approved", { description: `${egp(amt)} added to the worker's payroll as an allowance.` });
       onClose();
@@ -382,6 +403,17 @@ function ReviewDrawer({ r, flags, onClose }: { r: ReimbursementDoc; flags: Reimb
           urgent: true,
         });
       }
+      void notifyAdmins(db, {
+        targetRoles: ["super_admin", "hr_admin"],
+        category: "hr",
+        eventType: "reimbursement_rejected",
+        title: `❌ Reimbursement Rejected: ${r.workerName ?? "Worker"}`,
+        body: `"${r.purpose}" rejected by ${adminId()}: ${note.trim()}`,
+        href: "/admin/reimbursements",
+        actorUid: auth.currentUser?.uid,
+        actorName: adminId(),
+        urgent: true,
+      });
       void logActivity({ action: "rejected", entity: "hr", entityId: r.id, label: `Reimbursement rejected — ${label}`, detail: note.trim().slice(0, 120) });
       toast.success("Claim rejected");
       onClose();

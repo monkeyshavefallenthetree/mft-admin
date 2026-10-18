@@ -362,6 +362,27 @@ export default function AdminProjectsPage() {
       memberIds: formData.memberIds || [],
       updatedAt: serverTimestamp(),
     });
+    if (formData.memberIds && formData.memberIds.length > 0) {
+      void sendExpoPushToWorkers(db, {
+        recipientUids: formData.memberIds,
+        title: `📁 Project Updated: ${formData.name}`,
+        body: `Project details or team assignments were updated for "${formData.name}".`,
+        tab: "tasks",
+      }).catch(() => {});
+    }
+    const currentAdmin = getAuth().currentUser;
+    const actorName = currentAdmin?.displayName || currentAdmin?.email || "Admin";
+    void notifyAdmins(db, {
+      targetRoles: ["super_admin", "ops_admin"],
+      category: "project",
+      eventType: "project_updated",
+      title: `✏️ Project Updated: ${formData.name}`,
+      body: `${actorName} updated project "${formData.name}".`,
+      href: `/admin/projects?project=${encodeURIComponent(editingProject.id)}`,
+      actorUid: currentAdmin?.uid,
+      actorName,
+      projectId: editingProject.id,
+    });
     toast.success("Project updated");
     void logActivity({ action: "updated", entity: "project", entityId: editingProject.id, label: formData.name });
   };
@@ -402,6 +423,14 @@ export default function AdminProjectsPage() {
       updatedAt: serverTimestamp(),
     });
     const proj = projects.find((p) => p.id === projectId);
+    if (proj?.memberIds && proj.memberIds.length > 0) {
+      void sendExpoPushToWorkers(db, {
+        recipientUids: proj.memberIds,
+        title: nextStatus === "completed" ? `✅ Project Completed: ${proj.name}` : `🔄 Project Reopened: ${proj.name}`,
+        body: `Project "${proj.name}" is now marked as ${nextStatus}.`,
+        tab: "tasks",
+      }).catch(() => {});
+    }
     const currentAdmin = getAuth().currentUser;
     const actorName = currentAdmin?.displayName || currentAdmin?.email || "Admin";
     void notifyAdmins(db, {
@@ -547,12 +576,13 @@ export default function AdminProjectsPage() {
       updatedAt: serverTimestamp(),
     });
 
-    if (formData.workerIds.length > 0 && formData.notificationMessage) {
+    const updateMsg = formData.notificationMessage || `Task details updated: ${formData.title}`;
+    if (formData.workerIds.length > 0) {
       for (const workerId of formData.workerIds) {
         await addDoc(collection(db, "alerts"), {
           recipients: [workerId],
           title: "Task Directive Updated",
-          message: formData.notificationMessage,
+          message: updateMsg,
           type: "schedule",
           priority: formData.priority || "medium",
           isRead: false,
@@ -564,11 +594,27 @@ export default function AdminProjectsPage() {
       void sendExpoPushToWorkers(db, {
         recipientUids: formData.workerIds,
         title: "Task Directive Updated",
-        body: formData.notificationMessage,
+        body: updateMsg,
         taskId: editingTaskModal.id,
         taskTitle: formData.title,
       }).catch(() => {});
     }
+    const currentAdmin = getAuth().currentUser;
+    const actorName = currentAdmin?.displayName || currentAdmin?.email || "Admin";
+    void notifyAdmins(db, {
+      targetRoles: ["super_admin", "ops_admin"],
+      category: "task",
+      eventType: "task_updated",
+      title: `✏️ Task Updated: ${formData.title}`,
+      body: `${actorName} updated "${formData.title}" (assigned to ${assignedWorkerNames || "Unassigned"}).`,
+      href: detailId
+        ? `/admin/projects?project=${encodeURIComponent(detailId)}&task=${encodeURIComponent(editingTaskModal.id)}`
+        : `/admin/tasks?task=${encodeURIComponent(editingTaskModal.id)}`,
+      actorUid: currentAdmin?.uid,
+      actorName,
+      taskId: editingTaskModal.id,
+      projectId: detailId || undefined,
+    });
     toast.success("Task updated");
     void logActivity({ action: "updated", entity: "task", entityId: editingTaskModal.id, label: formData.title });
   };
@@ -590,18 +636,35 @@ export default function AdminProjectsPage() {
 
       await updateDoc(doc(db, "tasks", activeTaskDrawer.id), payload);
 
-      if (notificationMsg) {
-        const ids = getAssigneeIds(activeTaskDrawer.assignedTo);
-        if (ids.length > 0) {
-          void sendExpoPushToWorkers(db, {
-            recipientUids: ids,
-            title: `Update: ${activeTaskDrawer.title}`,
-            body: notificationMsg,
-            taskId: activeTaskDrawer.id,
-            taskTitle: activeTaskDrawer.title,
-          }).catch(() => {});
-        }
+      const ids = getAssigneeIds(updatedFields.assignedTo ?? activeTaskDrawer.assignedTo);
+      const msgBody =
+        notificationMsg ||
+        `Task "${updatedFields.title || activeTaskDrawer.title}" was updated.`;
+      if (ids.length > 0) {
+        void sendExpoPushToWorkers(db, {
+          recipientUids: ids,
+          title: `Update: ${updatedFields.title || activeTaskDrawer.title}`,
+          body: msgBody,
+          taskId: activeTaskDrawer.id,
+          taskTitle: updatedFields.title || activeTaskDrawer.title,
+        }).catch(() => {});
       }
+      const currentAdmin = getAuth().currentUser;
+      const actorName = currentAdmin?.displayName || currentAdmin?.email || "Admin";
+      void notifyAdmins(db, {
+        targetRoles: ["super_admin", "ops_admin"],
+        category: "task",
+        eventType: "task_field_updated",
+        title: `✏️ Task Updated: ${updatedFields.title || activeTaskDrawer.title}`,
+        body: `${actorName}: ${msgBody}`,
+        href: detailId
+          ? `/admin/projects?project=${encodeURIComponent(detailId)}&task=${encodeURIComponent(activeTaskDrawer.id)}`
+          : `/admin/tasks?task=${encodeURIComponent(activeTaskDrawer.id)}`,
+        actorUid: currentAdmin?.uid,
+        actorName,
+        taskId: activeTaskDrawer.id,
+        projectId: detailId || activeTaskDrawer.projectId,
+      });
     } catch (err) {
       console.error("Failed to update task field:", err);
       toast.error("Failed to save update");
@@ -615,6 +678,34 @@ export default function AdminProjectsPage() {
         updatedAt: serverTimestamp(),
       });
       const t = tasks.find((x) => x.id === taskId);
+      if (t) {
+        const ids = getAssigneeIds(t.assignedTo);
+        if (ids.length > 0) {
+          void sendExpoPushToWorkers(db, {
+            recipientUids: ids,
+            title: `Task Status: ${newStatus.replace(/-/g, " ").toUpperCase()}`,
+            body: `"${t.title}" moved to ${newStatus.replace(/-/g, " ")}.`,
+            taskId,
+            taskTitle: t.title,
+          }).catch(() => {});
+        }
+        const currentAdmin = getAuth().currentUser;
+        const actorName = currentAdmin?.displayName || currentAdmin?.email || "Admin";
+        void notifyAdmins(db, {
+          targetRoles: ["super_admin", "ops_admin"],
+          category: "task",
+          eventType: "task_status_changed",
+          title: `🔄 Task Status: ${t.title}`,
+          body: `${actorName} moved "${t.title}" to ${newStatus.replace(/-/g, " ")}.`,
+          href: detailId
+            ? `/admin/projects?project=${encodeURIComponent(detailId)}&task=${encodeURIComponent(taskId)}`
+            : `/admin/tasks?task=${encodeURIComponent(taskId)}`,
+          actorUid: currentAdmin?.uid,
+          actorName,
+          taskId,
+          projectId: t.projectId,
+        });
+      }
       void logActivity({ action: "status", entity: "task", entityId: taskId, label: t?.title || taskId, detail: `→ ${newStatus}` });
     } catch {
       toast.error("Could not update status");

@@ -66,10 +66,8 @@ export async function sendWebPushToAdminsFromAdmin(
 ): Promise<void> {
   const subMap = new Map<string, StoredPushSubscription>();
 
-  const collectDoc = (docId: string, data: Record<string, unknown> | undefined) => {
+  const collectDoc = (_docId: string, data: Record<string, unknown> | undefined) => {
     if (!data) return;
-    const docUid = (data.uid as string) || docId.replace(/^admin_push_/, "");
-    if (opts.excludeUid && docUid === opts.excludeUid) return;
     const role = data.role as AdminRole | undefined;
     if (role && !opts.roles.includes(role)) return;
 
