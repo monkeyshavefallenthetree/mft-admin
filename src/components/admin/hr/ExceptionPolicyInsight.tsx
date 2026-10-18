@@ -1,0 +1,138 @@
+"use client";
+
+import {
+  LEAVE_PHASE_AR,
+  computeLeaveAccrual,
+  parseHm,
+  formatHm,
+  splitOvertimePay,
+  validateLeaveRequest,
+  priorUsedRecordedOn,
+  ymd,
+  type Policy2026Config,
+} from "@/lib/admin/hrPolicy2026";
+
+export interface InsightWorker {
+  id: string;
+  hireDate?: string;
+  attendanceStartDate?: string;
+  priorUsedLeaveDays?: number;
+  carriedOverLeaveDays?: number;
+  hourlyRate?: number;
+  createdAt?: { toDate: () => Date };
+}
+
+export interface InsightRequest {
+  id: string;
+  workerId?: string;
+  type?: string;
+  status?: string;
+  exceptionDate?: string;
+  lateMinutes?: number;
+  leaveDays?: number;
+}
+
+/** Days requested by an annual-leave request (defaults to 1 for legacy requests). */
+export function leaveDaysOf(r: InsightRequest): number {
+  return Number(r.leaveDays) > 0 ? Number(r.leaveDays) : 1;
+}
+
+/**
+ * Validates an annual-leave request against the worker's live HR-POL-2026 balance.
+ * Other approved annual-leave requests are deducted first.
+ */
+export function checkAnnualLeave(
+  req: InsightRequest,
+  worker: InsightWorker | undefined,
+  all: InsightRequest[],
+  cfg: Policy2026Config,
+  policyEffectiveFrom?: string,
+) {
+  const hire = worker?.hireDate || (worker?.createdAt?.toDate ? ymd(worker.createdAt.toDate()) : "");
+  if (!hire) return null;
+  const usedLeave = all
+    .filter((r) => r.id !== req.id && r.workerId === req.workerId && r.type === "annual_leave" && r.status === "approved" && r.exceptionDate)
+    .map((r) => ({ date: r.exceptionDate as string, days: leaveDaysOf(r) }));
+  const asOf = req.exceptionDate ? new Date(req.exceptionDate + "T12:00:00") : new Date();
+  const accrual = computeLeaveAccrual(
+    hire,
+    asOf,
+    {
+      usedLeave,
+      carriedOverApproved: worker?.carriedOverLeaveDays ?? 0,
+      priorUsedLeaveDays: worker?.priorUsedLeaveDays ?? 0,
+      priorUsedAsOf: priorUsedRecordedOn(worker, { policy2026EffectiveFrom: policyEffectiveFrom }),
+    },
+    cfg,
+  );
+  const verdict = validateLeaveRequest(accrual, leaveDaysOf(req));
+  return { accrual, verdict, hireIsFallback: !worker?.hireDate };
+}
+
+export default function ExceptionPolicyInsight({
+  req,
+  worker,
+  all,
+  cfg,
+  defaultHourlyRate,
+  policyEffectiveFrom,
+}: {
+  req: InsightRequest;
+  worker: InsightWorker | undefined;
+  all: InsightRequest[];
+  cfg: Policy2026Config;
+  defaultHourlyRate: number;
+  policyEffectiveFrom?: string;
+}) {
+  if (req.type === "annual_leave") {
+    const res = checkAnnualLeave(req, worker, all, cfg, policyEffectiveFrom);
+    if (!res) return null;
+    const { accrual, verdict } = res;
+    return (
+      <div
+        className={`mt-3 rounded-lg border px-3 py-2.5 text-xs ${
+          verdict.ok ? "border-emerald-200 bg-emerald-50/60" : "border-red-200 bg-red-50/70"
+        }`}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="font-semibold text-zinc-800">
+            HR-POL-2026 leave check · requesting {leaveDaysOf(req)} day(s)
+          </span>
+          <span dir="rtl" className="rounded border border-zinc-300 bg-white px-1.5 py-0.5 text-[10px] font-bold">
+            {LEAVE_PHASE_AR[accrual.phase]}
+          </span>
+        </div>
+        <p className="mt-1 text-zinc-600">
+          Balance on {accrual.asOf}: <strong>{accrual.balance}d</strong> (requestable {accrual.requestableDays}d) · accrued{" "}
+          {accrual.accruedDays}d · used {accrual.usedDays}d · probation ends {accrual.probationEndsOn}
+          {res.hireIsFallback && <span className="text-amber-600"> · ⚠ hire date not set (using sign-up date)</span>}
+        </p>
+        {!verdict.ok && (
+          <p dir="rtl" className="mt-1 font-semibold text-red-700">
+            {verdict.reasonAr}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  if (req.type === "overtime" && Number(req.lateMinutes) > 0) {
+    const rate = worker?.hourlyRate || defaultHourlyRate;
+    const latestEnd = parseHm(cfg.lateCutoffTime) + Math.round(cfg.standardHours * 60);
+    const d = req.exceptionDate ? new Date(req.exceptionDate + "T00:00:00") : new Date();
+    const start = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, latestEnd);
+    const est = splitOvertimePay(start, Number(req.lateMinutes), rate, cfg);
+    return (
+      <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50/60 px-3 py-2.5 text-xs text-zinc-700">
+        <span className="font-semibold text-zinc-800">Estimated payout (HR-POL-2026)</span> · starting {formatHm(latestEnd)} after the
+        shift: day {est.dayMinutes}m × {cfg.dayOtMultiplier} = EGP {est.dayPay} · night {est.nightMinutes}m × {cfg.nightOtMultiplier} = EGP{" "}
+        {est.nightPay}
+        {est.nightAllowance > 0 && ` · night allowance EGP ${est.nightAllowance}`} → <strong>EGP {est.total}</strong>
+        <span className="block text-[10px] text-zinc-500">
+          Paid only for minutes actually worked after the required shift end, capped at the approved {req.lateMinutes} min.
+        </span>
+      </div>
+    );
+  }
+  return null;
+}

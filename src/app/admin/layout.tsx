@@ -2,12 +2,25 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { onAuthStateChanged, signOut } from "firebase/auth";
-import { auth } from "@/lib/firebase";
+import { auth, db } from "@/lib/firebase";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import CommandPalette from "@/components/admin/CommandPalette";
-import { NAV_GROUPS, ICONS, FILTERED_LINKS, NAVIGATE_EVENT, findNavItem, type NavItem } from "@/lib/admin/nav";
+import {
+  NAV_GROUPS,
+  ICONS,
+  FILTERED_LINKS,
+  NAVIGATE_EVENT,
+  findNavItem,
+  getAdminRole,
+  getAdminRoleMeta,
+  getNavGroupsForRole,
+  isPathAllowedForRole,
+  type NavItem,
+} from "@/lib/admin/nav";
 import { useAdminBadges, desktopNotifyEnabled, desktopNotifySupported, setDesktopNotify } from "@/lib/admin/useAdminBadges";
+import { markAdminNotificationRead, markAllAdminNotificationsRead } from "@/lib/adminNotifications";
+import { isSoundEnabled, playAdminSound, setSoundEnabled } from "@/lib/admin/sound";
 import { FeedbackHost, confirmDialog, toast } from "@/lib/admin/feedback";
 import { useTheme, type ThemePref } from "@/lib/admin/theme";
 import { logActivity } from "@/lib/admin/activity";
@@ -43,10 +56,18 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const router = useRouter();
   const pathname = usePathname();
 
-  const badges = useAdminBadges(!!user);
+  const role = getAdminRole(user?.email);
+  const roleMeta = getAdminRoleMeta(role);
+  const navGroups = getNavGroupsForRole(role);
+
+  const badges = useAdminBadges(!!user, role);
   const { theme, setTheme } = useTheme();
   const [desktopOn, setDesktopOn] = useState(false);
-  useEffect(() => setDesktopOn(desktopNotifyEnabled()), []);
+  const [soundOn, setSoundOn] = useState(true);
+  useEffect(() => {
+    setDesktopOn(desktopNotifyEnabled());
+    setSoundOn(isSoundEnabled());
+  }, []);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (firebaseUser) => {
@@ -59,6 +80,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     });
     return () => unsub();
   }, [router, pathname]);
+
+  // Redirect to the role's default tab if the current route is not allowed for this admin account.
+  const routeAllowed = !user || isPathAllowedForRole(pathname, role);
+  useEffect(() => {
+    if (!loading && user && pathname !== "/admin/login" && !routeAllowed) {
+      router.replace(roleMeta.defaultHref);
+    }
+  }, [loading, user, pathname, routeAllowed, roleMeta.defaultHref, router]);
 
   // Persist sidebar collapse
   useEffect(() => {
@@ -103,11 +132,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const go = useCallback(
     (href: string) => {
       const target = new URL(href, window.location.origin);
+      if (!isPathAllowedForRole(target.pathname, role)) {
+        router.push(roleMeta.defaultHref);
+        return;
+      }
       const samePage = target.pathname === window.location.pathname;
       router.push(href);
       if (samePage) window.setTimeout(() => window.dispatchEvent(new Event(URL_SYNC_EVENT)), 60);
     },
-    [router],
+    [router, role, roleMeta.defaultHref],
   );
 
   // Toasts / desktop notifications route through here (see navigateTo in nav.ts).
@@ -137,7 +170,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   // Tab title: "(3) Tasks · MFT Admin" so pending work is visible from other tabs.
   const pendingTotal =
-    badges.unreadChats + badges.pendingWorkers + badges.pendingExceptions + badges.pendingApprovals + badges.newSubmissions;
+    badges.unreadChats +
+    badges.pendingWorkers +
+    badges.pendingExceptions +
+    badges.pendingApprovals +
+    badges.newSubmissions +
+    badges.pendingReimbursements +
+    badges.unreadAdminNotifs;
   useEffect(() => {
     if (pathname === "/admin/login") {
       document.title = "Sign in · MFT Admin";
@@ -149,7 +188,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   if (pathname === "/admin/login") return <>{children}</>;
 
-  if (loading) {
+  if (loading || !routeAllowed) {
     return (
       <div className="flex h-screen items-center justify-center bg-[var(--mft-bg)]">
         <div className="flex flex-col items-center gap-4 animate-fade-in">
@@ -186,15 +225,29 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     else if (next) toast.success("Desktop alerts enabled", { description: "You'll be notified even when this tab is in the background." });
   };
 
+  const toggleSound = () => {
+    const next = !soundOn;
+    setSoundEnabled(next);
+    setSoundOn(next);
+    if (next) {
+      playAdminSound({ force: true });
+      toast.success("Notification sound enabled");
+    } else {
+      toast.info("Notification sound muted");
+    }
+  };
+
   const current = findNavItem(pathname);
   const currentGroup = NAV_GROUPS.find((g) => g.items.some((i) => i.href === current?.href));
 
   const totalAlerts = pendingTotal;
+  const readerKey = auth.currentUser?.uid || user?.email || "admin";
 
   const alertRows = [
     { key: "approvals", count: badges.pendingApprovals, label: "Task approvals waiting", href: FILTERED_LINKS.pendingApprovals, tone: "amber", icon: "M5 13l4 4L19 7" },
     { key: "workers", count: badges.pendingWorkers, label: "Workers awaiting approval", href: FILTERED_LINKS.pendingWorkers, tone: "blue", icon: ICONS.workers },
     { key: "exceptions", count: badges.pendingExceptions, label: "Exception requests pending", href: FILTERED_LINKS.pendingExceptions, tone: "orange", icon: ICONS.exceptions },
+    { key: "reimb", count: badges.pendingReimbursements, label: "Reimbursement claims to review", href: FILTERED_LINKS.pendingReimbursements, tone: "amber", icon: ICONS.reimbursements },
     { key: "subs", count: badges.newSubmissions, label: "New client submissions", href: FILTERED_LINKS.newSubmissions, tone: "emerald", icon: ICONS.submissions },
   ].filter((r) => r.count > 0);
 
@@ -207,7 +260,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   };
 
   const renderNavItem = (item: NavItem) => {
-    const isActive = !item.external && (item.href === "/admin" ? pathname === "/admin" : pathname.startsWith(item.href));
+    const isActive =
+      !item.external &&
+      (item.href === "/admin" || item.href === "/admin/hr" ? pathname === item.href : pathname.startsWith(item.href));
     const count = item.badge ? badges[item.badge] : 0;
     return (
       <Link
@@ -256,7 +311,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           </div>
           <div className={`min-w-0 ${collapsed ? "lg:hidden" : ""}`}>
             <p className="font-oswald text-lg font-bold leading-none tracking-wider text-zinc-900">MFT</p>
-            <p className="mt-0.5 text-[11px] text-zinc-500">Admin workspace</p>
+            <p className="mt-0.5 truncate text-[11px] font-medium text-zinc-500">{roleMeta.label}</p>
           </div>
         </div>
 
@@ -278,7 +333,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
         {/* Nav */}
         <nav className="flex-1 space-y-5 overflow-y-auto px-3 py-4" aria-label="Admin navigation">
-          {NAV_GROUPS.map((group) => (
+          {navGroups.map((group) => (
             <div key={group.title}>
               <p className={`mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400 ${collapsed ? "lg:hidden" : ""}`}>
                 {group.title}
@@ -320,7 +375,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           {/* Breadcrumb / title */}
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5 text-[11px] font-medium text-zinc-400">
-              <Link href="/admin" className="hover:text-zinc-700">Admin</Link>
+              <Link href={roleMeta.defaultHref} className="hover:text-zinc-700">Admin</Link>
               {currentGroup && current?.href !== "/admin" && (
                 <>
                   <span>/</span>
@@ -334,6 +389,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               <h1 className="truncate text-[15px] font-semibold text-zinc-900">{current?.label ?? "Dashboard"}</h1>
             )}
           </div>
+
+          {/* Role badge */}
+          <span
+            className={`hidden items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold md:flex ${roleMeta.badgeClass}`}
+            title={`Signed in with ${roleMeta.label} permissions`}
+          >
+            {roleMeta.label}
+          </span>
 
           {/* Live */}
           <span
@@ -376,10 +439,24 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             </button>
 
             {bellOpen && (
-              <div className="absolute right-0 mt-2 w-[22rem] overflow-hidden rounded-xl border border-zinc-200 bg-white animate-scale-in" style={{ boxShadow: "var(--mft-shadow-lg)" }}>
+              <div className="absolute right-0 mt-2 w-[24rem] overflow-hidden rounded-xl border border-zinc-200 bg-white animate-scale-in" style={{ boxShadow: "var(--mft-shadow-lg)" }}>
                 <div className="flex items-center justify-between border-b border-zinc-100 px-4 py-3">
-                  <p className="text-sm font-semibold text-zinc-900">Notifications</p>
-                  <span className="text-xs text-zinc-500">{totalAlerts} open</span>
+                  <div>
+                    <p className="text-sm font-semibold text-zinc-900">Notifications</p>
+                    <p className="text-[10px] text-zinc-500">{roleMeta.label}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {badges.unreadAdminNotifs > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => void markAllAdminNotificationsRead(db, badges.adminNotifications, readerKey)}
+                        className="text-[11px] font-semibold text-red-600 hover:text-red-700 cursor-pointer"
+                      >
+                        Mark all read
+                      </button>
+                    )}
+                    <span className="text-xs text-zinc-500">{totalAlerts} open</span>
+                  </div>
                 </div>
                 <button
                   type="button"
@@ -387,13 +464,32 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                   className="flex w-full items-center gap-3 border-b border-zinc-100 bg-zinc-50 px-4 py-2.5 text-left transition-colors hover:bg-zinc-100 cursor-pointer"
                 >
                   <Icon d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" className="h-4 w-4 text-zinc-500" />
-                  <span className="flex-1 text-xs text-zinc-700">Desktop alerts when tab is in background</span>
+                  <span className="flex-1 text-xs text-zinc-700">Background &amp; mobile push alerts</span>
                   <span className={`relative h-5 w-9 rounded-full transition-colors ${desktopOn ? "bg-red-600" : "bg-zinc-300"}`}>
                     <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${desktopOn ? "left-[18px]" : "left-0.5"}`} />
                   </span>
                 </button>
+                <div className="flex w-full items-center gap-3 border-b border-zinc-100 bg-zinc-50/70 px-4 py-2 text-left">
+                  <Icon d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" className="h-4 w-4 text-zinc-500" />
+                  <span className="flex-1 text-xs text-zinc-700">Notification sound (mobile &amp; desktop)</span>
+                  <button
+                    type="button"
+                    onClick={() => playAdminSound({ force: true })}
+                    className="rounded border border-zinc-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-zinc-600 hover:bg-zinc-100 cursor-pointer"
+                  >
+                    Test
+                  </button>
+                  <button
+                    type="button"
+                    onClick={toggleSound}
+                    aria-label="Toggle notification sound"
+                    className={`relative h-5 w-9 rounded-full transition-colors cursor-pointer ${soundOn ? "bg-red-600" : "bg-zinc-300"}`}
+                  >
+                    <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${soundOn ? "left-[18px]" : "left-0.5"}`} />
+                  </button>
+                </div>
                 <div className="max-h-[60vh] overflow-y-auto">
-                  {alertRows.length === 0 && badges.chatNotifications.length === 0 && (
+                  {alertRows.length === 0 && badges.chatNotifications.length === 0 && badges.adminNotifications.length === 0 && (
                     <div className="px-4 py-10 text-center">
                       <p className="text-sm font-medium text-zinc-700">You&apos;re all caught up 🎉</p>
                       <p className="mt-1 text-xs text-zinc-500">Nothing needs your attention right now.</p>
@@ -420,26 +516,91 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                   {badges.chatNotifications.length > 0 && (
                     <>
                       <p className="bg-zinc-50 px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-400">Unread messages</p>
-                      {badges.chatNotifications.slice(0, 8).map((n) => (
-                        <Link
-                          key={n.id}
-                          href="/admin/projects"
-                          onClick={() => setBellOpen(false)}
-                          className="flex items-start gap-3 border-b border-zinc-50 px-4 py-3 transition-colors hover:bg-zinc-50"
-                        >
-                          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-red-100 text-[11px] font-bold text-red-700">
-                            {(n.senderName || "?").slice(0, 2).toUpperCase()}
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <span className="flex items-center justify-between gap-2">
-                              <span className="truncate text-[13px] font-semibold text-zinc-900">{n.senderName}</span>
-                              <span className="shrink-0 text-[10px] text-zinc-400">{timeAgo(n.createdAt?.toDate())}</span>
+                      {badges.chatNotifications.slice(0, 8).map((n) => {
+                        const nAny = n as typeof n & { projectId?: string };
+                        const projId =
+                          nAny.projectId ||
+                          (typeof n.taskId === "string" && n.taskId.startsWith("project:")
+                            ? n.taskId.slice("project:".length)
+                            : null);
+                        const chatHref = projId
+                          ? `/admin/projects?project=${encodeURIComponent(projId)}&view=chat`
+                          : n.taskId
+                          ? `/admin/tasks?task=${encodeURIComponent(n.taskId)}`
+                          : "/admin/tasks";
+                        return (
+                          <Link
+                            key={n.id}
+                            href={chatHref}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              setBellOpen(false);
+                              go(chatHref);
+                            }}
+                            className="flex items-start gap-3 border-b border-zinc-50 px-4 py-3 transition-colors hover:bg-zinc-50"
+                          >
+                            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-red-100 text-[11px] font-bold text-red-700">
+                              {(n.senderName || "?").slice(0, 2).toUpperCase()}
                             </span>
-                            <span className="block truncate text-[11px] text-zinc-500">on {n.taskTitle}</span>
-                            <span className="mt-0.5 block truncate text-xs text-zinc-700">{n.messagePreview}</span>
-                          </span>
-                        </Link>
-                      ))}
+                            <span className="min-w-0 flex-1">
+                              <span className="flex items-center justify-between gap-2">
+                                <span className="truncate text-[13px] font-semibold text-zinc-900">{n.senderName}</span>
+                                <span className="shrink-0 text-[10px] text-zinc-400">{timeAgo(n.createdAt?.toDate())}</span>
+                              </span>
+                              <span className="block truncate text-[11px] text-zinc-500">on {n.taskTitle}</span>
+                              <span className="mt-0.5 block truncate text-xs text-zinc-700">{n.messagePreview}</span>
+                            </span>
+                          </Link>
+                        );
+                      })}
+                    </>
+                  )}
+                  {badges.adminNotifications.length > 0 && (
+                    <>
+                      <p className="bg-zinc-50 px-4 py-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+                        Live System Activity ({badges.unreadAdminNotifs} unread)
+                      </p>
+                      {badges.adminNotifications.slice(0, 15).map((ev) => {
+                        const isUnread = !Array.isArray(ev.readBy) || !ev.readBy.includes(readerKey);
+                        const catBadge =
+                          ev.category === "hr"
+                            ? "bg-emerald-100 text-emerald-800"
+                            : ev.category === "project"
+                            ? "bg-blue-100 text-blue-800"
+                            : ev.category === "task"
+                            ? "bg-amber-100 text-amber-800"
+                            : "bg-red-100 text-red-800";
+                        return (
+                          <button
+                            key={ev.id}
+                            type="button"
+                            onClick={() => {
+                              void markAdminNotificationRead(db, ev.id, readerKey);
+                              setBellOpen(false);
+                              go(ev.href || roleMeta.defaultHref);
+                            }}
+                            className={`flex w-full items-start gap-3 border-b border-zinc-50 px-4 py-3 text-left transition-colors hover:bg-zinc-50 cursor-pointer ${
+                              isUnread ? "bg-red-50/35" : ""
+                            }`}
+                          >
+                            <span className={`mt-0.5 flex h-7 shrink-0 items-center justify-center rounded px-1.5 text-[9px] font-bold uppercase ${catBadge}`}>
+                              {ev.category}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="flex items-center justify-between gap-2">
+                                <span className={`truncate text-xs ${isUnread ? "font-bold text-zinc-900" : "font-medium text-zinc-700"}`}>
+                                  {ev.title}
+                                </span>
+                                <span className="shrink-0 text-[10px] text-zinc-400">
+                                  {timeAgo(ev.createdAt?.toDate?.())}
+                                </span>
+                              </span>
+                              <span className="mt-0.5 block line-clamp-2 text-[11px] text-zinc-600">{ev.body}</span>
+                            </span>
+                            {isUnread && <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-red-600" />}
+                          </button>
+                        );
+                      })}
                     </>
                   )}
                 </div>
@@ -476,8 +637,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             {userMenuOpen && (
               <div className="absolute right-0 mt-2 w-60 overflow-hidden rounded-xl border border-zinc-200 bg-white animate-scale-in" style={{ boxShadow: "var(--mft-shadow-lg)" }}>
                 <div className="border-b border-zinc-100 px-4 py-3">
-                  <p className="text-[11px] text-zinc-500">Signed in as</p>
-                  <p className="truncate text-sm font-medium text-zinc-900">{user?.email ?? "—"}</p>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-[11px] text-zinc-500">Signed in as</p>
+                    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${roleMeta.badgeClass}`}>
+                      {roleMeta.label}
+                    </span>
+                  </div>
+                  <p className="mt-1 truncate text-sm font-medium text-zinc-900">{user?.email ?? "—"}</p>
                 </div>
                 <div className="border-b border-zinc-100 px-4 py-3">
                   <p className="mb-2 text-[11px] font-medium text-zinc-500">Appearance</p>
@@ -501,14 +667,16 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                     ))}
                   </div>
                 </div>
-                <Link
-                  href="/admin/activity"
-                  onClick={() => setUserMenuOpen(false)}
-                  className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-zinc-700 transition-colors hover:bg-zinc-50"
-                >
-                  <Icon d={ICONS.activity} className="h-4 w-4 text-zinc-400" />
-                  Activity log
-                </Link>
+                {role === "super_admin" && (
+                  <Link
+                    href="/admin/activity"
+                    onClick={() => setUserMenuOpen(false)}
+                    className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-zinc-700 transition-colors hover:bg-zinc-50"
+                  >
+                    <Icon d={ICONS.activity} className="h-4 w-4 text-zinc-400" />
+                    Activity log
+                  </Link>
+                )}
                 <button
                   type="button"
                   onClick={() => void handleLogout()}
@@ -540,6 +708,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         onClose={() => setPaletteOpen(false)}
         onNavigate={go}
         badges={badges}
+        role={role}
         theme={theme}
         onSetTheme={setTheme}
         onSignOut={() => void handleLogout()}

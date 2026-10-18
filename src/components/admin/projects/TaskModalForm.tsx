@@ -6,6 +6,7 @@ import { TaskRow, Worker, parseDate, getAssigneeIds, SubtaskItem, sanitizeSubtas
 import { TASK_DEPARTMENTS } from "@/lib/admin/constants";
 import ModalPortal from "@/components/admin/ui/ModalPortal";
 import LinkifiedText from "@/components/admin/ui/LinkifiedText";
+import RichDescriptionEditor from "@/components/admin/ui/RichDescriptionEditor";
 
 interface Props {
   initialTask?: TaskRow | null;
@@ -13,6 +14,7 @@ interface Props {
   projectName?: string;
   prefillStatus?: string;
   prefillPriority?: string;
+  prefillStartDate?: string;
   prefillDueDate?: string;
   workers: Worker[];
   onClose: () => void;
@@ -22,6 +24,7 @@ interface Props {
     department: string;
     priority: string;
     status: string;
+    startDate: string;
     dueDate: string;
     photo: string;
     workerIds: string[];
@@ -35,11 +38,21 @@ export default function TaskModalForm({
   projectName,
   prefillStatus = "assigned",
   prefillPriority = "medium",
+  prefillStartDate = "",
   prefillDueDate = "",
   workers,
   onClose,
   onSubmit,
 }: Props) {
+  const initialStartDate = initialTask?.startDate
+    ? (() => {
+        const d = parseDate(initialTask.startDate);
+        if (!d) return "";
+        const pad = (n: number) => n.toString().padStart(2, "0");
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      })()
+    : prefillStartDate;
+
   const initialDueDate = initialTask?.dueDate
     ? (() => {
         const d = parseDate(initialTask.dueDate);
@@ -54,6 +67,7 @@ export default function TaskModalForm({
   const [department, setDepartment] = useState(initialTask?.department || "general");
   const [priority, setPriority] = useState(initialTask?.priority || prefillPriority);
   const [status, setStatus] = useState(initialTask?.status || prefillStatus);
+  const [startDate, setStartDate] = useState(initialStartDate);
   const [dueDate, setDueDate] = useState(initialDueDate);
   const [photo, setPhoto] = useState(initialTask?.photo || "");
   const [workerIds, setWorkerIds] = useState<string[]>(
@@ -109,6 +123,7 @@ export default function TaskModalForm({
         department,
         priority,
         status,
+        startDate,
         dueDate,
         photo: photo.trim(),
         workerIds,
@@ -172,15 +187,12 @@ export default function TaskModalForm({
 
           <div>
             <label className="block text-[10px] font-bold uppercase text-zinc-600 mb-1">
-              Description *
+              Description (Headlines, Paragraphs &amp; Colors) *
             </label>
-            <textarea
-              required
-              rows={3}
+            <RichDescriptionEditor
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={setDescription}
               placeholder="Full directive scope, safety requirements, equipment needed..."
-              className="w-full px-3 py-2 bg-white border border-zinc-300 rounded text-xs text-zinc-950 focus:outline-none focus:border-red-600 font-mono resize-y"
             />
           </div>
 
@@ -285,7 +297,49 @@ export default function TaskModalForm({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[10px] font-bold uppercase text-zinc-600 mb-1">
+                Start Date
+              </label>
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="w-full px-2.5 py-1.5 bg-white border border-zinc-300 rounded text-xs text-zinc-950 font-mono"
+              />
+              <div className="flex flex-wrap items-center gap-1 mt-1">
+                {[
+                  { label: "Today", offset: 0 },
+                  { label: "Tmrw", offset: 1 },
+                  { label: "+3d", offset: 3 },
+                ].map((p) => (
+                  <button
+                    key={p.label}
+                    type="button"
+                    onClick={() => {
+                      const d = new Date();
+                      d.setDate(d.getDate() + p.offset);
+                      const pad = (n: number) => n.toString().padStart(2, "0");
+                      setStartDate(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
+                    }}
+                    className="px-1.5 py-0.5 rounded bg-zinc-100 hover:bg-zinc-200 text-[9px] font-bold text-zinc-700 cursor-pointer"
+                  >
+                    {p.label}
+                  </button>
+                ))}
+                {startDate && (
+                  <button
+                    type="button"
+                    onClick={() => setStartDate("")}
+                    className="px-1.5 py-0.5 rounded text-[9px] font-bold text-zinc-400 hover:text-red-600 cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            </div>
+
             <div>
               <label className="block text-[10px] font-bold uppercase text-zinc-600 mb-1">
                 Due Date
@@ -296,20 +350,57 @@ export default function TaskModalForm({
                 onChange={(e) => setDueDate(e.target.value)}
                 className="w-full px-2.5 py-1.5 bg-white border border-zinc-300 rounded text-xs text-zinc-950 font-mono"
               />
+              <div className="flex flex-wrap items-center gap-1 mt-1">
+                {[
+                  { label: "Today", offset: 0 },
+                  { label: "Tmrw", offset: 1 },
+                  { label: "+3d", offset: 3 },
+                  { label: "+1w", offset: 7 },
+                ].map((p) => (
+                  <button
+                    key={p.label}
+                    type="button"
+                    onClick={() => {
+                      const d = new Date();
+                      d.setDate(d.getDate() + p.offset);
+                      const pad = (n: number) => n.toString().padStart(2, "0");
+                      setDueDate(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
+                    }}
+                    className="px-1.5 py-0.5 rounded bg-zinc-100 hover:bg-zinc-200 text-[9px] font-bold text-zinc-700 cursor-pointer"
+                  >
+                    {p.label}
+                  </button>
+                ))}
+                {dueDate && (
+                  <button
+                    type="button"
+                    onClick={() => setDueDate("")}
+                    className="px-1.5 py-0.5 rounded text-[9px] font-bold text-zinc-400 hover:text-red-600 cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
             </div>
+          </div>
 
-            <div>
-              <label className="block text-[10px] font-bold uppercase text-zinc-600 mb-1">
-                Photo URL (Optional)
-              </label>
-              <input
-                type="text"
-                value={photo}
-                onChange={(e) => setPhoto(e.target.value)}
-                placeholder="https://..."
-                className="w-full px-2.5 py-1.5 bg-white border border-zinc-300 rounded text-xs text-zinc-950 font-mono"
-              />
-            </div>
+          {startDate && dueDate && startDate > dueDate && (
+            <p className="text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded px-2.5 py-1.5">
+              ⚠️ Start date ({startDate}) is after the due date ({dueDate}).
+            </p>
+          )}
+
+          <div>
+            <label className="block text-[10px] font-bold uppercase text-zinc-600 mb-1">
+              Photo URL (Optional)
+            </label>
+            <input
+              type="text"
+              value={photo}
+              onChange={(e) => setPhoto(e.target.value)}
+              placeholder="https://..."
+              className="w-full px-2.5 py-1.5 bg-white border border-zinc-300 rounded text-xs text-zinc-950 font-mono"
+            />
           </div>
 
           {/* Subtasks / Checklist Builder */}

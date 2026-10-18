@@ -8,6 +8,9 @@ import {
   updateDoc,
   serverTimestamp,
   getDocs,
+  getDoc,
+  query,
+  where,
   writeBatch,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
@@ -18,6 +21,12 @@ import {
   type HolidayItem,
   type PayrollAdjustment,
 } from "./hrReports";
+import type {
+  PermissionLedgerEntry,
+  ReimbursementFlag,
+  ReimbursementStage,
+  ReimbursementType,
+} from "./hrPolicy2026";
 
 export interface PayrollCycleRecord {
   id: string; // e.g. "cycle_2026-09-21_2026-10-20"
@@ -277,3 +286,251 @@ export async function excuseWorkerAbsence(payload: {
   });
   return docRef.id;
 }
+
+/* ═══════════════════════════ HR-POL-2026 data ═══════════════════════════ */
+
+export type PermissionLedgerDoc = PermissionLedgerEntry & {
+  id: string;
+  workerName?: string;
+  createdAt?: { toDate: () => Date } | null;
+  reversedAt?: { toDate: () => Date } | null;
+  reversedBy?: string;
+};
+
+/** Live `permissionLedger` entries (all workers). Filter by date range on the client. */
+export function subscribePermissionLedger(callback: (rows: PermissionLedgerDoc[]) => void): () => void {
+  return onSnapshot(
+    collection(db, "permissionLedger"),
+    (snap) => {
+      const list: PermissionLedgerDoc[] = [];
+      snap.forEach((d) => list.push({ id: d.id, ...d.data() } as PermissionLedgerDoc));
+      list.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+      callback(list);
+    },
+    (err) => {
+      console.warn("Error subscribing to permissionLedger:", err);
+      callback([]);
+    },
+  );
+}
+
+/** Admin reversal of a permission (restores the worker's quota). */
+export async function reversePermission(id: string, adminEmail = "admin"): Promise<void> {
+  await updateDoc(doc(db, "permissionLedger", id), {
+    status: "reversed",
+    reversedAt: serverTimestamp(),
+    reversedBy: adminEmail,
+  });
+}
+
+/** Re-applies a previously reversed permission. */
+export async function reapplyPermission(id: string, adminEmail = "admin"): Promise<void> {
+  await updateDoc(doc(db, "permissionLedger", id), {
+    status: "applied",
+    reappliedAt: serverTimestamp(),
+    reappliedBy: adminEmail,
+  });
+}
+
+export interface ApprovedRequestRow {
+  id: string;
+  workerId: string;
+  type: string;
+  exceptionDate: string;
+  lateMinutes?: number | null;
+  leaveDays?: number | null;
+  status: string;
+}
+
+/** Approved overtime + annual-leave requests (used by payroll and leave balances). */
+export function subscribeApprovedPolicyRequests(callback: (rows: ApprovedRequestRow[]) => void): () => void {
+  const q = query(collection(db, "exceptionRequests"), where("status", "==", "approved"));
+  return onSnapshot(
+    q,
+    (snap) => {
+      const list: ApprovedRequestRow[] = [];
+      snap.forEach((d) => {
+        const data = d.data();
+        if (data.type === "overtime" || data.type === "annual_leave") {
+          list.push({ id: d.id, ...data } as ApprovedRequestRow);
+        }
+      });
+      callback(list);
+    },
+    (err) => {
+      console.warn("Error subscribing to approved requests:", err);
+      callback([]);
+    },
+  );
+}
+
+export type ReimbursementDoc = {
+  id: string;
+  workerId: string;
+  workerName?: string;
+  workerEmail?: string;
+  type: ReimbursementType;
+  stage: ReimbursementStage;
+  purpose: string;
+  date: string;
+  routeFrom?: string;
+  routeTo?: string;
+  /** Outdoor: final ride price. Purchase: estimated amount from the quote. */
+  amount: number;
+  quoteLink?: string | null;
+  approvedAmount?: number | null;
+  invoiceAmount?: number | null;
+  attachmentIds?: string[];
+  attachmentKinds?: string[];
+  imageHashes?: string[];
+  checklist?: Record<string, boolean>;
+  flags?: ReimbursementFlag[];
+  adminNote?: string;
+  overrideReason?: string;
+  payrollAdjustmentId?: string | null;
+  createdAt?: { toDate: () => Date } | null;
+  updatedAt?: { toDate: () => Date } | null;
+  reviewedAt?: { toDate: () => Date } | null;
+  reviewedBy?: string;
+};
+
+export type ReimbursementAttachmentDoc = {
+  id: string;
+  reimbursementId: string;
+  workerId: string;
+  kind: "ride_screenshot" | "quote" | "proforma" | "invoice";
+  dataUrl: string;
+  sha256: string;
+  width?: number;
+  height?: number;
+  bytes?: number;
+  fileName?: string;
+};
+
+export function subscribeReimbursements(callback: (rows: ReimbursementDoc[]) => void): () => void {
+  return onSnapshot(
+    collection(db, "reimbursements"),
+    (snap) => {
+      const list: ReimbursementDoc[] = [];
+      snap.forEach((d) => list.push({ id: d.id, ...d.data() } as ReimbursementDoc));
+      list.sort(
+        (a, b) => (b.createdAt?.toDate?.()?.getTime() ?? 0) - (a.createdAt?.toDate?.()?.getTime() ?? 0),
+      );
+      callback(list);
+    },
+    (err) => {
+      console.warn("Error subscribing to reimbursements:", err);
+      callback([]);
+    },
+  );
+}
+
+/** Loads the (heavy) image attachments of one reimbursement on demand. */
+export async function loadReimbursementAttachments(r: ReimbursementDoc): Promise<ReimbursementAttachmentDoc[]> {
+  const ids = r.attachmentIds ?? [];
+  const out: ReimbursementAttachmentDoc[] = [];
+  for (const id of ids) {
+    try {
+      const snap = await getDoc(doc(db, "reimbursementAttachments", id));
+      if (snap.exists()) out.push({ id: snap.id, ...snap.data() } as ReimbursementAttachmentDoc);
+    } catch (e) {
+      console.warn("attachment load failed", id, e);
+    }
+  }
+  return out;
+}
+
+/** Purchase stage 1: approve the quote and lock the approved amount. */
+export async function approveReimbursementQuote(
+  r: ReimbursementDoc,
+  approvedAmount: number,
+  note: string,
+  adminEmail = "admin",
+): Promise<void> {
+  await updateDoc(doc(db, "reimbursements", r.id), {
+    stage: "pending_invoice",
+    approvedAmount,
+    adminNote: note || "",
+    preApprovedAt: serverTimestamp(),
+    preApprovedBy: adminEmail,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/**
+ * Final approval: records a payroll allowance (source = "reimbursement") so it
+ * appears on the worker's monthly payslip, then marks the claim approved.
+ */
+export async function approveReimbursementFinal(
+  r: ReimbursementDoc,
+  payload: { amount: number; note: string; checklist: Record<string, boolean>; overrideReason?: string },
+  adminEmail = "admin",
+): Promise<string> {
+  const label = r.type === "outdoor" ? "مأمورية خارجية" : "مشتريات";
+  const adjRef = await addDoc(collection(db, "payrollAdjustments"), {
+    workerId: r.workerId,
+    workerName: r.workerName || "",
+    type: "allowance",
+    amount: payload.amount,
+    date: new Date().toISOString().split("T")[0],
+    reason: `[${label}] ${r.purpose}${r.type === "outdoor" && r.routeFrom ? ` (${r.routeFrom} → ${r.routeTo})` : ""}`,
+    status: "applied",
+    source: "reimbursement",
+    reimbursementId: r.id,
+    createdAt: serverTimestamp(),
+    createdBy: adminEmail,
+  });
+  await updateDoc(doc(db, "reimbursements", r.id), {
+    stage: "approved",
+    approvedAmount: r.type === "outdoor" ? payload.amount : r.approvedAmount ?? payload.amount,
+    paidAmount: payload.amount,
+    checklist: payload.checklist,
+    adminNote: payload.note || "",
+    overrideReason: payload.overrideReason || "",
+    payrollAdjustmentId: adjRef.id,
+    reviewedAt: serverTimestamp(),
+    reviewedBy: adminEmail,
+    updatedAt: serverTimestamp(),
+  });
+  return adjRef.id;
+}
+
+export async function rejectReimbursement(r: ReimbursementDoc, note: string, adminEmail = "admin"): Promise<void> {
+  await updateDoc(doc(db, "reimbursements", r.id), {
+    stage: "rejected",
+    adminNote: note || "",
+    reviewedAt: serverTimestamp(),
+    reviewedBy: adminEmail,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/** Updates HR-POL-2026 contract, joining date, compensation, and leave onboarding fields on a worker profile. */
+export async function saveWorkerLeaveProfile(
+  workerId: string,
+  data: {
+    hireDate?: string | null;
+    attendanceStartDate?: string | null;
+    priorUsedLeaveDays?: number;
+    carriedOverLeaveDays?: number;
+    carryOverApprovedBy?: string;
+    hourlyRate?: number;
+    expectedSalary?: number | string | null;
+    status?: "approved" | "pending" | "rejected";
+  },
+): Promise<void> {
+  await updateDoc(doc(db, "workers", workerId), { ...data, leaveProfileUpdatedAt: serverTimestamp() });
+}
+
+/** Bulk-sets the MFT system attendance start date for existing workers migrating onto the new platform. */
+export async function bulkSetSystemStartDate(workerIds: string[], attendanceStartDate: string): Promise<void> {
+  await Promise.all(
+    workerIds.map((id) =>
+      updateDoc(doc(db, "workers", id), {
+        attendanceStartDate,
+        leaveProfileUpdatedAt: serverTimestamp(),
+      }),
+    ),
+  );
+}
+

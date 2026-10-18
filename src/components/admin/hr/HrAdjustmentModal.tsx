@@ -101,7 +101,7 @@ export default function HrAdjustmentModal({
           <div className="flex items-start justify-between pb-3 border-b-2 border-zinc-900 dark:border-zinc-700 mb-5">
             <div>
               <span className="text-[10px] font-bold uppercase tracking-widest text-red-600 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 px-2 py-0.5 rounded font-mono">
-                // PAYROLL ADJUSTMENT
+                {"// PAYROLL ADJUSTMENT"}
               </span>
               <h3 className="text-xl font-bold font-heading uppercase tracking-wide text-zinc-950 dark:text-white mt-1">
                 Record Advance, Allowance or Bonus
@@ -145,16 +145,16 @@ export default function HrAdjustmentModal({
                 Adjustment Type * (نوع العملية)
               </label>
               <div className="grid grid-cols-2 gap-2">
-                {[
+                {([
                   { id: "advance", label: "Salary Advance (سلفة)", desc: "Deducted from monthly net pay", color: "border-red-600 text-red-600" },
                   { id: "allowance", label: "Allowance (بدل)", desc: "Added to monthly gross pay", color: "border-emerald-600 text-emerald-600" },
                   { id: "bonus", label: "Exceptional Bonus (مكافأة)", desc: "Added to earnings", color: "border-blue-600 text-blue-600" },
                   { id: "deduction", label: "Disciplinary Deduction (خصم)", desc: "Subtracted from earnings", color: "border-zinc-900 text-zinc-900" },
-                ].map((item) => (
+                ] as const).map((item) => (
                   <button
                     key={item.id}
                     type="button"
-                    onClick={() => setType(item.id as any)}
+                    onClick={() => setType(item.id)}
                     className={`p-2.5 rounded border text-left cursor-pointer transition-all ${
                       type === item.id
                         ? "border-red-600 bg-red-50 dark:bg-red-950/40 ring-2 ring-red-600/20 font-bold"

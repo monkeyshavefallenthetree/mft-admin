@@ -24,6 +24,7 @@ import { getAuth } from "firebase/auth";
 import { TASK_DEPARTMENTS } from "@/lib/admin/constants";
 import ModalPortal from "@/components/admin/ui/ModalPortal";
 import LinkifiedText from "@/components/admin/ui/LinkifiedText";
+import RichDescriptionEditor from "@/components/admin/ui/RichDescriptionEditor";
 
 interface Props {
   task: TaskRow;
@@ -481,11 +482,10 @@ export default function TaskDetailDrawer({
 
               {isEditingDesc ? (
                 <div className="space-y-2">
-                  <textarea
-                    rows={5}
+                  <RichDescriptionEditor
                     value={descDraft}
-                    onChange={(e) => setDescDraft(e.target.value)}
-                    className="w-full text-xs font-mono p-3 border-2 border-zinc-900 rounded bg-zinc-50 focus:bg-white focus:outline-none"
+                    onChange={setDescDraft}
+                    placeholder="Write directive description with headlines, paragraphs, and colors..."
                   />
                   <div className="flex items-center gap-2 justify-end">
                     <button
@@ -911,6 +911,32 @@ export default function TaskDetailDrawer({
             {/* Tab 3: Timeline & Schedule Details */}
             {activeTab === "details" && (
               <div className="p-4 space-y-4 overflow-y-auto flex-1 text-xs font-mono">
+                {/* Start Date Picker */}
+                <div>
+                  <label className="text-[10px] font-bold uppercase text-zinc-500 block mb-1">
+                    Directive Start Date
+                  </label>
+                  <input
+                    type="date"
+                    value={
+                      task.startDate
+                        ? (() => {
+                            const d = parseDate(task.startDate);
+                            if (!d) return "";
+                            const pad = (n: number) => n.toString().padStart(2, "0");
+                            return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+                          })()
+                        : ""
+                    }
+                    onChange={(e) => {
+                      onUpdateTask({
+                        startDate: e.target.value ? new Date(e.target.value) : null,
+                      });
+                    }}
+                    className="w-full p-2 bg-white border border-zinc-300 rounded font-mono text-xs"
+                  />
+                </div>
+
                 {/* Due Date Picker */}
                 <div>
                   <label className="text-[10px] font-bold uppercase text-zinc-500 block mb-1">

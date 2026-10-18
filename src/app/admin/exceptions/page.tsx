@@ -7,9 +7,14 @@ import { downloadCsv } from "@/lib/admin/csv";
 import { useUrlState } from "@/lib/admin/useUrlState";
 import { toast, confirmDialog } from "@/lib/admin/feedback";
 import { logActivity } from "@/lib/admin/activity";
+import { sendExpoPushToWorkers } from "@/lib/chatNotifications";
 import { BulkBar, BulkButton, EmptyState, PageHeader, SkeletonRows, STATE_ICONS } from "@/components/admin/ui/States";
 import { ICONS } from "@/lib/admin/nav";
 import ModalPortal from "@/components/admin/ui/ModalPortal";
+import ExceptionPolicyInsight, { checkAnnualLeave, type InsightWorker } from "@/components/admin/hr/ExceptionPolicyInsight";
+import { policyConfigFromSettings } from "@/lib/admin/hrPolicy2026";
+import { DEFAULT_HR_SETTINGS, type HrSettings } from "@/lib/admin/hrReports";
+import { subscribeHrSettings } from "@/lib/admin/hrSettings";
 
 interface ExceptionRequest {
   id: string;
@@ -18,6 +23,7 @@ interface ExceptionRequest {
   workerEmail?: string;
   type?: string;
   lateMinutes?: number;
+  leaveDays?: number;
   requestedAmount?: number;
   exceptionDate?: string;
   reason?: string;
@@ -89,6 +95,22 @@ export default function AdminExceptionsPage() {
 
   const [responseModal, setResponseModal] = useState<{ ids: string[]; workerName: string; mode: "reject" | "response" } | null>(null);
   const [modalText, setModalText] = useState("");
+  const [workersById, setWorkersById] = useState<Map<string, InsightWorker>>(new Map());
+  const [hrSettings, setHrSettings] = useState<HrSettings>(DEFAULT_HR_SETTINGS);
+  const policyCfg = useMemo(() => policyConfigFromSettings(hrSettings), [hrSettings]);
+
+  useEffect(() => subscribeHrSettings(setHrSettings), []);
+  useEffect(() => {
+    return onSnapshot(
+      collection(db, "workers"),
+      (snap) => {
+        const m = new Map<string, InsightWorker>();
+        snap.forEach((d) => m.set(d.id, { id: d.id, ...d.data() } as InsightWorker));
+        setWorkersById(m);
+      },
+      () => setWorkersById(new Map()),
+    );
+  }, []);
 
   useEffect(() => {
     return onSnapshot(
@@ -174,7 +196,23 @@ export default function AdminExceptionsPage() {
 
   const byId = (id: string) => items.find((i) => i.id === id);
 
-  const approve = async (ids: string[]) => {
+  const approve = async (requestedIds: string[]) => {
+    // HR-POL-2026: annual leave cannot be approved during probation or beyond the accrued balance.
+    const blocked: string[] = [];
+    const ids = requestedIds.filter((id) => {
+      const e = byId(id);
+      if (e?.type !== "annual_leave" || !e.workerId) return true;
+      const res = checkAnnualLeave(e, workersById.get(e.workerId), items, policyCfg, hrSettings.policy2026EffectiveFrom);
+      if (res && !res.verdict.ok) {
+        blocked.push(`${e.workerName ?? "Worker"}: ${res.verdict.reasonAr}`);
+        return false;
+      }
+      return true;
+    });
+    if (blocked.length) {
+      toast.warning(`${blocked.length} annual-leave request(s) blocked by HR-POL-2026`, { description: blocked.join("\n") });
+    }
+    if (!ids.length) return;
     setBusy(true);
     try {
       const batch = writeBatch(db);
@@ -183,6 +221,14 @@ export default function AdminExceptionsPage() {
       ids.forEach((id) => {
         const e = byId(id);
         void logActivity({ action: "approved", entity: "exception", entityId: id, label: `${formatExceptionType(e?.type)} · ${e?.workerName ?? "worker"}`, detail: e?.exceptionDate });
+        if (e?.workerId) {
+          void sendExpoPushToWorkers(db, {
+            recipientUids: [e.workerId],
+            title: `${formatExceptionType(e.type)} Approved ✓`,
+            body: e.adminResponse || `Your request for ${e.exceptionDate ?? "today"} has been approved.`,
+            tab: "exceptions",
+          });
+        }
         // Automatically sync salary advances to payroll adjustments
         if (e?.type === "advance_request" && e.workerId && Number(e.requestedAmount) > 0) {
           void addDoc(collection(db, "payrollAdjustments"), {
@@ -233,14 +279,32 @@ export default function AdminExceptionsPage() {
         responseModal.ids.forEach((id) => {
           const x = byId(id);
           void logActivity({ action: "rejected", entity: "exception", entityId: id, label: `${formatExceptionType(x?.type)} · ${x?.workerName ?? "worker"}`, detail: modalText.trim() || undefined });
+          if (x?.workerId) {
+            void sendExpoPushToWorkers(db, {
+              recipientUids: [x.workerId],
+              title: `${formatExceptionType(x.type)} Rejected`,
+              body: modalText.trim() || `Your request for ${x.exceptionDate ?? "today"} was not approved.`,
+              tab: "exceptions",
+              urgent: true,
+            });
+          }
         });
         toast.success(responseModal.ids.length === 1 ? "Request rejected" : `${responseModal.ids.length} requests rejected`);
         setSelected(new Set());
       } else {
         if (!modalText.trim()) return;
         const id = responseModal.ids[0];
+        const x = byId(id);
         await updateDoc(doc(db, "exceptionRequests", id), { adminResponse: modalText.trim(), responseAt: serverTimestamp(), responseBy: adminId() });
         void logActivity({ action: "updated", entity: "exception", entityId: id, label: `Response to ${responseModal.workerName}`, detail: modalText.trim().slice(0, 120) });
+        if (x?.workerId) {
+          void sendExpoPushToWorkers(db, {
+            recipientUids: [x.workerId],
+            title: `HR Note on ${formatExceptionType(x.type)}`,
+            body: modalText.trim(),
+            tab: "exceptions",
+          });
+        }
         toast.success("Response saved", { description: "The worker can now see your note." });
       }
       setResponseModal(null);
@@ -454,6 +518,7 @@ export default function AdminExceptionsPage() {
                         {formatExceptionType(e.type)}
                         {e.type === "late" && e.lateMinutes != null ? ` · ${e.lateMinutes} min` : ""}
                         {e.type === "overtime" && e.lateMinutes != null ? ` · +${e.lateMinutes} min` : ""}
+                        {e.type === "annual_leave" ? ` · ${Number(e.leaveDays) > 0 ? e.leaveDays : 1}d` : ""}
                         {e.type === "advance_request" && e.requestedAmount != null ? ` · $${e.requestedAmount}` : ""}
                       </span>
                       <span className={`rounded-md border px-2 py-0.5 text-[11px] font-semibold capitalize ${STATUS_STYLE[st] ?? STATUS_STYLE.pending}`}>{st}</span>
@@ -463,6 +528,15 @@ export default function AdminExceptionsPage() {
                     </p>
 
                     <p className="mt-3 whitespace-pre-wrap rounded-lg bg-zinc-50 px-3 py-2.5 text-[13px] leading-relaxed text-zinc-800">{e.reason || <span className="italic text-zinc-400">No written reason provided</span>}</p>
+
+                    <ExceptionPolicyInsight
+                      req={e}
+                      worker={e.workerId ? workersById.get(e.workerId) : undefined}
+                      all={items}
+                      cfg={policyCfg}
+                      defaultHourlyRate={hrSettings.defaultHourlyRate || 31.25}
+                      policyEffectiveFrom={hrSettings.policy2026EffectiveFrom}
+                    />
 
                     {e.supportingEvidence && (
                       <div className="mt-2 text-xs">

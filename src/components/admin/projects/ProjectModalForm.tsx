@@ -1,13 +1,15 @@
 "use client";
 
 import { toast } from "@/lib/admin/feedback";
-import { useState } from "react";
-import { Project } from "./types";
+import { useState, useMemo } from "react";
+import { Project, Worker } from "./types";
 import { PROJECT_TYPES, PROJECT_STATUSES } from "@/lib/admin/constants";
 import ModalPortal from "@/components/admin/ui/ModalPortal";
+import RichDescriptionEditor from "@/components/admin/ui/RichDescriptionEditor";
 
 interface Props {
   initialProject?: Project | null;
+  workers?: Worker[];
   onClose: () => void;
   onSubmit: (formData: {
     name: string;
@@ -17,11 +19,14 @@ interface Props {
     status: string;
     startDate: string;
     endDate: string;
+    memberIds: string[];
+    initialChatMessage?: string;
   }) => Promise<void>;
 }
 
 export default function ProjectModalForm({
   initialProject,
+  workers = [],
   onClose,
   onSubmit,
 }: Props) {
@@ -34,11 +39,37 @@ export default function ProjectModalForm({
   const [status, setStatus] = useState(initialProject?.status || "active");
   const [startDate, setStartDate] = useState(initialProject?.startDate || "");
   const [endDate, setEndDate] = useState(initialProject?.endDate || "");
+  const [memberIds, setMemberIds] = useState<string[]>(
+    Array.isArray(initialProject?.memberIds) ? initialProject!.memberIds! : []
+  );
+  const [initialChatMessage, setInitialChatMessage] = useState("");
+  const [workerSearch, setWorkerSearch] = useState("");
   const [saving, setSaving] = useState(false);
+
+  const approvedWorkers = useMemo(
+    () => workers.filter((w) => !w.status || w.status === "approved"),
+    [workers]
+  );
+
+  const filteredWorkers = useMemo(() => {
+    const q = workerSearch.trim().toLowerCase();
+    if (!q) return approvedWorkers;
+    return approvedWorkers.filter((w) => {
+      const full = `${w.firstName || ""} ${w.lastName || ""}`.toLowerCase();
+      const role = (w.role || "").toLowerCase();
+      return full.includes(q) || role.includes(q);
+    });
+  }, [approvedWorkers, workerSearch]);
 
   const toggleType = (val: string) => {
     setProjectTypes((prev) =>
       prev.includes(val) ? prev.filter((x) => x !== val) : [...prev, val]
+    );
+  };
+
+  const toggleMember = (id: string) => {
+    setMemberIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
     );
   };
 
@@ -63,6 +94,8 @@ export default function ProjectModalForm({
         status,
         startDate,
         endDate,
+        memberIds,
+        initialChatMessage: initialChatMessage.trim() || undefined,
       });
       onClose();
     } catch {
@@ -84,7 +117,7 @@ export default function ProjectModalForm({
         >
           <div className="mb-5 pb-3 border-b-2 border-zinc-900 dark:border-zinc-700 flex items-center justify-between">
             <h3 className="text-xl font-oswald text-red-600 uppercase tracking-wider font-bold">
-              {initialProject ? "// EDIT PROJECT" : "// CREATE NEW PROJECT"}
+              {initialProject ? "// EDIT PROJECT & GROUP CHAT" : "// CREATE NEW PROJECT + GROUP CHAT"}
             </h3>
             <button
               type="button"
@@ -125,15 +158,12 @@ export default function ProjectModalForm({
 
             <div>
               <label className="block text-[10px] font-bold uppercase text-zinc-600 dark:text-zinc-400 mb-1">
-                Description *
+                Description (Headlines, Paragraphs &amp; Colors) *
               </label>
-              <textarea
-                required
-                rows={3}
+              <RichDescriptionEditor
                 value={description}
-                onChange={(e) => setDescription(e.target.value)}
+                onChange={setDescription}
                 placeholder="Project overview, goals, constraints..."
-                className="w-full px-3 py-2 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded text-xs text-zinc-950 dark:text-zinc-100 focus:outline-none focus:border-red-600 font-mono resize-y"
               />
             </div>
 
@@ -157,6 +187,81 @@ export default function ProjectModalForm({
                   </label>
                 ))}
               </div>
+            </div>
+
+            {/* Project Group Chat Members */}
+            <div className="border-2 border-zinc-900 dark:border-zinc-700 rounded-lg p-3 bg-zinc-50 dark:bg-zinc-800/40 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-[10px] font-bold uppercase text-red-600">
+                    💬 Project Group Chat Members ({memberIds.length})
+                  </p>
+                  <p className="text-[10px] text-zinc-500">
+                    Connected to this project · Task assignees are also added automatically
+                  </p>
+                </div>
+                {memberIds.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setMemberIds([])}
+                    className="text-[10px] font-bold text-zinc-500 hover:text-red-600 underline cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+
+              {approvedWorkers.length > 0 && (
+                <>
+                  <input
+                    type="text"
+                    value={workerSearch}
+                    onChange={(e) => setWorkerSearch(e.target.value)}
+                    placeholder="Filter team members..."
+                    className="w-full px-2.5 py-1.5 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded text-xs text-zinc-900 dark:text-zinc-100"
+                  />
+                  <div className="max-h-32 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 gap-1.5 pr-1">
+                    {filteredWorkers.map((w) => {
+                      const checked = memberIds.includes(w.id);
+                      return (
+                        <label
+                          key={w.id}
+                          className={`flex items-center gap-2 px-2 py-1.5 rounded border text-[11px] cursor-pointer transition-colors ${
+                            checked
+                              ? "bg-red-50 border-red-400 text-red-900 font-bold"
+                              : "bg-white border-zinc-200 text-zinc-800 hover:border-zinc-400"
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleMember(w.id)}
+                            className="accent-red-600"
+                          />
+                          <span className="truncate">
+                            {w.firstName} {w.lastName}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+
+              {!initialProject && (
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-zinc-600 dark:text-zinc-400 mb-1">
+                    Kickoff Group Chat Message (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={initialChatMessage}
+                    onChange={(e) => setInitialChatMessage(e.target.value)}
+                    placeholder="e.g. Welcome team! Let's align on deliverables here."
+                    className="w-full px-2.5 py-1.5 bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded text-xs text-zinc-950 dark:text-zinc-100"
+                  />
+                </div>
+              )}
             </div>
 
             <div>
@@ -216,7 +321,7 @@ export default function ProjectModalForm({
                 disabled={saving}
                 className="flex-1 py-2 bg-red-600 hover:bg-red-700 text-white font-bold uppercase rounded border-2 border-red-700 transition-colors cursor-pointer shadow-xs disabled:opacity-50"
               >
-                {saving ? "Saving..." : initialProject ? "Save Project" : "Create Project"}
+                {saving ? "Saving..." : initialProject ? "Save Project" : "Create Project & Chat"}
               </button>
             </div>
           </form>

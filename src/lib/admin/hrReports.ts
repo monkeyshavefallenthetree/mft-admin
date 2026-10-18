@@ -1,8 +1,20 @@
 import { sessionHours, type SessionLike } from "@/lib/admin/workTime";
+import {
+  POLICY_2026_SETTINGS_DEFAULTS,
+  type Policy2026SettingsFields,
+  type PermissionLedgerEntry,
+  type CycleUsage,
+  evaluateClockIn,
+  evaluateEarlyLeave,
+  isPolicy2026Active,
+  payableOvertimeForDay,
+  policyConfigFromSettings,
+  requiredShiftEnd,
+} from "@/lib/admin/hrPolicy2026";
 
 export type HrDateRangeKey = "today" | "week" | "month" | "quarter" | "year" | "cycle" | "custom";
 
-export interface HrSettings {
+export interface HrSettings extends Policy2026SettingsFields {
   monthStartDay: number; // 1-28 (e.g. 21 for 21st to 20th cycle, 1 for calendar month)
   weekendDays: number[]; // [5, 6] (default: Friday, Saturday in Egypt)
   standardHours: number; // 8
@@ -24,6 +36,8 @@ export const DEFAULT_HR_SETTINGS: HrSettings = {
   defaultHourlyRate: 31.25,
   overtimeMultiplier: 1.5,
   absencePenaltyMultiplier: 2,
+  // HR-POL-2026 (off until enabled from the Policies modal)
+  ...POLICY_2026_SETTINGS_DEFAULTS,
 };
 
 export const WORK_POLICY = {
@@ -57,6 +71,9 @@ export interface PayrollAdjustment {
   date: string; // YYYY-MM-DD
   reason: string;
   status?: "pending" | "applied" | "cancelled";
+  /** e.g. "reimbursement" when created by the reimbursement approval flow. */
+  source?: string;
+  reimbursementId?: string;
   createdAt?: unknown;
   createdBy?: string;
 }
@@ -66,6 +83,8 @@ export type SessionForHr = SessionLike & {
   workerId?: string;
   date?: string;
   loginTime?: { toDate: () => Date } | null;
+  startTime?: { toDate: () => Date } | null;
+  logoutTime?: { toDate: () => Date } | null;
   createdAt?: { toDate: () => Date } | null;
   totalWorkTime?: number;
 };
@@ -271,20 +290,22 @@ export function calculateAttendancePolicy(session: SessionForHr, settings: Parti
   const graceMins = settings.gracePeriodMinutes ?? 60;
   const secondMins = settings.secondThresholdMinutes ?? 120;
 
-  const threshold1 = shiftStart + graceMins / 60;
-  const threshold2 = shiftStart + secondMins / 60;
+  // Whole-minute comparison (HR-POL-2026 clause 1): 11:00:59 is on time, 11:01 is late.
+  const shiftStartMin = Math.round(shiftStart * 60);
+  const threshold1 = shiftStartMin + graceMins;
+  const threshold2 = shiftStartMin + secondMins;
 
   const loginTime = session.loginTime.toDate();
-  const loginTimeDecimal = loginTime.getHours() + loginTime.getMinutes() / 60;
+  const loginMin = loginTime.getHours() * 60 + loginTime.getMinutes();
   let isLate = false;
   let latePenalty = 0;
   let attendanceStatus: "on-time" | "late" | "very-late" = "on-time";
 
-  if (loginTimeDecimal >= threshold2) {
+  if (loginMin > threshold2) {
     isLate = true;
     latePenalty = WORK_POLICY.LATE_PENALTY_2; // 0.5 day
     attendanceStatus = "very-late";
-  } else if (loginTimeDecimal >= threshold1) {
+  } else if (loginMin > threshold1) {
     isLate = true;
     latePenalty = WORK_POLICY.LATE_PENALTY_1; // 0.25 day
     attendanceStatus = "late";
@@ -352,12 +373,70 @@ export type PayrollComputed = {
   veryLateDays: number;
   totalLatePenaltyEgp: number;
   salaryAdvances: number; // سلف
-  allowances: number; // بدلات
+  allowances: number; // بدلات (includes approved reimbursements)
   manualBonuses: number; // مكافآت
   manualDeductions: number; // خصومات
   netPayable: number;
   totalPay: number; // Backward compatibility alias
+  // ── HR-POL-2026 breakdown (0 when the policy does not apply) ──
+  policyApplied: boolean;
+  /** Overtime paid under the legacy flat multiplier (sessions before the effective date). */
+  legacyOvertimePay: number;
+  otDayHours: number;
+  otNightHours: number;
+  otDayPay: number;
+  otNightPay: number;
+  nightAllowance: number;
+  /** Worked overtime minutes that were not covered by an approved request (unpaid). */
+  unapprovedOtMinutes: number;
+  permissionsUsed: number;
+  permissionMinutesUsed: number;
+  coveredLateCount: number;
+  uncoveredLateCount: number;
+  /** Early-leave minutes not covered by a permission. Unpaid (excluded from base pay). */
+  shortfallMinutes: number;
+  /** Always 0 under HR-POL-2026: unpaid minutes are already excluded from base pay. Kept for compatibility. */
+  shortfallDeduction: number;
+  reimbursements: number;
 };
+
+export interface ApprovedOvertimeItem {
+  date: string; // YYYY-MM-DD
+  minutes: number;
+}
+
+function toJsDate(v: unknown): Date | null {
+  if (!v) return null;
+  if (v instanceof Date) return v;
+  const t = v as { toDate?: () => Date };
+  if (typeof t.toDate === "function") return t.toDate();
+  if (typeof v === "string" || typeof v === "number") {
+    const d = new Date(v);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  return null;
+}
+
+function holidayDateSet(holidays: (string | HolidayItem)[] | undefined): Set<string> {
+  const set = new Set<string>();
+  for (const h of holidays ?? []) {
+    if (typeof h === "string") {
+      set.add(h);
+      continue;
+    }
+    if (!h.endDate || h.endDate === h.date) {
+      set.add(h.date);
+      continue;
+    }
+    const cur = new Date(h.date + "T12:00:00");
+    const endD = new Date(h.endDate + "T12:00:00");
+    while (cur <= endD) {
+      set.add(cur.toISOString().split("T")[0]);
+      cur.setDate(cur.getDate() + 1);
+    }
+  }
+  return set;
+}
 
 export function computePayrollForWorker(
   workerSessions: SessionForHr[],
@@ -369,49 +448,211 @@ export function computePayrollForWorker(
     holidays?: (string | HolidayItem)[];
     settings?: HrSettings;
     adjustments?: PayrollAdjustment[];
+    /** HR-POL-2026: this worker's `permissionLedger` entries (any status) for the period. */
+    permissionLedger?: PermissionLedgerEntry[];
+    /** HR-POL-2026: approved overtime requests (exceptionRequests type=overtime, status=approved). */
+    approvedOvertime?: ApprovedOvertimeItem[];
+    /**
+     * Effective YYYY-MM-DD from which MFT counts expected workdays for this worker
+     * (`worker.attendanceStartDate || worker.hireDate || createdAt`). Prevents false
+     * absence penalties for days before the worker joined or onboarded onto MFT.
+     */
+    workerStartDate?: string | null;
+    /** Approved annual leave / excused days in this period (subtracted from absentDays). */
+    approvedLeaveDays?: number;
+    /** When true, do not count future days after today as absent in an in-progress cycle. */
+    capAtToday?: boolean;
   },
 ): PayrollComputed {
   const cfg = options?.settings ?? DEFAULT_HR_SETTINGS;
   const hr = hourlyRate > 0 ? hourlyRate : cfg.defaultHourlyRate || DEFAULT_HOURLY;
+  const std = cfg.standardHours || WORK_POLICY.STANDARD_HOURS;
   const daysWorked = workerSessions.length;
   const totalHours = workerSessions.reduce((sum, s) => sum + sessionHours(s), 0);
 
-  const overtimeHours = workerSessions.reduce((sum, s) => {
+  const pcfg = policyConfigFromSettings(cfg);
+  const weekend = cfg.weekendDays ?? [5, 6];
+  const holidaySet = holidayDateSet(options?.holidays);
+  const ledger = options?.permissionLedger ?? [];
+  const otByDate = new Map<string, number>();
+  for (const o of options?.approvedOvertime ?? []) {
+    if (!o.date || !(o.minutes > 0)) continue;
+    otByDate.set(o.date, (otByDate.get(o.date) ?? 0) + o.minutes);
+  }
+  const ledgerFor = (date: string, kind: "late" | "early_leave") =>
+    ledger.find((e) => e.date === date && e.kind === kind && e.status === "applied");
+
+  let basePay = 0;
+  let overtimeHours = 0;
+  let legacyOvertimePay = 0;
+  let lateDays = 0;
+  let veryLateDays = 0;
+  let totalLatePenaltyDays = 0;
+
+  let policyApplied = false;
+  let otDayMin = 0;
+  let otNightMin = 0;
+  let otDayPay = 0;
+  let otNightPay = 0;
+  let nightAllowance = 0;
+  let unapprovedOtMinutes = 0;
+  let coveredLateCount = 0;
+  let uncoveredLateCount = 0;
+  let shortfallMinutes = 0;
+  // Permission quota consumed this period, re-verified from attendance (not from browser-written numbers).
+  let runningUsage: CycleUsage = { count: 0, minutes: 0 };
+  // Admin "manual" permissions still consume quota, in date order.
+  const manualEntries = ledger
+    .filter((e) => e.kind === "manual" && e.status === "applied" && e.covered)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  let manualIdx = 0;
+  const consumeManualUpTo = (date: string) => {
+    while (manualIdx < manualEntries.length && manualEntries[manualIdx]!.date <= date) {
+      const m = manualEntries[manualIdx]!;
+      runningUsage = { count: runningUsage.count + 1, minutes: runningUsage.minutes + (m.chargedMinutes || 0) };
+      manualIdx++;
+    }
+  };
+  /** Legacy tier penalty (0.25 / 0.5 day) for a late clock-in, regardless of quota. */
+  const fallbackDaysFor = (firstIn: Date) =>
+    evaluateClockIn(firstIn, { count: pcfg.permissionMaxCount, minutes: 0 }, pcfg).fallbackPenaltyDays;
+
+  const sorted = [...workerSessions].sort((a, b) =>
+    (sessionDateYmd(a) ?? "").localeCompare(sessionDateYmd(b) ?? ""),
+  );
+
+  for (const s of sorted) {
     const h = sessionHours(s);
-    return sum + Math.max(0, h - (cfg.standardHours || WORK_POLICY.STANDARD_HOURS));
-  }, 0);
+    const date = sessionDateYmd(s) ?? "";
 
-  const basePay = totalHours * hr;
-  const overtimePay = overtimeHours * hr * (cfg.overtimeMultiplier || WORK_POLICY.OVERTIME_MULTIPLIER);
+    if (!isPolicy2026Active(cfg, date)) {
+      // ── Legacy maths (kept unchanged for already-closed cycles) ──
+      basePay += h * hr;
+      const ot = Math.max(0, h - std);
+      overtimeHours += ot;
+      legacyOvertimePay += ot * hr * (cfg.overtimeMultiplier || WORK_POLICY.OVERTIME_MULTIPLIER);
+      const policy = calculateAttendancePolicy(s, cfg);
+      if (policy.attendanceStatus === "late") {
+        lateDays++;
+        totalLatePenaltyDays += policy.latePenalty;
+      } else if (policy.attendanceStatus === "very-late") {
+        veryLateDays++;
+        totalLatePenaltyDays += policy.latePenalty;
+      }
+      continue;
+    }
 
-  // Expected workdays excluding rest days and public holidays
-  const expectedWorkDays = getExpectedWorkDaysInPeriod(periodStart, periodEnd, {
-    weekendDays: cfg.weekendDays,
-    holidays: options?.holidays,
-  });
+    // ── HR-POL-2026 ──
+    policyApplied = true;
+    consumeManualUpTo(date);
+    const d = new Date(date + "T12:00:00");
+    const isOffDay = weekend.includes(d.getDay()) || holidaySet.has(date);
+    const firstIn = toJsDate(s.startTime) ?? toJsDate(s.loginTime);
+    const lastOut = s.isActive ? null : toJsDate(s.logoutTime);
+    const workedMin = Math.round(h * 60);
 
-  const absentDays = Math.max(0, expectedWorkDays - daysWorked);
+    // Off-day work is paid only through approved overtime (clause 4: prior assignment required).
+    if (!isOffDay) {
+      // Minutes covered by a permission are paid time (capped at the standard day).
+      let permissionPaidMin = 0;
+
+      if (firstIn) {
+        // Lateness: minutes & quota come from attendance; the ledger only records the worker's
+        // choice (use a permission vs. accept the salary deduction). No entry → use a permission if possible.
+        const ev = evaluateClockIn(firstIn, runningUsage, pcfg);
+        if (ev.status !== "on-time") {
+          const lateEntry = ledgerFor(date, "late");
+          const wantsPermission = lateEntry ? lateEntry.covered : true;
+          if (wantsPermission && ev.status === "late-covered") {
+            coveredLateCount++;
+            runningUsage = ev.usageAfter;
+            permissionPaidMin += ev.lateMinutes;
+          } else {
+            const days = ev.status === "late-uncovered" ? ev.fallbackPenaltyDays : fallbackDaysFor(firstIn);
+            uncoveredLateCount++;
+            totalLatePenaltyDays += days;
+            if (days >= 0.5) veryLateDays++;
+            else lateDays++;
+          }
+        }
+
+        // Early leave: covered → those minutes are paid; uncovered → simply unpaid (no extra deduction).
+        if (lastOut) {
+          const reqEnd = requiredShiftEnd(firstIn, pcfg);
+          const el = evaluateEarlyLeave(lastOut, reqEnd, runningUsage, pcfg);
+          if (el.isEarly) {
+            if (ledgerFor(date, "early_leave")?.covered && el.canUsePermission) {
+              runningUsage = { count: runningUsage.count + 1, minutes: runningUsage.minutes + el.chargedMinutes };
+              permissionPaidMin += el.remainingMinutes;
+            } else {
+              shortfallMinutes += el.remainingMinutes;
+            }
+          }
+        }
+      }
+
+      basePay += (Math.min(std * 60, workedMin + permissionPaidMin) / 60) * hr;
+    }
+
+    // Overtime → only approved minutes, split day 1.35x / night 1.70x.
+    if (firstIn) {
+      const approvedMin = otByDate.get(date) ?? 0;
+      const ot = payableOvertimeForDay({
+        firstClockIn: firstIn,
+        lastClockOut: lastOut,
+        workedMinutes: workedMin,
+        approvedMinutes: approvedMin,
+        isOffDay,
+        hourlyRate: hr,
+        cfg: pcfg,
+      });
+      otDayMin += ot.dayMinutes;
+      otNightMin += ot.nightMinutes;
+      otDayPay += ot.dayPay;
+      otNightPay += ot.nightPay;
+      nightAllowance += ot.nightAllowance;
+      unapprovedOtMinutes += Math.max(0, ot.actualMinutes - ot.totalMinutes);
+      overtimeHours += ot.totalMinutes / 60;
+    }
+  }
+  consumeManualUpTo("9999-12-31");
+
+  const overtimePay = legacyOvertimePay + otDayPay + otNightPay + nightAllowance;
+  // Unpaid early-leave minutes are already excluded from base pay, so nothing more is deducted.
+  const shortfallDeduction = 0;
+
+  const permissionsUsed = runningUsage.count;
+  const permissionMinutesUsed = runningUsage.minutes;
+
+  // Expected workdays excluding rest days, public holidays, days before worker onboarding, and future days
+  let effStart = periodStart;
+  if (options?.workerStartDate) {
+    const ws = new Date(options.workerStartDate + "T00:00:00");
+    if (!isNaN(ws.getTime()) && ws > effStart) effStart = ws;
+  }
+  let effEnd = periodEnd;
+  if (options?.capAtToday) {
+    const endToday = new Date();
+    endToday.setHours(23, 59, 59, 999);
+    if (endToday < effEnd) effEnd = endToday;
+  }
+
+  const expectedWorkDays =
+    effStart <= effEnd
+      ? getExpectedWorkDaysInPeriod(effStart, effEnd, {
+          weekendDays: cfg.weekendDays,
+          holidays: options?.holidays,
+        })
+      : 0;
+
+  const excusedLeave = Math.max(0, Math.round(options?.approvedLeaveDays ?? 0));
+  const absentDays = Math.max(0, expectedWorkDays - daysWorked - excusedLeave);
   let absencePenalty = 0;
   if (absentDays > 0) {
     const mult = cfg.absencePenaltyMultiplier || 2;
     const penaltyDays = absentDays * mult;
     const penaltyHours = penaltyDays * (cfg.standardHours || 8);
     absencePenalty = penaltyHours * hr;
-  }
-
-  let lateDays = 0;
-  let veryLateDays = 0;
-  let totalLatePenaltyDays = 0;
-
-  for (const s of workerSessions) {
-    const policy = calculateAttendancePolicy(s, cfg);
-    if (policy.attendanceStatus === "late") {
-      lateDays++;
-      totalLatePenaltyDays += policy.latePenalty;
-    } else if (policy.attendanceStatus === "very-late") {
-      veryLateDays++;
-      totalLatePenaltyDays += policy.latePenalty;
-    }
   }
 
   const totalLatePenaltyEgp = totalLatePenaltyDays * (cfg.standardHours || 8) * hr;
@@ -421,13 +662,16 @@ export function computePayrollForWorker(
   let allowances = 0;
   let manualBonuses = 0;
   let manualDeductions = 0;
+  let reimbursements = 0;
 
   if (options?.adjustments && options.adjustments.length > 0) {
     for (const adj of options.adjustments) {
+      if (adj.status === "cancelled") continue;
       if (adj.type === "advance") {
         salaryAdvances += adj.amount;
       } else if (adj.type === "allowance") {
         allowances += adj.amount;
+        if (adj.source === "reimbursement") reimbursements += adj.amount;
       } else if (adj.type === "bonus") {
         manualBonuses += adj.amount;
       } else if (adj.type === "deduction") {
@@ -438,7 +682,7 @@ export function computePayrollForWorker(
 
   // Net payable calculation
   const grossPay = basePay + overtimePay + allowances + manualBonuses;
-  const totalDeductions = absencePenalty + totalLatePenaltyEgp + salaryAdvances + manualDeductions;
+  const totalDeductions = absencePenalty + totalLatePenaltyEgp + shortfallDeduction + salaryAdvances + manualDeductions;
   const netPayable = Math.round(grossPay - totalDeductions);
 
   return {
@@ -460,16 +704,31 @@ export function computePayrollForWorker(
     manualDeductions: Math.round(manualDeductions),
     netPayable,
     totalPay: netPayable,
+    policyApplied,
+    legacyOvertimePay: Math.round(legacyOvertimePay),
+    otDayHours: Math.round((otDayMin / 60) * 100) / 100,
+    otNightHours: Math.round((otNightMin / 60) * 100) / 100,
+    otDayPay: Math.round(otDayPay),
+    otNightPay: Math.round(otNightPay),
+    nightAllowance: Math.round(nightAllowance),
+    unapprovedOtMinutes,
+    permissionsUsed,
+    permissionMinutesUsed,
+    coveredLateCount,
+    uncoveredLateCount,
+    shortfallMinutes,
+    shortfallDeduction: Math.round(shortfallDeduction),
+    reimbursements: Math.round(reimbursements),
   };
 }
 
 export function isLateTodayHtml(session: SessionForHr, settings: Partial<HrSettings> = DEFAULT_HR_SETTINGS): boolean {
   if (!session.loginTime?.toDate) return false;
   const login = session.loginTime.toDate();
-  const hour = login.getHours() + login.getMinutes() / 60;
-  const shiftStart = parseHourStringToDecimal(settings.shiftStartTime, 10);
+  const loginMin = login.getHours() * 60 + login.getMinutes();
+  const shiftStartMin = Math.round(parseHourStringToDecimal(settings.shiftStartTime, 10) * 60);
   const graceMins = settings.gracePeriodMinutes ?? 60;
-  return hour >= shiftStart + graceMins / 60;
+  return loginMin > shiftStartMin + graceMins;
 }
 
 /** Pre-defined Egyptian Public & Statutory Holidays Template */

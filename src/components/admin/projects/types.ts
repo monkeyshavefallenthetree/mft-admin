@@ -7,6 +7,10 @@ export interface Project {
   status: string;
   startDate?: string | null;
   endDate?: string | null;
+  memberIds?: string[];
+  lastMessageAt?: { toDate: () => Date } | any;
+  lastMessageText?: string;
+  lastMessageSender?: string;
   createdAt?: { toDate: () => Date } | any;
   updatedAt?: { toDate: () => Date } | any;
 }
@@ -62,6 +66,7 @@ export interface TaskRow {
   assignedWorkerName?: string;
   priority: string;
   status: string;
+  startDate?: { toDate?: () => Date } | Date | string | null;
   dueDate?: { toDate?: () => Date } | Date | string | null;
   createdAt?: { toDate?: () => Date } | Date | string | null;
   updatedAt?: { toDate?: () => Date } | Date | string | null;
@@ -77,7 +82,7 @@ export interface TaskRow {
   tags?: string[];
 }
 
-export type ProjectViewMode = "list" | "board" | "calendar" | "overview";
+export type ProjectViewMode = "list" | "board" | "calendar" | "chat" | "overview";
 export type HubViewMode = "grid" | "table";
 
 export type StatusCategory = "assigned" | "in-progress" | "pending-approval" | "completed";
@@ -155,6 +160,21 @@ export function getAssigneeIds(assignedTo: string | string[] | undefined | null)
   if (Array.isArray(assignedTo)) return assignedTo.filter(Boolean);
   if (typeof assignedTo === "string") return [assignedTo];
   return [];
+}
+
+export function getProjectMemberIds(project: Project, projectTasks: TaskRow[]): string[] {
+  const set = new Set<string>();
+  if (Array.isArray(project.memberIds)) {
+    for (const id of project.memberIds) {
+      if (id) set.add(id);
+    }
+  }
+  for (const t of projectTasks) {
+    for (const id of getAssigneeIds(t.assignedTo)) {
+      if (id) set.add(id);
+    }
+  }
+  return Array.from(set);
 }
 
 export function parseDate(val: unknown): Date | null {

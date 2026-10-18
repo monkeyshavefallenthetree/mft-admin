@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ALL_NAV_ITEMS, FILTERED_LINKS, ICONS, type NavItem } from "@/lib/admin/nav";
+import { FILTERED_LINKS, ICONS, getNavItemsForRole, type AdminRole, type NavItem } from "@/lib/admin/nav";
 import type { AdminBadges } from "@/lib/admin/useAdminBadges";
 import type { ThemePref } from "@/lib/admin/theme";
 
@@ -10,6 +10,7 @@ interface Props {
   onClose: () => void;
   onNavigate: (href: string) => void;
   badges: AdminBadges;
+  role: AdminRole;
   theme: ThemePref;
   onSetTheme: (t: ThemePref) => void;
   onSignOut: () => void;
@@ -34,13 +35,17 @@ const SUN = "M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.
 const MOON = "M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z";
 const MONITOR = "M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z";
 
-export default function CommandPalette({ open, onClose, onNavigate, badges, theme, onSetTheme, onSignOut, onToggleSidebar }: Props) {
+export default function CommandPalette({ open, onClose, onNavigate, badges, role, theme, onSetTheme, onSignOut, onToggleSidebar }: Props) {
   const [q, setQ] = useState("");
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
 
   const commands: Command[] = useMemo(() => {
+    const canOps = role === "super_admin" || role === "ops_admin";
+    const canHr = role === "super_admin" || role === "hr_admin";
+    const navItems = getNavItemsForRole(role);
+
     const nav = (href: string) => () => {
       onNavigate(href);
       onClose();
@@ -56,22 +61,43 @@ export default function CommandPalette({ open, onClose, onNavigate, badges, them
     };
 
     const attention: Command[] = [
-      { id: "att-approvals", label: "Review task approvals", hint: "Tasks submitted by workers", icon: "M5 13l4 4L19 7", count: badges.pendingApprovals, run: nav(FILTERED_LINKS.pendingApprovals) },
-      { id: "att-workers", label: "Approve new workers", hint: "Registrations awaiting approval", icon: ICONS.workers, count: badges.pendingWorkers, run: nav(FILTERED_LINKS.pendingWorkers) },
-      { id: "att-exceptions", label: "Decide exception requests", hint: "Late arrival, absence & overtime", icon: ICONS.exceptions, count: badges.pendingExceptions, run: nav(FILTERED_LINKS.pendingExceptions) },
-      { id: "att-subs", label: "Contact new leads", hint: "New client submissions", icon: ICONS.submissions, count: badges.newSubmissions, run: nav(FILTERED_LINKS.newSubmissions) },
-      { id: "att-chats", label: "Read unread task messages", hint: "Project chats", icon: ICONS.projects, count: badges.unreadChats, run: nav(FILTERED_LINKS.unreadChats) },
+      ...(canOps
+        ? [
+            { id: "att-approvals", label: "Review task approvals", hint: "Tasks submitted by workers", icon: "M5 13l4 4L19 7", count: badges.pendingApprovals, run: nav(FILTERED_LINKS.pendingApprovals) },
+            { id: "att-subs", label: "Contact new leads", hint: "New client submissions", icon: ICONS.submissions, count: badges.newSubmissions, run: nav(FILTERED_LINKS.newSubmissions) },
+            { id: "att-chats", label: "Read unread task messages", hint: "Project chats", icon: ICONS.projects, count: badges.unreadChats, run: nav(FILTERED_LINKS.unreadChats) },
+          ]
+        : []),
+      ...(canHr
+        ? [
+            { id: "att-workers", label: "Approve new workers", hint: "Registrations awaiting approval", icon: ICONS.workers, count: badges.pendingWorkers, run: nav(FILTERED_LINKS.pendingWorkers) },
+            { id: "att-exceptions", label: "Decide exception requests", hint: "Late arrival, absence & overtime", icon: ICONS.exceptions, count: badges.pendingExceptions, run: nav(FILTERED_LINKS.pendingExceptions) },
+            { id: "att-reimb", label: "Review reimbursement claims", hint: "Outdoor missions & purchases", icon: ICONS.reimbursements, count: badges.pendingReimbursements, run: nav(FILTERED_LINKS.pendingReimbursements) },
+          ]
+        : []),
     ]
       .filter((c) => c.count > 0)
       .map((c) => ({ ...c, group: "Needs attention" as Group, keywords: "pending inbox todo" }));
 
+    const actions: Command[] = [
+      ...(canOps
+        ? [
+            { id: "new-project", group: "Actions" as Group, label: "Create new project", hint: "Projects → New project", icon: "M12 4v16m8-8H4", keywords: "add", run: nav("/admin/projects?new=1") },
+            { id: "tasks-progress", group: "Actions" as Group, label: "View tasks in progress", hint: "Tasks → In progress", icon: ICONS.tasks, keywords: "active working", run: nav("/admin/tasks?status=in-progress") },
+          ]
+        : []),
+      ...(canHr
+        ? [
+            { id: "workers-online", group: "Actions" as Group, label: "Who's online now", hint: "Workers → Online only", icon: ICONS.workers, keywords: "active team", run: nav("/admin/workers?online=1") },
+            { id: "reports", group: "Actions" as Group, label: "Export a report", hint: "Payroll, attendance & delivery (CSV/PDF)", icon: ICONS.reports, keywords: "csv pdf payroll", run: nav("/admin/reports") },
+          ]
+        : []),
+    ];
+
     return [
       ...attention,
-      { id: "new-project", group: "Actions", label: "Create new project", hint: "Projects → New project", icon: "M12 4v16m8-8H4", keywords: "add", run: nav("/admin/projects?new=1") },
-      { id: "tasks-progress", group: "Actions", label: "View tasks in progress", hint: "Tasks → In progress", icon: ICONS.tasks, keywords: "active working", run: nav("/admin/tasks?status=in-progress") },
-      { id: "workers-online", group: "Actions", label: "Who's online now", hint: "Workers → Online only", icon: ICONS.workers, keywords: "active team", run: nav("/admin/workers?online=1") },
-      { id: "reports", group: "Actions", label: "Export a report", hint: "Payroll, attendance & delivery (CSV/PDF)", icon: ICONS.reports, keywords: "csv pdf payroll", run: nav("/admin/reports") },
-      ...ALL_NAV_ITEMS.map((i) => ({
+      ...actions,
+      ...navItems.map((i) => ({
         id: `nav-${i.href}`,
         group: "Go to" as Group,
         label: i.label,
@@ -95,7 +121,7 @@ export default function CommandPalette({ open, onClose, onNavigate, badges, them
       { id: "sidebar", group: "Preferences", label: "Toggle sidebar", hint: "Collapse or expand navigation", icon: "M4 6h16M4 12h16M4 18h7", keywords: "collapse expand", run: act(onToggleSidebar) },
       { id: "sign-out", group: "Preferences", label: "Sign out", hint: "End your admin session", icon: "M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1", keywords: "logout log out", run: act(onSignOut) },
     ];
-  }, [badges, theme, onNavigate, onClose, onSetTheme, onSignOut, onToggleSidebar]);
+  }, [badges, role, theme, onNavigate, onClose, onSetTheme, onSignOut, onToggleSidebar]);
 
   const filtered = useMemo(() => {
     const terms = q.trim().toLowerCase().split(/\s+/).filter(Boolean);

@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { Project, ProjectViewMode, TaskRow, Worker, STATUS_CONFIG } from "./types";
+import LinkifiedText from "@/components/admin/ui/LinkifiedText";
 
 interface Props {
   project: Project;
@@ -9,6 +10,7 @@ interface Props {
   tasks: TaskRow[];
   workers: Worker[];
   viewMode: ProjectViewMode;
+  unreadChatCount?: number;
   onSelectViewMode: (mode: ProjectViewMode) => void;
   onBackToProjects: () => void;
   onSelectProject: (projectId: string) => void;
@@ -24,6 +26,7 @@ export default function ProjectHeaderBar({
   tasks,
   workers,
   viewMode,
+  unreadChatCount = 0,
   onSelectViewMode,
   onBackToProjects,
   onSelectProject,
@@ -296,9 +299,9 @@ export default function ProjectHeaderBar({
 
             {/* Description */}
             {project.description && (
-              <p className="text-xs text-zinc-600 leading-relaxed max-w-3xl pt-1 line-clamp-2">
-                {project.description}
-              </p>
+              <div className="text-xs text-zinc-600 leading-relaxed max-w-3xl pt-1">
+                <LinkifiedText text={project.description} />
+              </div>
             )}
           </div>
 
@@ -378,6 +381,16 @@ export default function ProjectHeaderBar({
                 count: null,
               },
               {
+                id: "chat" as const,
+                label: "Group Chat",
+                icon: (
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a1.994 1.994 0 01-1.414-.586m0 0L11 14h4a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2v4l.586-.586z" />
+                  </svg>
+                ),
+                count: unreadChatCount > 0 ? unreadChatCount : null,
+              },
+              {
                 id: "overview" as const,
                 label: "Overview",
                 icon: (
@@ -390,6 +403,7 @@ export default function ProjectHeaderBar({
             ] as const
           ).map((tab) => {
             const isActive = viewMode === tab.id;
+            const isChatUnread = tab.id === "chat" && unreadChatCount > 0;
             return (
               <button
                 key={tab.id}
@@ -398,6 +412,8 @@ export default function ProjectHeaderBar({
                 className={`flex items-center gap-2 px-3.5 py-2 text-xs font-bold uppercase tracking-wider rounded-md transition-all cursor-pointer ${
                   isActive
                     ? "bg-zinc-950 text-white shadow-xs"
+                    : isChatUnread
+                    ? "bg-red-50 text-red-700 border border-red-300 hover:bg-red-100"
                     : "text-zinc-600 hover:text-zinc-950 hover:bg-zinc-200/60"
                 }`}
               >
@@ -406,7 +422,11 @@ export default function ProjectHeaderBar({
                 {tab.count !== null && (
                   <span
                     className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
-                      isActive ? "bg-zinc-800 text-zinc-300" : "bg-zinc-200 text-zinc-700"
+                      isChatUnread
+                        ? "bg-red-600 text-white animate-pulse"
+                        : isActive
+                        ? "bg-zinc-800 text-zinc-300"
+                        : "bg-zinc-200 text-zinc-700"
                     }`}
                   >
                     {tab.count}

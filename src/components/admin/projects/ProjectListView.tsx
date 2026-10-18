@@ -8,7 +8,9 @@ import {
   PRIORITY_CONFIG,
   getAssigneeIds,
   formatSmartDate,
+  parseDate,
 } from "./types";
+import { stripRichHtml } from "@/components/admin/ui/LinkifiedText";
 
 interface Props {
   tasks: TaskRow[];
@@ -271,7 +273,7 @@ export default function ProjectListView({
 
                             {task.description && (
                               <p className="text-[11px] text-zinc-500 truncate max-w-md mt-0.5 font-mono">
-                                {task.description}
+                                {stripRichHtml(task.description)}
                               </p>
                             )}
                           </div>
@@ -305,10 +307,16 @@ export default function ProjectListView({
                           )}
                         </div>
 
-                        {/* Due Date */}
-                        <div className="col-span-6 sm:col-span-2 flex items-center gap-1">
+                        {/* Start / Due Date */}
+                        <div className="col-span-6 sm:col-span-2 flex flex-col items-start gap-1">
+                          {task.startDate && parseDate(task.startDate) && (
+                            <span className="text-[10px] font-mono text-zinc-600 bg-zinc-100 border border-zinc-200 px-1.5 py-0.2 rounded inline-flex items-center gap-1">
+                              <span>▶</span>
+                              <span>Start: {parseDate(task.startDate)!.toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+                            </span>
+                          )}
                           {smartDate.label === "No date" ? (
-                            <span className="text-[11px] text-zinc-400 font-mono italic">—</span>
+                            !task.startDate && <span className="text-[11px] text-zinc-400 font-mono italic">—</span>
                           ) : (
                             <span
                               className={`text-[11px] font-mono font-bold px-2 py-0.5 rounded border inline-flex items-center gap-1 ${

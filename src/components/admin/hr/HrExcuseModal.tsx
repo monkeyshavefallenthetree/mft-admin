@@ -82,7 +82,7 @@ export default function HrExcuseModal({ worker, date, adminEmail, onClose, onExc
           <div className="flex items-start justify-between pb-3 border-b-2 border-zinc-900 dark:border-zinc-700 mb-4">
             <div>
               <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 px-2 py-0.5 rounded">
-                // EXCUSE ABSENCE
+                {"// EXCUSE ABSENCE"}
               </span>
               <h3 className="text-xl font-bold font-heading uppercase tracking-wide text-zinc-950 dark:text-white mt-1">
                 Pardon / Excuse Worker Absence

@@ -1,9 +1,23 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
+
+export const viewport: Viewport = {
+  themeColor: "#dc2626",
+};
 
 export const metadata: Metadata = {
   title: "MFT Admin — Workspace",
   description: "MFT operations workspace: projects, tasks, workers, attendance, HR, reports and client submissions.",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "MFT Admin",
+  },
+  icons: {
+    icon: "/icons/icon-192.png",
+    apple: "/icons/apple-touch-icon.png",
+  },
 };
 
 /** Applies the saved theme before first paint to avoid a light/dark flash. */

@@ -25,9 +25,11 @@ import { getAuth, onAuthStateChanged } from "firebase/auth";
 import { DEPARTMENTS } from "@/lib/admin/constants";
 import { toast, confirmDialog, promptDialog } from "@/lib/admin/feedback";
 import { logActivity } from "@/lib/admin/activity";
+import { notifyAdmins } from "@/lib/adminNotifications";
 import { useUrlState } from "@/lib/admin/useUrlState";
 import ModalPortal from "@/components/admin/ui/ModalPortal";
-import LinkifiedText from "@/components/admin/ui/LinkifiedText";
+import LinkifiedText, { stripRichHtml } from "@/components/admin/ui/LinkifiedText";
+import RichDescriptionEditor from "@/components/admin/ui/RichDescriptionEditor";
 import ProjectBoardView from "@/components/admin/projects/ProjectBoardView";
 import { SubtaskItem, TaskRow, Worker as ProjectWorker, sanitizeSubtask, sanitizeSubtasks } from "@/components/admin/projects/types";
 
@@ -48,6 +50,7 @@ interface Task {
   assignedWorkerName?: string;
   priority: string;
   status: string;
+  startDate?: { toDate?: () => Date } | Date | string | null;
   dueDate?: { toDate?: () => Date } | Date | string | null;
   createdAt?: { toDate?: () => Date } | Date | string | null;
   updatedAt?: { toDate?: () => Date } | Date | string | null;
@@ -117,35 +120,6 @@ function formatLocalDateInput(val: unknown): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-function playTerminalBeep() {
-  if (typeof window === "undefined") return;
-  try {
-    const AudioContextClass =
-      window.AudioContext ||
-      (window as Window & { webkitAudioContext?: typeof AudioContext })
-        .webkitAudioContext;
-    if (!AudioContextClass) return;
-    const ctx = new AudioContextClass();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-
-    osc.type = "square";
-    osc.frequency.setValueAtTime(880, ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.1);
-
-    gain.gain.setValueAtTime(0.1, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
-
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-
-    osc.start();
-    osc.stop(ctx.currentTime + 0.15);
-  } catch (e) {
-    console.error("Audio play failed", e);
-  }
-}
-
 type ModalMode = "create" | "edit" | null;
 type StatusFilter = "all" | "assigned" | "in-progress" | "pending-approval" | "completed";
 
@@ -160,7 +134,7 @@ export default function AdminTasksPage() {
   const [chatBusy, setChatBusy] = useState(false);
   const chatBottomRef = useRef<HTMLDivElement>(null);
   const [chatNotifications, setChatNotifications] = useState<ChatNotification[]>([]);
-  const chatNotifCountRef = useRef(0);
+  const [deepLinkTaskId, setDeepLinkTaskId] = useUrlState("task", "");
 
   // Filters & Search (mirrored to the URL so views are shareable)
   const [statusFilterRaw, setStatusFilterRaw] = useUrlState("status", "all");
@@ -200,6 +174,7 @@ export default function AdminTasksPage() {
     assignedWorkerIds: [] as string[],
     priority: "medium",
     status: "assigned",
+    startDate: "",
     dueDate: "",
     photo: "",
     notificationMessage: "",
@@ -250,6 +225,16 @@ export default function AdminTasksPage() {
       if (fresh) setDetailTask(fresh);
     }
   }, [tasks]);
+
+  // Open task detail modal when navigated via ?task=<id> from notification bell / toast / push
+  useEffect(() => {
+    if (!deepLinkTaskId || tasks.length === 0) return;
+    const match = tasks.find((t) => t.id === deepLinkTaskId);
+    if (match) {
+      setDetailTask(match);
+      setDeepLinkTaskId("");
+    }
+  }, [deepLinkTaskId, tasks, setDeepLinkTaskId]);
 
   const handleToggleDetailSubtask = async (stId: string) => {
     if (!detailTask || detailSubtaskBusy) return;
@@ -378,17 +363,13 @@ export default function AdminTasksPage() {
     }));
   };
 
-  // Subscribe to admin chat notifications (wait for auth to be ready)
+  // Subscribe to admin chat notifications for unread badges on task cards (sound & toast are handled globally by useAdminBadges)
   useEffect(() => {
     let chatUnsub: (() => void) | null = null;
     const authUnsub = onAuthStateChanged(getAuth(), (user) => {
       if (!user) return;
       chatUnsub = subscribeAdminChatNotifications(db, (notifs) => {
         setChatNotifications(notifs);
-        if (notifs.length > chatNotifCountRef.current && chatNotifCountRef.current >= 0) {
-          playTerminalBeep();
-        }
-        chatNotifCountRef.current = notifs.length;
       });
     });
     return () => {
@@ -487,6 +468,7 @@ export default function AdminTasksPage() {
       assignedWorkerIds: [],
       priority: "medium",
       status: "assigned",
+      startDate: "",
       dueDate: "",
       photo: "",
       notificationMessage: "",
@@ -500,6 +482,7 @@ export default function AdminTasksPage() {
   };
 
   const openEdit = (task: Task) => {
+    const startDateStr = formatLocalDateInput(task.startDate);
     const dueDateStr = formatLocalDateInput(task.dueDate);
     const assignedIds = assignedWorkerIds(task.assignedTo);
     setForm({
@@ -511,6 +494,7 @@ export default function AdminTasksPage() {
       assignedWorkerIds: assignedIds,
       priority: task.priority || "medium",
       status: task.status || "assigned",
+      startDate: startDateStr,
       dueDate: dueDateStr,
       photo: task.photo || "",
       notificationMessage: "",
@@ -577,6 +561,7 @@ export default function AdminTasksPage() {
           assignedWorkerName: assignedWorkerNames || "Unassigned",
           priority: form.priority,
           status: "assigned",
+          startDate: form.startDate ? new Date(form.startDate) : null,
           dueDate: form.dueDate ? new Date(form.dueDate) : null,
           subtasks: sanitizeSubtasks(form.subtasks),
           createdAt: serverTimestamp(),
@@ -610,6 +595,20 @@ export default function AdminTasksPage() {
             taskTitle: form.title,
           }).catch(() => {});
         }
+        const currentAdmin = getAuth().currentUser;
+        const actorName = currentAdmin?.displayName || currentAdmin?.email || "Admin";
+        void notifyAdmins(db, {
+          targetRoles: ["super_admin", "ops_admin"],
+          category: "task",
+          eventType: "task_created",
+          title: `📋 New Task Created: ${form.title.trim()}`,
+          body: `${actorName} assigned "${form.title.trim()}" to ${assignedWorkerNames || "Unassigned"}${projName ? ` (${projName})` : ""}.`,
+          href: `/admin/tasks?task=${encodeURIComponent(taskRef.id)}`,
+          actorUid: currentAdmin?.uid,
+          actorName,
+          taskId: taskRef.id,
+          projectId: form.projectId || undefined,
+        });
         toast.success("Task created", { description: assignedWorkerNames ? `Assigned to ${assignedWorkerNames}` : form.title.trim() });
         void logActivity({ action: "created", entity: "task", entityId: taskRef.id, label: form.title.trim(), detail: projName || undefined });
       } else if (modalMode === "edit" && editId) {
@@ -623,6 +622,7 @@ export default function AdminTasksPage() {
           assignedWorkerName: assignedWorkerNames || "Unassigned",
           priority: form.priority,
           status: form.status,
+          startDate: form.startDate ? new Date(form.startDate) : null,
           dueDate: form.dueDate ? new Date(form.dueDate) : null,
           subtasks: sanitizeSubtasks(form.subtasks),
           updatedAt: serverTimestamp(),
@@ -720,6 +720,20 @@ export default function AdminTasksPage() {
           taskTitle: task.title,
         }).catch(() => {});
       }
+      const currentAdmin = getAuth().currentUser;
+      const actorName = currentAdmin?.displayName || currentAdmin?.email || "Admin";
+      void notifyAdmins(db, {
+        targetRoles: ["super_admin", "ops_admin"],
+        category: "task",
+        eventType: "task_approved",
+        title: `✅ Task Approved: ${task.title}`,
+        body: `${actorName} approved task "${task.title}".`,
+        href: `/admin/tasks?task=${encodeURIComponent(task.id)}`,
+        actorUid: currentAdmin?.uid,
+        actorName,
+        taskId: task.id,
+        projectId: task.projectId,
+      });
     }
     toast.success("Task approved", { description: task?.title });
     void logActivity({ action: "approved", entity: "task", entityId: id, label: task?.title || id });
@@ -768,6 +782,21 @@ export default function AdminTasksPage() {
           taskTitle: task.title,
         }).catch(() => {});
       }
+      const currentAdmin = getAuth().currentUser;
+      const actorName = currentAdmin?.displayName || currentAdmin?.email || "Admin";
+      void notifyAdmins(db, {
+        targetRoles: ["super_admin", "ops_admin"],
+        category: "task",
+        eventType: "task_rejected",
+        title: `⚠️ Changes Requested: ${task.title}`,
+        body: `${actorName} requested changes on "${task.title}": ${feedback}`,
+        href: `/admin/tasks?task=${encodeURIComponent(task.id)}`,
+        actorUid: currentAdmin?.uid,
+        actorName,
+        taskId: task.id,
+        projectId: task.projectId,
+        urgent: true,
+      });
     }
     toast.warning("Changes requested", { description: task?.title });
     void logActivity({ action: "rejected", entity: "task", entityId: id, label: task?.title || id, detail: feedback });
@@ -810,6 +839,7 @@ export default function AdminTasksPage() {
       assignedWorkerIds: [],
       priority: "medium",
       status: prefill.status || "assigned",
+      startDate: "",
       dueDate: "",
       photo: "",
       notificationMessage: "",
@@ -1124,6 +1154,12 @@ export default function AdminTasksPage() {
                   </span>
                 </p>
                 <p>
+                  <span className="text-zinc-500 font-medium">Start Date:</span>{" "}
+                  <span className="font-semibold text-zinc-900">
+                    {task.startDate ? formatTaskDate(task.startDate) : "—"}
+                  </span>
+                </p>
+                <p>
                   <span className="text-zinc-500 font-medium">Deadline (Due):</span>{" "}
                   <span className="font-semibold text-zinc-900">{formatTaskDate(task.dueDate)}</span>
                 </p>
@@ -1238,12 +1274,12 @@ export default function AdminTasksPage() {
                 <span className="text-zinc-500 font-bold uppercase">Title:</span>{" "}
                 <strong className="text-zinc-950 text-sm">{detailTask.title}</strong>
               </p>
-              <p>
+              <div>
                 <span className="text-zinc-500 font-bold uppercase">Description:</span>{" "}
-                <span className="text-zinc-800 block mt-1 bg-zinc-50 p-2.5 border border-zinc-200 rounded whitespace-pre-wrap">
+                <div className="text-zinc-800 block mt-1 bg-zinc-50 p-2.5 border border-zinc-200 rounded whitespace-pre-wrap">
                   <LinkifiedText text={detailTask.description} />
-                </span>
-              </p>
+                </div>
+              </div>
               <div className="grid grid-cols-2 gap-2 pt-1">
                 <p>
                   <span className="text-zinc-500 font-bold uppercase">Project:</span>{" "}
@@ -1275,10 +1311,16 @@ export default function AdminTasksPage() {
                   </strong>
                 </p>
                 <p>
+                  <span className="text-zinc-500 font-bold uppercase">Start Date:</span>{" "}
+                  <strong className="text-zinc-900 block">
+                    {detailTask.startDate ? formatTaskDate(detailTask.startDate) : "—"}
+                  </strong>
+                </p>
+                <p>
                   <span className="text-zinc-500 font-bold uppercase">Deadline:</span>{" "}
                   <strong className="text-zinc-900 block">{formatTaskDate(detailTask.dueDate)}</strong>
                 </p>
-                <p>
+                <p className="col-span-2">
                   <span className="text-zinc-500 font-bold uppercase">Created At:</span>{" "}
                   <span className="text-zinc-600 block">{formatDateTime(detailTask.createdAt)}</span>
                 </p>
@@ -1663,15 +1705,12 @@ export default function AdminTasksPage() {
 
               <div>
                 <label className="block font-bold uppercase tracking-wider text-zinc-800 mb-1">
-                  Description &amp; Guidelines *
+                  Description &amp; Guidelines (Headlines, Paragraphs &amp; Colors) *
                 </label>
-                <textarea
-                  required
-                  rows={3}
+                <RichDescriptionEditor
                   value={form.description}
-                  onChange={(e) => setForm({ ...form, description: e.target.value })}
+                  onChange={(val) => setForm({ ...form, description: val })}
                   placeholder="Provide detailed instructions, deliverables, requirements..."
-                  className="w-full px-3 py-2.5 bg-white border-2 border-zinc-900 rounded text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-red-600 resize-y"
                 />
               </div>
 
@@ -1796,7 +1835,7 @@ export default function AdminTasksPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {modalMode === "edit" ? (
                   <div>
                     <label className="block font-bold uppercase tracking-wider text-zinc-800 mb-1">
@@ -1841,6 +1880,50 @@ export default function AdminTasksPage() {
                     <option value="urgent">Urgent / Critical</option>
                   </select>
                 </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold uppercase tracking-wider text-zinc-800 mb-1">
+                    Start Date
+                  </label>
+                  <input
+                    type="date"
+                    value={form.startDate}
+                    onChange={(e) => setForm({ ...form, startDate: e.target.value })}
+                    className="w-full px-3 py-2 bg-white border-2 border-zinc-900 rounded text-xs font-bold text-zinc-900 focus:outline-none focus:ring-2 focus:ring-red-600"
+                  />
+                  <div className="flex flex-wrap items-center gap-1 mt-1">
+                    {[
+                      { label: "Today", offset: 0 },
+                      { label: "Tmrw", offset: 1 },
+                      { label: "+3d", offset: 3 },
+                    ].map((p) => (
+                      <button
+                        key={p.label}
+                        type="button"
+                        onClick={() => {
+                          const d = new Date();
+                          d.setDate(d.getDate() + p.offset);
+                          const pad = (n: number) => n.toString().padStart(2, "0");
+                          setForm({ ...form, startDate: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` });
+                        }}
+                        className="px-1.5 py-0.5 rounded bg-zinc-100 hover:bg-zinc-200 text-[9px] font-bold text-zinc-700 cursor-pointer"
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                    {form.startDate && (
+                      <button
+                        type="button"
+                        onClick={() => setForm({ ...form, startDate: "" })}
+                        className="px-1.5 py-0.5 rounded text-[9px] font-bold text-zinc-400 hover:text-red-600 cursor-pointer"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                </div>
 
                 <div>
                   <label className="block font-bold uppercase tracking-wider text-zinc-800 mb-1">
@@ -1852,8 +1935,45 @@ export default function AdminTasksPage() {
                     onChange={(e) => setForm({ ...form, dueDate: e.target.value })}
                     className="w-full px-3 py-2 bg-white border-2 border-zinc-900 rounded text-xs font-bold text-zinc-900 focus:outline-none focus:ring-2 focus:ring-red-600"
                   />
+                  <div className="flex flex-wrap items-center gap-1 mt-1">
+                    {[
+                      { label: "Today", offset: 0 },
+                      { label: "Tmrw", offset: 1 },
+                      { label: "+3d", offset: 3 },
+                      { label: "+1w", offset: 7 },
+                    ].map((p) => (
+                      <button
+                        key={p.label}
+                        type="button"
+                        onClick={() => {
+                          const d = new Date();
+                          d.setDate(d.getDate() + p.offset);
+                          const pad = (n: number) => n.toString().padStart(2, "0");
+                          setForm({ ...form, dueDate: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` });
+                        }}
+                        className="px-1.5 py-0.5 rounded bg-zinc-100 hover:bg-zinc-200 text-[9px] font-bold text-zinc-700 cursor-pointer"
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                    {form.dueDate && (
+                      <button
+                        type="button"
+                        onClick={() => setForm({ ...form, dueDate: "" })}
+                        className="px-1.5 py-0.5 rounded text-[9px] font-bold text-zinc-400 hover:text-red-600 cursor-pointer"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
+
+              {form.startDate && form.dueDate && form.startDate > form.dueDate && (
+                <p className="text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded px-2.5 py-1.5">
+                  ⚠️ Start date ({form.startDate}) is after the deadline ({form.dueDate}).
+                </p>
+              )}
 
               <div>
                 <label className="block font-bold uppercase tracking-wider text-zinc-800 mb-1">

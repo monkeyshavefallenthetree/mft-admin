@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
+import Link from "next/link";
 import {
   collection,
   query,
@@ -18,8 +19,11 @@ import { useUrlState } from "@/lib/admin/useUrlState";
 import { toast, confirmDialog } from "@/lib/admin/feedback";
 import { logActivity } from "@/lib/admin/activity";
 import { downloadCsv } from "@/lib/admin/csv";
+import { bulkSetSystemStartDate } from "@/lib/admin/hrSettings";
+import { useHrLang } from "@/lib/admin/hrI18n";
 import { BulkBar, BulkButton, EmptyState, PageHeader, SkeletonRows, STATE_ICONS } from "@/components/admin/ui/States";
 import ModalPortal from "@/components/admin/ui/ModalPortal";
+import WorkerLeaveProfileCard from "@/components/admin/hr/WorkerLeaveProfileCard";
 
 interface WorkerTask {
   id: string;
@@ -68,6 +72,11 @@ interface Worker {
   createdAt?: { toDate: () => Date };
   lastLogin?: { toDate: () => Date };
   lastLogout?: { toDate: () => Date };
+  hireDate?: string;
+  attendanceStartDate?: string;
+  priorUsedLeaveDays?: number;
+  carriedOverLeaveDays?: number;
+  carryOverApprovedBy?: string;
 }
 
 interface ProjectOption {
@@ -142,6 +151,7 @@ export default function AdminWorkersPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [assignModalWorker, setAssignModalWorker] = useState<Worker | null>(null);
   const [detailWorker, setDetailWorker] = useState<Worker | null>(null);
+  const [onboardWorker, setOnboardWorker] = useState<Worker | null>(null);
 
   // Editing Task state
   const [editingTask, setEditingTask] = useState<WorkerTask | null>(null);
@@ -558,19 +568,56 @@ export default function AdminWorkersPage() {
     toast.success("Task assigned", { description: `"${taskForm.title}" was sent to ${assignModalWorker.firstName} ${assignModalWorker.lastName}.` });
   };
 
+  const { isAr, dir, toggleLang, t } = useHrLang();
+  const todayStr = new Date().toISOString().split("T")[0];
+
   const stats = {
     total: workers.length,
     approved: workers.filter((w) => w.status === "approved").length,
     pending: workers.filter((w) => w.status === "pending").length,
     rejected: workers.filter((w) => w.status === "rejected").length,
     online: workers.filter((w) => w.isOnline).length,
+    missingHire: workers.filter((w) => w.status === "approved" && !w.hireDate).length,
+  };
+
+  const handleBulkStartToday = async () => {
+    const approvedIds = workers.filter((w) => w.status === "approved").map((w) => w.id);
+    if (!approvedIds.length) return;
+    const ok = await confirmDialog({
+      title: t(
+        `ضبط تاريخ بدء الحساب بالنظام إلى اليوم (${todayStr})؟`,
+        `Set System Attendance Start Date to Today (${todayStr})?`,
+      ),
+      message: t(
+        `سيتم ضبط تاريخ بدء الحساب بالنظام لجميع الموظفين المعتمدين (${approvedIds.length}) إلى ${todayStr} لمنع احتساب أي غياب عن الأيام السابقة.`,
+        `This sets the MFT attendance start date to ${todayStr} for all ${approvedIds.length} approved workers so payroll will not penalize past days as absences.`,
+      ),
+      confirmLabel: t(`تطبيق على ${approvedIds.length} موظف`, `Apply to ${approvedIds.length} workers`),
+    });
+    if (!ok) return;
+    setBulkBusy(true);
+    try {
+      await bulkSetSystemStartDate(approvedIds, todayStr);
+      toast.success(
+        t(
+          `تم ضبط تاريخ بدء النظام إلى ${todayStr} لجميع الموظفين`,
+          `System start date set to ${todayStr} for all approved workers`,
+        ),
+      );
+    } catch (e) {
+      toast.error(t("فشل التحديث الجماعي", "Bulk update failed"), {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setBulkBusy(false);
+    }
   };
 
   const tabs = [
-    { key: "", label: "All", count: stats.total },
-    { key: "approved", label: "Approved", count: stats.approved },
-    { key: "pending", label: "Pending", count: stats.pending },
-    { key: "rejected", label: "Rejected", count: stats.rejected },
+    { key: "", label: t("الكل", "All"), count: stats.total },
+    { key: "approved", label: t("المعتمدون", "Approved"), count: stats.approved },
+    { key: "pending", label: t("بانتظار الموافقة", "Pending"), count: stats.pending },
+    { key: "rejected", label: t("مرفوض", "Rejected"), count: stats.rejected },
   ];
   const hasFilters = !!(searchFilter || roleFilter || departmentFilter || onlineOnly);
   const allSelected = filteredWorkers.length > 0 && filteredWorkers.every((w) => selected.has(w.id));
@@ -590,12 +637,12 @@ export default function AdminWorkersPage() {
   };
   const initialsOf = (w: Worker) => `${w.firstName?.[0] ?? ""}${w.lastName?.[0] ?? ""}`.toUpperCase() || "?";
   const relTime = (ts?: { toDate: () => Date }) => {
-    if (!ts?.toDate) return "Never";
+    if (!ts?.toDate) return t("أبدًا", "Never");
     const s = Math.floor((Date.now() - ts.toDate().getTime()) / 1000);
-    if (s < 60) return "Just now";
-    if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-    if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-    if (s < 86400 * 30) return `${Math.floor(s / 86400)}d ago`;
+    if (s < 60) return t("الآن", "Just now");
+    if (s < 3600) return `${Math.floor(s / 60)}m`;
+    if (s < 86400) return `${Math.floor(s / 3600)}h`;
+    if (s < 86400 * 30) return `${Math.floor(s / 86400)}d`;
     return ts.toDate().toLocaleDateString();
   };
   const IconBtn = ({ onClick, title, d, tone = "default", disabled }: { onClick: () => void; title: string; d: string; tone?: "default" | "success" | "danger"; disabled?: boolean }) => (
@@ -624,16 +671,32 @@ export default function AdminWorkersPage() {
   };
 
   return (
-    <div className="space-y-5 pb-24">
+    <div dir={dir} className="space-y-5 pb-24">
       <PageHeader
-        title="Workers"
-        description="Team roster, registration approvals, profiles and task assignment."
+        title={t("سجل الموظفين (Workers)", "Workers")}
+        description={t(
+          "إدارة الموظفين، اعتماد الحسابات الجديدة، ضبط تاريخ التعيين والراتب، وإسناد المهام.",
+          "Team roster, registration approvals, joining dates, hourly rates, and task assignment.",
+        )}
         actions={
           <>
+            <button
+              type="button"
+              onClick={toggleLang}
+              className="rounded-lg border-2 border-red-600 bg-red-50 px-3 py-1.5 text-xs font-bold text-red-700 hover:bg-red-600 hover:text-white cursor-pointer transition-colors"
+            >
+              🌐 {isAr ? "English (EN)" : "العربية (AR)"}
+            </button>
+            <Link
+              href="/admin/hr?tab=compliance"
+              className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-bold text-zinc-900 hover:bg-zinc-100"
+            >
+              {t("🗓️ سجل الأذونات والإجازات", "🗓️ HR Leave & Quotas")}
+            </Link>
             <div className="flex gap-1 rounded-lg bg-zinc-100 p-1">
               {[
-                ["table", "Table", "M3 10h18M3 14h18M3 6h18M3 18h18"],
-                ["cards", "Cards", "M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"],
+                ["table", t("جدول", "Table"), "M3 10h18M3 14h18M3 6h18M3 18h18"],
+                ["cards", t("بطاقات", "Cards"), "M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"],
               ].map(([k, l, d]) => (
                 <button
                   key={k}
@@ -650,23 +713,64 @@ export default function AdminWorkersPage() {
               ))}
             </div>
             <button type="button" onClick={() => exportWorkers(filteredWorkers)} disabled={!filteredWorkers.length} className="brutal-btn-outline normal-case tracking-normal disabled:opacity-50">
-              Export CSV
+              {t("تصدير CSV", "Export CSV")}
             </button>
           </>
         }
       />
 
+      {/* Existing Staff Onboarding Banner (HR-POL-2026) */}
+      {!loading && stats.approved > 0 && (
+        <div className="rounded-xl border-2 border-zinc-900 bg-white p-4 shadow-[3px_3px_0px_0px_#dc2626] flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="rounded bg-red-600 px-2 py-0.5 text-[10px] font-bold uppercase text-white">
+                HR-POL-2026
+              </span>
+              <h3 className="text-sm font-bold text-zinc-900">
+                {t(
+                  "إعداد الموظفين الحاليين والجدد (تاريخ التعيين · بدء النظام · الراتب · رصيد الإجازات)",
+                  "Worker Onboarding & Tenure Control (Joining Date · System Start · Rate · Leave)",
+                )}
+              </h3>
+            </div>
+            <p className="text-xs text-zinc-600">
+              {t(
+                `اضغط على زر «🗓️ التعيين والراتب» أمام أي موظف لتحديد تاريخ التحاقه بالشركة وأجر الساعة وتاريخ بدء الحساب بالنظام الجديد.${stats.missingHire > 0 ? ` (${stats.missingHire} موظف بحاجة لتحديد تاريخ التعيين)` : ""}`,
+                `Click "🗓️ Set Joining Date & Rate" on any worker to set their Company Joining Date, Hourly Rate, and MFT Attendance Start Date.${stats.missingHire > 0 ? ` (${stats.missingHire} worker(s) still need a joining date)` : ""}`,
+              )}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              disabled={bulkBusy}
+              onClick={() => void handleBulkStartToday()}
+              className="rounded-lg bg-emerald-600 hover:bg-emerald-700 px-3 py-2 text-xs font-bold text-white cursor-pointer disabled:opacity-50"
+            >
+              {t("⚡ ضبط بدء النظام للكل = اليوم", "⚡ Set All System Start = Today")}
+            </button>
+            <Link
+              href="/admin/hr?tab=compliance"
+              className="rounded-lg bg-zinc-900 hover:bg-zinc-800 px-3 py-2 text-xs font-bold text-white"
+            >
+              {t("فتح جدول التعديل الجماعي ←", "Bulk Edit All Dates →")}
+            </Link>
+          </div>
+        </div>
+      )}
+
       {/* Stat strip */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
         {[
-          { label: "Total workers", value: stats.total, bar: "bg-zinc-400", onClick: () => setStatusFilter("") },
-          { label: "Approved", value: stats.approved, bar: "bg-emerald-500", onClick: () => setStatusFilter("approved") },
-          { label: "Awaiting approval", value: stats.pending, bar: "bg-amber-500", onClick: () => setStatusFilter("pending") },
-          { label: "Rejected", value: stats.rejected, bar: "bg-red-500", onClick: () => setStatusFilter("rejected") },
-          { label: "Online now", value: stats.online, bar: "bg-sky-500", onClick: () => setOnlineOnly(onlineOnly ? "" : "1") },
+          { label: t("إجمالي الموظفين", "Total workers"), value: stats.total, bar: "bg-zinc-400", onClick: () => setStatusFilter("") },
+          { label: t("المعتمدون", "Approved"), value: stats.approved, bar: "bg-emerald-500", onClick: () => setStatusFilter("approved") },
+          { label: t("بانتظار الموافقة", "Awaiting approval"), value: stats.pending, bar: "bg-amber-500", onClick: () => setStatusFilter("pending") },
+          { label: t("المرفوضون", "Rejected"), value: stats.rejected, bar: "bg-red-500", onClick: () => setStatusFilter("rejected") },
+          { label: t("متصلون الآن", "Online now"), value: stats.online, bar: "bg-sky-500", onClick: () => setOnlineOnly(onlineOnly ? "" : "1") },
         ].map((s) => (
-          <button key={s.label} type="button" onClick={s.onClick} className="ui-card ui-card-hover relative overflow-hidden px-4 py-3 text-left cursor-pointer">
-            <span className={`absolute left-0 top-0 h-full w-1 ${s.bar}`} />
+          <button key={s.label} type="button" onClick={s.onClick} className="ui-card ui-card-hover relative overflow-hidden px-4 py-3 text-start cursor-pointer">
+            <span className={`absolute start-0 top-0 h-full w-1 ${s.bar}`} />
             <p className="text-[11px] font-medium text-zinc-500">{s.label}</p>
             <p className="mt-1 text-2xl font-bold tracking-tight text-zinc-900">{loading ? "–" : s.value}</p>
           </button>
@@ -682,10 +786,13 @@ export default function AdminWorkersPage() {
             </svg>
           </span>
           <p className="flex-1 text-sm text-zinc-800">
-            <span className="font-semibold">{stats.pending} new registration{stats.pending === 1 ? "" : "s"}</span> waiting for your approval.
+            <span className="font-semibold">
+              {t(`${stats.pending} طلب تسجيل جديد`, `${stats.pending} new registration${stats.pending === 1 ? "" : "s"}`)}
+            </span>{" "}
+            {t("بانتظار مراجعتك واعتماد تاريخ التعيين.", "waiting for your approval.")}
           </p>
           <button type="button" onClick={() => setStatusFilter("pending")} className="rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-amber-700 cursor-pointer">
-            Review now
+            {t("مراجعة الآن", "Review now")}
           </button>
         </div>
       )}
@@ -693,32 +800,32 @@ export default function AdminWorkersPage() {
       {/* Tabs + filters */}
       <div className="ui-card overflow-hidden">
         <div className="flex flex-wrap items-center gap-1 border-b border-zinc-100 px-3 pt-2">
-          {tabs.map((t) => (
+          {tabs.map((tab) => (
             <button
-              key={t.key || "all"}
+              key={tab.key || "all"}
               type="button"
-              id={`workers-tab-${t.key || "all"}`}
-              onClick={() => setStatusFilter(t.key)}
-              className={`relative flex items-center gap-2 px-3 pb-2.5 pt-1.5 text-[13px] font-medium transition-colors cursor-pointer ${statusFilter === t.key ? "text-zinc-900" : "text-zinc-500 hover:text-zinc-800"}`}
+              id={`workers-tab-${tab.key || "all"}`}
+              onClick={() => setStatusFilter(tab.key)}
+              className={`relative flex items-center gap-2 px-3 pb-2.5 pt-1.5 text-[13px] font-medium transition-colors cursor-pointer ${statusFilter === tab.key ? "text-zinc-900" : "text-zinc-500 hover:text-zinc-800"}`}
             >
-              {t.label}
-              <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${statusFilter === t.key ? "bg-zinc-900 text-white" : t.key === "pending" && t.count ? "bg-amber-100 text-amber-700" : "bg-zinc-100 text-zinc-600"}`}>{t.count}</span>
-              {statusFilter === t.key && <span className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-red-600" />}
+              {tab.label}
+              <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${statusFilter === tab.key ? "bg-zinc-900 text-white" : tab.key === "pending" && tab.count ? "bg-amber-100 text-amber-700" : "bg-zinc-100 text-zinc-600"}`}>{tab.count}</span>
+              {statusFilter === tab.key && <span className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-red-600" />}
             </button>
           ))}
-          <span className="ml-auto pb-2 text-[11px] text-zinc-400">
-            {filteredWorkers.length} of {workers.length} shown
+          <span className="ms-auto pb-2 text-[11px] text-zinc-400">
+            {filteredWorkers.length} / {workers.length}
           </span>
         </div>
         <div className="flex flex-col gap-2 p-3 md:flex-row md:items-center">
           <div className="relative flex-1">
-            <svg className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <svg className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d={STATE_ICONS.search} />
             </svg>
-            <input id="workers-search" value={searchFilter} onChange={(e) => setSearchFilter(e.target.value)} placeholder="Search name, email, city, skills…" className="brutal-input pl-9" />
+            <input id="workers-search" value={searchFilter} onChange={(e) => setSearchFilter(e.target.value)} placeholder={t("ابحث بالاسم أو البريد أو المدينة أو المهارات…", "Search name, email, city, skills…")} className="brutal-input ps-9" />
           </div>
           <select value={departmentFilter} onChange={(e) => setDepartmentFilter(e.target.value)} className="brutal-input md:w-44" aria-label="Department">
-            <option value="">All departments</option>
+            <option value="">{t("كل الأقسام", "All departments")}</option>
             {DEPARTMENTS.map((d) => (
               <option key={d.value} value={d.value}>
                 {d.label}
@@ -726,7 +833,7 @@ export default function AdminWorkersPage() {
             ))}
           </select>
           <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} className="brutal-input md:w-44" aria-label="Role">
-            <option value="">All roles</option>
+            <option value="">{t("كل الوظائف", "All roles")}</option>
             {uniqueRoles.map((r) => (
               <option key={r} value={r}>
                 {formatRole(r)}
@@ -735,11 +842,11 @@ export default function AdminWorkersPage() {
           </select>
           <label className="flex shrink-0 cursor-pointer items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-xs font-medium text-zinc-600">
             <input type="checkbox" className="mft-check" checked={!!onlineOnly} onChange={(e) => setOnlineOnly(e.target.checked ? "1" : "")} />
-            Online only
+            {t("المتصلون فقط", "Online only")}
           </label>
           {hasFilters && (
             <button type="button" onClick={clearWorkerFilters} className="px-2 text-xs font-medium text-zinc-500 hover:text-zinc-900 cursor-pointer">
-              Reset
+              {t("إعادة ضبط", "Reset")}
             </button>
           )}
         </div>
@@ -812,15 +919,15 @@ export default function AdminWorkersPage() {
                 <div className="mt-4 grid grid-cols-3 gap-2 rounded-lg bg-zinc-50 p-2.5 text-center">
                   <div>
                     <p className="text-sm font-semibold text-zinc-900">{tc.open}</p>
-                    <p className="text-[10px] text-zinc-500">Open tasks</p>
+                    <p className="text-[10px] text-zinc-500">{t("مهام مفتوحة", "Open tasks")}</p>
                   </div>
                   <div>
                     <p className="text-sm font-semibold text-emerald-600">{tc.done}</p>
-                    <p className="text-[10px] text-zinc-500">Completed</p>
+                    <p className="text-[10px] text-zinc-500">{t("مكتملة", "Completed")}</p>
                   </div>
                   <div>
                     <p className="text-sm font-semibold text-zinc-900">{worker.hourlyRate ?? 31.25}</p>
-                    <p className="text-[10px] text-zinc-500">EGP / h</p>
+                    <p className="text-[10px] text-zinc-500">{t("ج.م / ساعة", "EGP / h")}</p>
                   </div>
                 </div>
                 {worker.skills && worker.skills.length > 0 && (
@@ -833,22 +940,37 @@ export default function AdminWorkersPage() {
                     {worker.skills.length > 4 && <span className="text-[10px] text-zinc-400">+{worker.skills.length - 4}</span>}
                   </div>
                 )}
-                <div className="mt-auto flex items-center gap-1 border-t border-zinc-100 pt-3 mt-4">
+                <div className="mt-3 flex items-center justify-between rounded-lg border border-zinc-200 bg-zinc-50/70 px-2.5 py-1.5 text-xs">
+                  <span className="text-zinc-500">
+                    {t("التعيين:", "Joined:")}{" "}
+                    <strong className={worker.hireDate ? "text-zinc-900" : "text-amber-600"}>
+                      {worker.hireDate || t("غير محدد ⚠", "Not set ⚠")}
+                    </strong>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setOnboardWorker(worker)}
+                    className="text-[11px] font-bold text-red-600 hover:underline cursor-pointer"
+                  >
+                    🗓️ {t("تحديد التعيين والراتب", "Set Date & Rate")}
+                  </button>
+                </div>
+                <div className="mt-auto flex items-center gap-1 border-t border-zinc-100 pt-3 mt-3">
                   {worker.status === "pending" ? (
                     <>
-                      <button type="button" disabled={bulkBusy} onClick={() => void approveWorker(worker.id)} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 cursor-pointer">
-                        Approve
+                      <button type="button" disabled={bulkBusy} onClick={() => setOnboardWorker(worker)} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 cursor-pointer">
+                        {t("اعتماد وتحديد التعيين", "Approve & Set Date")}
                       </button>
                       <button type="button" disabled={bulkBusy} onClick={() => void rejectWorker(worker.id)} className="rounded-lg px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50 cursor-pointer">
-                        Reject
+                        {t("رفض", "Reject")}
                       </button>
                     </>
                   ) : (
                     <button type="button" onClick={() => openAssignModal(worker)} className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-zinc-800 cursor-pointer">
-                      Assign task
+                      {t("إسناد مهمة", "Assign task")}
                     </button>
                   )}
-                  <span className="ml-auto flex items-center">
+                  <span className="ms-auto flex items-center">
                     {cleanPhoneForWhatsApp(worker.phone) && (
                       <a href={`https://wa.me/${cleanPhoneForWhatsApp(worker.phone)}`} target="_blank" rel="noreferrer" title="WhatsApp" className="rounded-lg p-1.5 text-zinc-500 hover:bg-emerald-50 hover:text-emerald-600">
                         <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
@@ -856,8 +978,8 @@ export default function AdminWorkersPage() {
                         </svg>
                       </a>
                     )}
-                    <IconBtn title="View profile" d={ICON_PATH.view} onClick={() => setDetailWorker(worker)} />
-                    <IconBtn title="Delete worker" d={ICON_PATH.trash} tone="danger" disabled={deletingId === worker.id} onClick={() => void handleDeleteWorker(worker)} />
+                    <IconBtn title={t("عرض الملف", "View profile")} d={ICON_PATH.view} onClick={() => setDetailWorker(worker)} />
+                    <IconBtn title={t("حذف الموظف", "Delete worker")} d={ICON_PATH.trash} tone="danger" disabled={deletingId === worker.id} onClick={() => void handleDeleteWorker(worker)} />
                   </span>
                 </div>
               </article>
@@ -867,19 +989,20 @@ export default function AdminWorkersPage() {
       ) : (
         <div className="ui-card overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[920px] text-sm">
-              <thead className="border-b border-zinc-100 bg-zinc-50 text-left text-[11px] font-semibold text-zinc-500">
+            <table className="w-full min-w-[980px] text-sm">
+              <thead className="border-b border-zinc-100 bg-zinc-50 text-start text-[11px] font-semibold text-zinc-500">
                 <tr>
                   <th className="w-10 px-4 py-2.5">
                     <input type="checkbox" className="mft-check" checked={allSelected} onChange={() => setSelected(allSelected ? new Set() : new Set(filteredWorkers.map((w) => w.id)))} aria-label="Select all" />
                   </th>
-                  <th className="px-2 py-2.5">Worker</th>
-                  <th className="px-4 py-2.5">Role & department</th>
-                  <th className="px-4 py-2.5">Status</th>
-                  <th className="px-4 py-2.5">Tasks</th>
-                  <th className="px-4 py-2.5">Location</th>
-                  <th className="px-4 py-2.5">Last seen</th>
-                  <th className="px-4 py-2.5 text-right">Actions</th>
+                  <th className="px-2 py-2.5">{t("الموظف", "Worker")}</th>
+                  <th className="px-4 py-2.5">{t("الوظيفة والقسم", "Role & department")}</th>
+                  <th className="px-4 py-2.5">{t("تاريخ التعيين والراتب", "Joined & Rate")}</th>
+                  <th className="px-4 py-2.5">{t("الحالة", "Status")}</th>
+                  <th className="px-4 py-2.5">{t("المهام", "Tasks")}</th>
+                  <th className="px-4 py-2.5">{t("الموقع", "Location")}</th>
+                  <th className="px-4 py-2.5">{t("آخر ظهور", "Last seen")}</th>
+                  <th className="px-4 py-2.5 text-end">{t("إجراءات", "Actions")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100">
@@ -893,7 +1016,7 @@ export default function AdminWorkersPage() {
                         <input type="checkbox" className="mft-check" checked={isSel} onChange={() => toggleSel(worker.id)} aria-label={`Select ${workerLabel(worker)}`} />
                       </td>
                       <td className="px-2 py-3">
-                        <button type="button" onClick={() => setDetailWorker(worker)} className="flex items-center gap-3 text-left cursor-pointer">
+                        <button type="button" onClick={() => setDetailWorker(worker)} className="flex items-center gap-3 text-start cursor-pointer">
                           <span className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-[11px] font-bold text-zinc-600">
                             {initialsOf(worker)}
                             <span
@@ -918,6 +1041,27 @@ export default function AdminWorkersPage() {
                           {formatDepartment(worker.department)}
                           {worker.employmentType ? ` · ${formatEmploymentType(worker.employmentType)}` : ""}
                         </p>
+                      </td>
+                      <td className="px-4 py-3 text-xs">
+                        <button
+                          type="button"
+                          onClick={() => setOnboardWorker(worker)}
+                          className="text-start group/join cursor-pointer"
+                          title={t("اضغط لتحديد تاريخ التعيين الفعلي وسعر الساعة", "Click to set when this worker joined the company and hourly rate")}
+                        >
+                          {worker.hireDate ? (
+                            <span className="font-semibold text-zinc-900 group-hover/join:text-red-600 group-hover/join:underline">
+                              🗓️ {worker.hireDate}
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 rounded border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800 hover:bg-amber-100">
+                              ⚠ {t("حدد تاريخ التعيين", "Set join date")}
+                            </span>
+                          )}
+                          <span className="block text-[10px] text-zinc-500 mt-0.5">
+                            {worker.hourlyRate ?? 31.25} EGP/h{worker.attendanceStartDate ? ` · MFT: ${worker.attendanceStartDate}` : ""}
+                          </span>
+                        </button>
                       </td>
                       <td className="px-4 py-3">
                         <span className={`inline-flex rounded-md border px-2 py-0.5 text-[11px] font-semibold capitalize ${STATUS_CHIP[worker.status] ?? STATUS_CHIP.pending}`}>{worker.status}</span>
@@ -969,10 +1113,11 @@ export default function AdminWorkersPage() {
                         <div className="flex items-center justify-end gap-0.5">
                           {worker.status === "pending" && (
                             <>
-                              <IconBtn title="Approve" d={ICON_PATH.approve} tone="success" disabled={bulkBusy} onClick={() => void approveWorker(worker.id)} />
+                              <IconBtn title="Approve & Set Joining Date" d={ICON_PATH.approve} tone="success" disabled={bulkBusy} onClick={() => setOnboardWorker(worker)} />
                               <IconBtn title="Reject" d={ICON_PATH.reject} tone="danger" disabled={bulkBusy} onClick={() => void rejectWorker(worker.id)} />
                             </>
                           )}
+                          <IconBtn title="Set company joining date & leave balance" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" onClick={() => setOnboardWorker(worker)} />
                           <IconBtn title="Assign task" d={ICON_PATH.assign} onClick={() => openAssignModal(worker)} />
                           <IconBtn title="View profile" d={ICON_PATH.view} onClick={() => setDetailWorker(worker)} />
                           <IconBtn title="Delete worker" d={ICON_PATH.trash} tone="danger" disabled={deletingId === worker.id} onClick={() => void handleDeleteWorker(worker)} />
@@ -1255,6 +1400,9 @@ export default function AdminWorkersPage() {
                   </p>
                 </div>
               </div>
+
+              {/* Section 3b: HR-POL-2026 Leave Profile */}
+              <WorkerLeaveProfileCard worker={detailWorker} />
 
               {/* Section 4: Assigned Tasks & Directives */}
               <div className="border border-zinc-300 p-4 bg-white">
@@ -1771,6 +1919,81 @@ export default function AdminWorkersPage() {
         </div>
       </ModalPortal>
     )}
+
+      {/* Company Joining Date & Onboarding Modal (for existing & newly registered workers) */}
+      {onboardWorker && (
+        <ModalPortal onClose={() => setOnboardWorker(null)}>
+          <div
+            className="fixed inset-0 z-[120] bg-zinc-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in"
+            onClick={() => setOnboardWorker(null)}
+          >
+            <div
+              dir={dir}
+              className="border-2 border-zinc-900 bg-white dark:bg-zinc-900 w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 shadow-2xl text-zinc-950 dark:text-zinc-100 font-mono animate-scale-in space-y-4"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-start justify-between pb-3 border-b-2 border-zinc-900">
+                <div>
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-red-600">
+                    {t("// إعداد تاريخ التعيين والراتب ورصيد الإجازات", "// WORKER ONBOARDING & TENURE CONTROL")}
+                  </span>
+                  <h3 className="text-xl font-black font-heading text-zinc-950 dark:text-white uppercase">
+                    {onboardWorker.firstName} {onboardWorker.lastName}
+                  </h3>
+                  <p className="text-xs text-zinc-500">
+                    {formatRole(onboardWorker.role)} · {formatDepartment(onboardWorker.department)} · {onboardWorker.email}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setOnboardWorker(null)}
+                  className="text-2xl font-bold text-zinc-500 hover:text-red-600 cursor-pointer"
+                >
+                  &times;
+                </button>
+              </div>
+
+              <WorkerLeaveProfileCard
+                worker={onboardWorker}
+                onSaved={() => {
+                  if (onboardWorker.status !== "pending") setOnboardWorker(null);
+                }}
+              />
+
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t-2 border-zinc-900">
+                <p className="text-[11px] text-zinc-500">
+                  {t(
+                    "نصيحة: اضغط «حفظ بيانات التعيين والراتب» بالأعلى بعد إدخال التواريخ.",
+                    "Tip: Click Save Onboarding & Salary Profile above after setting dates.",
+                  )}
+                </p>
+                <div className="flex items-center gap-2">
+                  {onboardWorker.status === "pending" && (
+                    <button
+                      type="button"
+                      disabled={bulkBusy}
+                      onClick={async () => {
+                        await approveWorker(onboardWorker.id);
+                        setOnboardWorker(null);
+                      }}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-mono text-xs font-bold uppercase border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] cursor-pointer"
+                    >
+                      ✓ {t("اعتماد حساب الموظف", "Approve Worker Account")}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setOnboardWorker(null)}
+                    className="px-4 py-2 border-2 border-zinc-900 bg-white dark:bg-zinc-800 hover:bg-zinc-100 text-zinc-950 dark:text-white font-mono text-xs font-bold uppercase cursor-pointer"
+                  >
+                    {t("إغلاق", "Close")}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </ModalPortal>
+      )}
     </div>
   );
 }

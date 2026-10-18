@@ -8,7 +8,9 @@ import {
   PRIORITY_CONFIG,
   getAssigneeIds,
   parseDate,
+  formatSmartDate,
 } from "./types";
+import { stripRichHtml } from "@/components/admin/ui/LinkifiedText";
 
 interface Props {
   tasks: TaskRow[];
@@ -35,15 +37,21 @@ export default function ProjectCalendarView({
   const workerMap = new Map<string, Worker>();
   workers.forEach((w) => workerMap.set(w.id, w));
 
-  // Map tasks by date key: YYYY-M-D
+  // Map tasks by date key: YYYY-M-D (both startDate and dueDate)
   const tasksByDate = useMemo(() => {
     const map = new Map<string, TaskRow[]>();
-    for (const t of tasks) {
-      const d = parseDate(t.dueDate);
-      if (!d) continue;
+    const addToDate = (d: Date | null, t: TaskRow) => {
+      if (!d) return;
       const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
       if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(t);
+      const list = map.get(key)!;
+      if (!list.some((x) => x.id === t.id)) {
+        list.push(t);
+      }
+    };
+    for (const t of tasks) {
+      addToDate(parseDate(t.startDate), t);
+      addToDate(parseDate(t.dueDate), t);
     }
     return map;
   }, [tasks]);
@@ -315,8 +323,23 @@ export default function ProjectCalendarView({
 
                   {t.description && (
                     <p className="text-[11px] text-zinc-500 font-mono line-clamp-2 mt-1">
-                      {t.description}
+                      {stripRichHtml(t.description)}
                     </p>
+                  )}
+
+                  {(Boolean(t.startDate) || Boolean(t.dueDate)) && (
+                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] font-mono">
+                      {Boolean(t.startDate) && (
+                        <span className="px-1.5 py-0.2 rounded bg-sky-50 text-sky-700 border border-sky-200 font-bold">
+                          ▶ Start: {formatSmartDate(t.startDate).label}
+                        </span>
+                      )}
+                      {Boolean(t.dueDate) && (
+                        <span className="px-1.5 py-0.2 rounded bg-zinc-100 text-zinc-700 border border-zinc-200 font-bold">
+                          📅 Due: {formatSmartDate(t.dueDate).label}
+                        </span>
+                      )}
+                    </div>
                   )}
 
                   {taskWorkers.length > 0 && (

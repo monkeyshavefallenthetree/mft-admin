@@ -8,6 +8,7 @@ import {
   PRIORITY_CONFIG,
   getAssigneeIds,
   formatSmartDate,
+  parseDate,
 } from "./types";
 import LinkifiedText from "@/components/admin/ui/LinkifiedText";
 
@@ -265,10 +266,16 @@ export default function ProjectBoardView({
                         </div>
                       )}
 
-                      {/* Card Footer: Due Date & Assignees */}
+                      {/* Card Footer: Start/Due Date & Assignees */}
                       <div className="mt-3 pt-2.5 border-t border-zinc-100 flex items-center justify-between gap-2 text-xs">
-                        {/* Due date */}
-                        <div>
+                        {/* Start & Due date */}
+                        <div className="flex flex-wrap items-center gap-1">
+                          {task.startDate && parseDate(task.startDate) && (
+                            <span className="text-[10px] font-mono text-zinc-600 bg-zinc-100 border border-zinc-200 px-1.5 py-0.2 rounded inline-flex items-center gap-1">
+                              <span>▶</span>
+                              <span>Start {parseDate(task.startDate)!.toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+                            </span>
+                          )}
                           {smartDate.label !== "No date" ? (
                             <span
                               className={`text-[10px] font-mono font-bold px-1.5 py-0.2 rounded border inline-flex items-center gap-1 ${
@@ -283,7 +290,7 @@ export default function ProjectBoardView({
                               <span>{smartDate.label}</span>
                             </span>
                           ) : (
-                            <span className="text-[10px] text-zinc-400 font-mono italic">No due date</span>
+                            !task.startDate && <span className="text-[10px] text-zinc-400 font-mono italic">No due date</span>
                           )}
                         </div>
 

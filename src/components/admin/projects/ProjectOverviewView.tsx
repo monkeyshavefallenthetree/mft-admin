@@ -10,6 +10,7 @@ import {
   getAssigneeIds,
   parseDate,
 } from "./types";
+import { stripRichHtml } from "@/components/admin/ui/LinkifiedText";
 
 interface Props {
   project: Project;
@@ -160,7 +161,7 @@ export default function ProjectOverviewView({
                       </span>
                     </div>
                     <h4 className="text-xs font-bold uppercase text-zinc-950 line-clamp-1">{t.title}</h4>
-                    <p className="text-[11px] text-zinc-600 font-mono mt-0.5 line-clamp-2">{t.description}</p>
+                    <p className="text-[11px] text-zinc-600 font-mono mt-0.5 line-clamp-2">{stripRichHtml(t.description)}</p>
                     {assignees && (
                       <p className="text-[10px] text-zinc-500 font-mono mt-1 font-semibold">👤 {assignees}</p>
                     )}

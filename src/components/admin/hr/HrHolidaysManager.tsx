@@ -123,7 +123,7 @@ export default function HrHolidaysManager({ holidays, adminEmail, onOpenPolicyMo
       <div className="flex flex-wrap items-center justify-between gap-4 p-5 bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 shadow-[4px_4px_0px_0px_#09090b] rounded-lg">
         <div>
           <span className="text-[10px] font-bold uppercase tracking-widest text-red-600 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 px-2 py-0.5 rounded font-mono">
-            // STATUTORY CALENDAR
+            {"// STATUTORY CALENDAR"}
           </span>
           <h3 className="text-xl md:text-2xl font-bold font-heading uppercase tracking-wide text-zinc-950 dark:text-white mt-1">
             Official Holidays &amp; Rest Days (جدول العطلات الرسمية)
@@ -196,7 +196,7 @@ export default function HrHolidaysManager({ holidays, adminEmail, onOpenPolicyMo
               </label>
               <select
                 value={form.type}
-                onChange={(e) => setForm({ ...form, type: e.target.value as any })}
+                onChange={(e) => setForm({ ...form, type: e.target.value as "national" | "religious" | "company" | "special" })}
                 className="w-full bg-white dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 px-3 py-2 text-zinc-950 dark:text-zinc-100 font-bold focus:outline-none focus:ring-2 focus:ring-red-600"
               >
                 <option value="national">National Holiday (عطلة قومية)</option>

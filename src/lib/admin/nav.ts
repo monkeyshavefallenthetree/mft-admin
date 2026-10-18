@@ -1,7 +1,58 @@
 export const STRAPI_CMS_ADMIN =
   process.env.NEXT_PUBLIC_STRAPICMS_ADMIN_URL ?? "http://localhost:1337/admin";
 
-export type BadgeKey = "unreadChats" | "pendingWorkers" | "pendingExceptions" | "pendingApprovals" | "newSubmissions";
+export type AdminRole = "super_admin" | "ops_admin" | "hr_admin";
+
+export const ADMIN_ACCOUNTS: Record<string, AdminRole> = {
+  "admin@mft.com": "super_admin",
+  "mayamahmoud@mft.com": "ops_admin",
+  "hr@mft.com": "hr_admin",
+};
+
+export function getAdminRole(email?: string | null): AdminRole {
+  const clean = (email ?? "").trim().toLowerCase();
+  if (!clean) return "super_admin";
+  return ADMIN_ACCOUNTS[clean] ?? "super_admin";
+}
+
+export function getAdminRoleMeta(role: AdminRole): {
+  role: AdminRole;
+  label: string;
+  badgeClass: string;
+  defaultHref: string;
+} {
+  switch (role) {
+    case "ops_admin":
+      return {
+        role,
+        label: "Account Manager · Work & Clients",
+        badgeClass: "border-sky-200 bg-sky-50 text-sky-700",
+        defaultHref: "/admin/projects",
+      };
+    case "hr_admin":
+      return {
+        role,
+        label: "People & HR",
+        badgeClass: "border-emerald-200 bg-emerald-50 text-emerald-700",
+        defaultHref: "/admin/hr",
+      };
+    default:
+      return {
+        role: "super_admin",
+        label: "Super Admin",
+        badgeClass: "border-red-200 bg-red-50 text-red-700",
+        defaultHref: "/admin",
+      };
+  }
+}
+
+export type BadgeKey =
+  | "unreadChats"
+  | "pendingWorkers"
+  | "pendingExceptions"
+  | "pendingApprovals"
+  | "newSubmissions"
+  | "pendingReimbursements";
 
 export interface NavItem {
   label: string;
@@ -10,6 +61,7 @@ export interface NavItem {
   description: string;
   badge?: BadgeKey;
   external?: boolean;
+  roles: AdminRole[];
 }
 
 export interface NavGroup {
@@ -29,47 +81,72 @@ export const ICONS = {
   cms: "M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z",
   reports: "M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z",
   activity: "M13 10V3L4 14h7v7l9-11h-7z",
+  reimbursements: "M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z",
+  policyLab: "M9 3v6.5L4.2 18.1A2 2 0 006 21h12a2 2 0 001.8-2.9L15 9.5V3M8 3h8M7 15h10",
 };
 
 export const NAV_GROUPS: NavGroup[] = [
   {
     title: "General",
     items: [
-      { label: "Overview", href: "/admin", icon: ICONS.overview, description: "Company-wide snapshot of every module" },
-      { label: "Reports", href: "/admin/reports", icon: ICONS.reports, description: "Hours, attendance, payroll & delivery reports" },
-      { label: "Activity Log", href: "/admin/activity", icon: ICONS.activity, description: "Audit trail of every admin action" },
+      { label: "Overview", href: "/admin", icon: ICONS.overview, description: "Company-wide snapshot of every module", roles: ["super_admin"] },
+      { label: "Reports", href: "/admin/reports", icon: ICONS.reports, description: "Hours, attendance, payroll & delivery reports", roles: ["super_admin", "hr_admin"] },
+      { label: "Activity Log", href: "/admin/activity", icon: ICONS.activity, description: "Audit trail of every admin action", roles: ["super_admin"] },
     ],
   },
   {
     title: "Work",
     items: [
-      { label: "Projects", href: "/admin/projects", icon: ICONS.projects, description: "Client projects, boards & calendars", badge: "unreadChats" },
-      { label: "Tasks", href: "/admin/tasks", icon: ICONS.tasks, description: "All task directives across projects", badge: "pendingApprovals" },
+      { label: "Projects", href: "/admin/projects", icon: ICONS.projects, description: "Client projects, boards & calendars", badge: "unreadChats", roles: ["super_admin", "ops_admin"] },
+      { label: "Tasks", href: "/admin/tasks", icon: ICONS.tasks, description: "All task directives across projects", badge: "pendingApprovals", roles: ["super_admin", "ops_admin"] },
     ],
   },
   {
     title: "People",
     items: [
-      { label: "Workers", href: "/admin/workers", icon: ICONS.workers, description: "Team roster, approvals & profiles", badge: "pendingWorkers" },
-      { label: "Work Sessions", href: "/admin/work-sessions", icon: ICONS.sessions, description: "Attendance & logged hours" },
-      { label: "HR Dashboard", href: "/admin/hr", icon: ICONS.hr, description: "Performance, penalties & alerts" },
-      { label: "Exceptions", href: "/admin/exceptions", icon: ICONS.exceptions, description: "Late / absence requests", badge: "pendingExceptions" },
+      { label: "Workers", href: "/admin/workers", icon: ICONS.workers, description: "Team roster, approvals & profiles", badge: "pendingWorkers", roles: ["super_admin", "hr_admin"] },
+      { label: "Work Sessions", href: "/admin/work-sessions", icon: ICONS.sessions, description: "Attendance & logged hours", roles: ["super_admin", "hr_admin"] },
+      { label: "HR Dashboard", href: "/admin/hr", icon: ICONS.hr, description: "Performance, penalties & alerts", roles: ["super_admin", "hr_admin"] },
+      { label: "Exceptions", href: "/admin/exceptions", icon: ICONS.exceptions, description: "Late / absence requests", badge: "pendingExceptions", roles: ["super_admin", "hr_admin"] },
+      { label: "Reimbursements", href: "/admin/reimbursements", icon: ICONS.reimbursements, description: "Outdoor missions & purchase claims (HR-POL-2026)", badge: "pendingReimbursements", roles: ["super_admin", "hr_admin"] },
+      { label: "Policy Lab", href: "/admin/hr/policy-lab", icon: ICONS.policyLab, description: "HR-POL-2026 simulator & attendance auditor", roles: ["super_admin", "hr_admin"] },
     ],
   },
   {
     title: "Clients",
     items: [
-      { label: "Submissions", href: "/admin/submissions", icon: ICONS.submissions, description: "Inbound leads & meeting requests", badge: "newSubmissions" },
-      { label: "Strapi CMS", href: STRAPI_CMS_ADMIN, icon: ICONS.cms, description: "Website content manager", external: true },
+      { label: "Submissions", href: "/admin/submissions", icon: ICONS.submissions, description: "Inbound leads & meeting requests", badge: "newSubmissions", roles: ["super_admin", "ops_admin"] },
+      { label: "Strapi CMS", href: STRAPI_CMS_ADMIN, icon: ICONS.cms, description: "Website content manager", external: true, roles: ["super_admin", "ops_admin"] },
     ],
   },
 ];
 
 export const ALL_NAV_ITEMS: NavItem[] = NAV_GROUPS.flatMap((g) => g.items);
 
+export function getNavGroupsForRole(role: AdminRole): NavGroup[] {
+  return NAV_GROUPS.map((g) => ({
+    ...g,
+    items: g.items.filter((i) => i.roles.includes(role)),
+  })).filter((g) => g.items.length > 0);
+}
+
+export function getNavItemsForRole(role: AdminRole): NavItem[] {
+  return ALL_NAV_ITEMS.filter((i) => i.roles.includes(role));
+}
+
 export function findNavItem(pathname: string): NavItem | undefined {
   if (pathname === "/admin") return ALL_NAV_ITEMS[0];
-  return ALL_NAV_ITEMS.filter((i) => !i.external && i.href !== "/admin" && pathname.startsWith(i.href))[0];
+  // Prefer the most specific match so /admin/hr/policy-lab doesn't resolve to /admin/hr.
+  return ALL_NAV_ITEMS.filter((i) => !i.external && i.href !== "/admin" && pathname.startsWith(i.href)).sort(
+    (a, b) => b.href.length - a.href.length,
+  )[0];
+}
+
+export function isPathAllowedForRole(pathname: string, role: AdminRole): boolean {
+  if (pathname === "/admin/login" || role === "super_admin") return true;
+  const matched = findNavItem(pathname);
+  if (!matched) return false;
+  return matched.roles.includes(role);
 }
 
 /** Deep links into pre-filtered views — used by KPIs, the bell, toasts and the command palette. */
@@ -79,6 +156,7 @@ export const FILTERED_LINKS: Record<BadgeKey, string> = {
   pendingExceptions: "/admin/exceptions?status=pending",
   newSubmissions: "/admin/submissions?status=new",
   unreadChats: "/admin/projects",
+  pendingReimbursements: "/admin/reimbursements",
 };
 
 export const NAVIGATE_EVENT = "mft:navigate";

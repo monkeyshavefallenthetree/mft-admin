@@ -5,6 +5,7 @@ import { onAuthStateChanged, sendPasswordResetEmail, signInWithEmailAndPassword 
 import { auth } from "@/lib/firebase";
 import { useRouter } from "next/navigation";
 import { logActivity } from "@/lib/admin/activity";
+import { getAdminRole, getAdminRoleMeta } from "@/lib/admin/nav";
 
 const LAST_EMAIL_KEY = "mft.admin.lastEmail";
 
@@ -50,11 +51,15 @@ export default function AdminLoginPage() {
     }
   }, []);
 
-  // Already signed in? Go straight to the dashboard.
+  // Already signed in? Go straight to the role's default dashboard tab.
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
-      if (u && !submitting.current) router.replace("/admin");
-      else setChecking(false);
+      if (u && !submitting.current) {
+        const dest = getAdminRoleMeta(getAdminRole(u.email)).defaultHref;
+        router.replace(dest);
+      } else {
+        setChecking(false);
+      }
     });
     return () => unsub();
   }, [router]);
@@ -66,14 +71,15 @@ export default function AdminLoginPage() {
     setLoading(true);
     submitting.current = true;
     try {
-      await signInWithEmailAndPassword(auth, email.trim(), password);
+      const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
       try {
         localStorage.setItem(LAST_EMAIL_KEY, email.trim());
       } catch {
         /* ignore */
       }
       void logActivity({ action: "signed-in", entity: "auth", label: email.trim() });
-      router.replace("/admin");
+      const dest = getAdminRoleMeta(getAdminRole(cred.user.email ?? email.trim())).defaultHref;
+      router.replace(dest);
       return;
     } catch (err) {
       setError(authErrorMessage(err));

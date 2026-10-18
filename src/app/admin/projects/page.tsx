@@ -37,10 +37,13 @@ import ProjectListView from "@/components/admin/projects/ProjectListView";
 import ProjectBoardView from "@/components/admin/projects/ProjectBoardView";
 import ProjectCalendarView from "@/components/admin/projects/ProjectCalendarView";
 import ProjectOverviewView from "@/components/admin/projects/ProjectOverviewView";
+import ProjectGroupChatView from "@/components/admin/projects/ProjectGroupChatView";
 import TaskDetailDrawer from "@/components/admin/projects/TaskDetailDrawer";
 import TaskModalForm from "@/components/admin/projects/TaskModalForm";
 import ProjectModalForm from "@/components/admin/projects/ProjectModalForm";
 import ProjectsHubView from "@/components/admin/projects/ProjectsHubView";
+import { sendProjectMessage } from "@/lib/projectChat";
+import { notifyAdmins } from "@/lib/adminNotifications";
 
 export default function AdminProjectsPage() {
   // Realtime Data
@@ -83,22 +86,34 @@ export default function AdminProjectsPage() {
   }>({});
   const [editingTaskModal, setEditingTaskModal] = useState<TaskRow | null>(null);
 
-  // Deep link: /admin/projects?new=1 opens modal and cleans query param
+  // Deep link: /admin/projects?new=1 or /admin/projects?project=<id>&view=chat
   useEffect(() => {
-    const checkNew = () => {
+    const checkUrlParams = () => {
       if (typeof window === "undefined") return;
       const params = new URLSearchParams(window.location.search);
       if (params.get("new") === "1") {
         setShowCreateProject(true);
         window.history.replaceState(null, "", window.location.pathname);
       }
+      const projParam = params.get("project");
+      if (projParam) {
+        setDetailId(projParam);
+      }
+      const viewParam = params.get("view") as ProjectViewMode | null;
+      if (viewParam && ["list", "board", "calendar", "chat", "overview"].includes(viewParam)) {
+        setViewMode(viewParam);
+      }
+      const taskParam = params.get("task");
+      if (taskParam) {
+        setActiveTaskId(taskParam);
+      }
     };
-    checkNew();
-    window.addEventListener("popstate", checkNew);
-    window.addEventListener("mft:urlsync", checkNew);
+    checkUrlParams();
+    window.addEventListener("popstate", checkUrlParams);
+    window.addEventListener("mft:urlsync", checkUrlParams);
     return () => {
-      window.removeEventListener("popstate", checkNew);
-      window.removeEventListener("mft:urlsync", checkNew);
+      window.removeEventListener("popstate", checkUrlParams);
+      window.removeEventListener("mft:urlsync", checkUrlParams);
     };
   }, []);
 
@@ -146,10 +161,20 @@ export default function AdminProjectsPage() {
     };
   }, []);
 
-  // Unread counts mapped by Project ID & Task ID
+  // Unread counts mapped by Project ID & Task ID (including Project Group Chat)
   const unreadByProject = useMemo(() => {
     const map = new Map<string, number>();
     for (const notif of chatNotifications) {
+      const nAny = notif as ChatNotification & { projectId?: string };
+      if (nAny.projectId) {
+        map.set(nAny.projectId, (map.get(nAny.projectId) ?? 0) + 1);
+        continue;
+      }
+      if (typeof notif.taskId === "string" && notif.taskId.startsWith("project:")) {
+        const pid = notif.taskId.slice("project:".length);
+        map.set(pid, (map.get(pid) ?? 0) + 1);
+        continue;
+      }
       const task = tasks.find((t) => t.id === notif.taskId);
       if (task?.projectId) {
         map.set(task.projectId, (map.get(task.projectId) ?? 0) + 1);
@@ -237,7 +262,15 @@ export default function AdminProjectsPage() {
     status: string;
     startDate: string;
     endDate: string;
+    memberIds: string[];
+    initialChatMessage?: string;
   }) => {
+    const currentAdmin = getAuth().currentUser;
+    const actorName = currentAdmin?.displayName || currentAdmin?.email || "Admin";
+    const kickoffText =
+      formData.initialChatMessage ||
+      `Project "${formData.name}" created${formData.clientName ? ` for ${formData.clientName}` : ""}. Group chat is live!`;
+
     const docRef = await addDoc(collection(db, "projects"), {
       name: formData.name,
       clientName: formData.clientName || null,
@@ -246,11 +279,64 @@ export default function AdminProjectsPage() {
       status: formData.status,
       startDate: formData.startDate || null,
       endDate: formData.endDate || null,
+      memberIds: formData.memberIds || [],
+      lastMessageAt: serverTimestamp(),
+      lastMessageText: kickoffText.slice(0, 120),
+      lastMessageSender: actorName,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
+
+    // Initialize the Project Group Chat connected to this project
+    await sendProjectMessage(db, {
+      projectId: docRef.id,
+      projectName: formData.name,
+      text: kickoffText,
+      senderUid: currentAdmin?.uid || "admin",
+      senderName: actorName,
+      senderRole: "admin",
+      isSystem: !formData.initialChatMessage,
+      recipientWorkerIds: formData.memberIds || [],
+    }).catch(() => {});
+
+    // Notify assigned team members about the new project
+    if (formData.memberIds && formData.memberIds.length > 0) {
+      for (const workerId of formData.memberIds) {
+        await addDoc(collection(db, "alerts"), {
+          recipients: [workerId],
+          title: `New Project & Group Chat: ${formData.name}`,
+          message: kickoffText,
+          type: "schedule",
+          priority: "medium",
+          isRead: false,
+          createdAt: serverTimestamp(),
+          sentAt: serverTimestamp(),
+          sentBy: actorName,
+        }).catch(() => {});
+      }
+      void sendExpoPushToWorkers(db, {
+        recipientUids: formData.memberIds,
+        title: `📁 New Project: ${formData.name}`,
+        body: kickoffText,
+        tab: "tasks",
+      }).catch(() => {});
+    }
+
+    // Notify Super Admin & Account Manager (ops_admin) that a project was created
+    void notifyAdmins(db, {
+      targetRoles: ["super_admin", "ops_admin"],
+      category: "project",
+      eventType: "project_created",
+      title: `📁 New Project Created: ${formData.name}`,
+      body: `${actorName} created project "${formData.name}"${formData.clientName ? ` (${formData.clientName})` : ""} with group chat.`,
+      href: `/admin/projects?project=${encodeURIComponent(docRef.id)}&view=chat`,
+      actorUid: currentAdmin?.uid,
+      actorName,
+      projectId: docRef.id,
+    });
+
     setDetailId(docRef.id);
-    toast.success("Project created", { description: formData.name });
+    toast.success("Project & Group Chat created", { description: formData.name });
     void logActivity({ action: "created", entity: "project", entityId: docRef.id, label: formData.name });
   };
 
@@ -262,6 +348,7 @@ export default function AdminProjectsPage() {
     status: string;
     startDate: string;
     endDate: string;
+    memberIds: string[];
   }) => {
     if (!editingProject) return;
     await updateDoc(doc(db, "projects", editingProject.id), {
@@ -272,6 +359,7 @@ export default function AdminProjectsPage() {
       status: formData.status,
       startDate: formData.startDate || null,
       endDate: formData.endDate || null,
+      memberIds: formData.memberIds || [],
       updatedAt: serverTimestamp(),
     });
     toast.success("Project updated");
@@ -314,6 +402,19 @@ export default function AdminProjectsPage() {
       updatedAt: serverTimestamp(),
     });
     const proj = projects.find((p) => p.id === projectId);
+    const currentAdmin = getAuth().currentUser;
+    const actorName = currentAdmin?.displayName || currentAdmin?.email || "Admin";
+    void notifyAdmins(db, {
+      targetRoles: ["super_admin", "ops_admin"],
+      category: "project",
+      eventType: "project_status",
+      title: nextStatus === "completed" ? `✅ Project Completed: ${proj?.name || projectId}` : `🔄 Project Reopened: ${proj?.name || projectId}`,
+      body: `${actorName} marked "${proj?.name || projectId}" as ${nextStatus}.`,
+      href: `/admin/projects?project=${encodeURIComponent(projectId)}`,
+      actorUid: currentAdmin?.uid,
+      actorName,
+      projectId,
+    });
     toast.success(nextStatus === "completed" ? "Project marked complete" : "Project reopened");
     void logActivity({ action: "status", entity: "project", entityId: projectId, label: proj?.name || projectId, detail: nextStatus === "completed" ? "→ completed" : "→ reopened" });
   };
@@ -325,6 +426,7 @@ export default function AdminProjectsPage() {
     department: string;
     priority: string;
     status: string;
+    startDate: string;
     dueDate: string;
     photo: string;
     workerIds: string[];
@@ -350,6 +452,7 @@ export default function AdminProjectsPage() {
       assignedWorkerName: assignedWorkerNames || "Unassigned",
       priority: formData.priority,
       status: formData.status || "assigned",
+      startDate: formData.startDate ? new Date(formData.startDate) : null,
       dueDate: formData.dueDate ? new Date(formData.dueDate) : null,
       photo: formData.photo || null,
       subtasks: sanitizeSubtasks(formData.subtasks),
@@ -389,6 +492,20 @@ export default function AdminProjectsPage() {
         taskTitle: formData.title,
       }).catch(() => {});
     }
+    const currentAdmin = getAuth().currentUser;
+    const actorName = currentAdmin?.displayName || currentAdmin?.email || "Admin";
+    void notifyAdmins(db, {
+      targetRoles: ["super_admin", "ops_admin"],
+      category: "task",
+      eventType: "task_created",
+      title: `📋 New Task in ${detailProject?.name || "Project"}: ${formData.title}`,
+      body: `${actorName} assigned "${formData.title}" to ${assignedWorkerNames || "Unassigned"}.`,
+      href: `/admin/projects?project=${encodeURIComponent(detailId)}&task=${encodeURIComponent(taskRef.id)}`,
+      actorUid: currentAdmin?.uid,
+      actorName,
+      taskId: taskRef.id,
+      projectId: detailId,
+    });
     toast.success("Task created", { description: formData.workerIds.length ? `Assigned to ${assignedWorkerNames}` : formData.title });
     void logActivity({ action: "created", entity: "task", entityId: taskRef.id, label: formData.title, detail: detailProject?.name });
   };
@@ -399,6 +516,7 @@ export default function AdminProjectsPage() {
     department: string;
     priority: string;
     status: string;
+    startDate: string;
     dueDate: string;
     photo: string;
     workerIds: string[];
@@ -422,6 +540,7 @@ export default function AdminProjectsPage() {
       assignedWorkerName: assignedWorkerNames || "Unassigned",
       priority: formData.priority,
       status: formData.status,
+      startDate: formData.startDate ? new Date(formData.startDate) : null,
       dueDate: formData.dueDate ? new Date(formData.dueDate) : null,
       photo: formData.photo || null,
       subtasks: sanitizeSubtasks(formData.subtasks),
@@ -577,6 +696,22 @@ export default function AdminProjectsPage() {
           taskTitle: task.title,
         }).catch(() => {});
       }
+      const currentAdmin = getAuth().currentUser;
+      const actorName = currentAdmin?.displayName || currentAdmin?.email || "Admin";
+      void notifyAdmins(db, {
+        targetRoles: ["super_admin", "ops_admin"],
+        category: "task",
+        eventType: "task_approved",
+        title: `✅ Task Approved: ${task.title}`,
+        body: `${actorName} approved task "${task.title}".`,
+        href: task.projectId
+          ? `/admin/projects?project=${encodeURIComponent(task.projectId)}&task=${encodeURIComponent(task.id)}`
+          : `/admin/tasks?task=${encodeURIComponent(task.id)}`,
+        actorUid: currentAdmin?.uid,
+        actorName,
+        taskId: task.id,
+        projectId: task.projectId,
+      });
       toast.success("Task approved", { description: task.title });
       void logActivity({ action: "approved", entity: "task", entityId: task.id, label: task.title });
     } catch (err) {
@@ -635,6 +770,23 @@ export default function AdminProjectsPage() {
           taskTitle: task.title,
         }).catch(() => {});
       }
+      const currentAdmin = getAuth().currentUser;
+      const actorName = currentAdmin?.displayName || currentAdmin?.email || "Admin";
+      void notifyAdmins(db, {
+        targetRoles: ["super_admin", "ops_admin"],
+        category: "task",
+        eventType: "task_rejected",
+        title: `⚠️ Changes Requested: ${task.title}`,
+        body: `${actorName} requested changes on "${task.title}": ${reason.trim() || "Needs revision"}`,
+        href: task.projectId
+          ? `/admin/projects?project=${encodeURIComponent(task.projectId)}&task=${encodeURIComponent(task.id)}`
+          : `/admin/tasks?task=${encodeURIComponent(task.id)}`,
+        actorUid: currentAdmin?.uid,
+        actorName,
+        taskId: task.id,
+        projectId: task.projectId,
+        urgent: true,
+      });
       toast.warning("Changes requested", { description: task.title });
       void logActivity({ action: "rejected", entity: "task", entityId: task.id, label: task.title, detail: reason.trim() || "Needs revision" });
     } catch (err) {
@@ -654,6 +806,7 @@ export default function AdminProjectsPage() {
           tasks={currentProjectTasks}
           workers={workers}
           viewMode={viewMode}
+          unreadChatCount={unreadByProject.get(detailProject.id) ?? 0}
           onSelectViewMode={setViewMode}
           onBackToProjects={() => setDetailId(null)}
           onSelectProject={(pid) => setDetailId(pid)}
@@ -745,7 +898,17 @@ export default function AdminProjectsPage() {
           />
         )}
 
-        {/* View Mode 4: Overview / Dashboard View */}
+        {/* View Mode 4: Project Group Chat View */}
+        {viewMode === "chat" && (
+          <ProjectGroupChatView
+            project={detailProject}
+            tasks={currentProjectTasks}
+            workers={workers}
+            onSelectTask={(task) => setActiveTaskDrawer(task)}
+          />
+        )}
+
+        {/* View Mode 5: Overview / Dashboard View */}
         {viewMode === "overview" && (
           <ProjectOverviewView
             project={detailProject}
@@ -803,6 +966,7 @@ export default function AdminProjectsPage() {
         {editingProject && (
           <ProjectModalForm
             initialProject={editingProject}
+            workers={workers}
             onClose={() => setEditingProject(null)}
             onSubmit={handleEditProject}
           />
@@ -823,6 +987,10 @@ export default function AdminProjectsPage() {
           setDetailId(pid);
           setViewMode("list");
         }}
+        onOpenProjectChat={(p) => {
+          setDetailId(p.id);
+          setViewMode("chat");
+        }}
         onOpenCreateProject={() => setShowCreateProject(true)}
         onOpenEditProject={(p) => setEditingProject(p)}
         onDeleteProject={handleDeleteProject}
@@ -837,6 +1005,7 @@ export default function AdminProjectsPage() {
       {/* Create Project Modal */}
       {showCreateProject && (
         <ProjectModalForm
+          workers={workers}
           onClose={() => setShowCreateProject(false)}
           onSubmit={handleCreateProject}
         />
@@ -846,6 +1015,7 @@ export default function AdminProjectsPage() {
       {editingProject && (
         <ProjectModalForm
           initialProject={editingProject}
+          workers={workers}
           onClose={() => setEditingProject(null)}
           onSubmit={handleEditProject}
         />

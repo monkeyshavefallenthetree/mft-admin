@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { Project, TaskRow, Worker, HubViewMode, getAssigneeIds } from "./types";
+import { stripRichHtml } from "@/components/admin/ui/LinkifiedText";
 
 interface Props {
   projects: Project[];
@@ -9,6 +10,7 @@ interface Props {
   workers: Worker[];
   unreadByProject: Map<string, number>;
   onSelectProject: (projectId: string) => void;
+  onOpenProjectChat?: (project: Project) => void;
   onOpenCreateProject: () => void;
   onOpenEditProject: (project: Project) => void;
   onDeleteProject: (projectId: string) => void;
@@ -22,6 +24,7 @@ export default function ProjectsHubView({
   workers,
   unreadByProject,
   onSelectProject,
+  onOpenProjectChat,
   onOpenCreateProject,
   onOpenEditProject,
   onDeleteProject,
@@ -361,7 +364,7 @@ export default function ProjectsHubView({
                   {/* Description */}
                   {p.description && (
                     <p className="text-xs text-zinc-500 font-mono mt-2 line-clamp-2 leading-relaxed">
-                      {p.description}
+                      {stripRichHtml(p.description)}
                     </p>
                   )}
 
@@ -427,12 +430,30 @@ export default function ProjectsHubView({
                   </div>
                 </div>
 
-                {/* Footer View Link & Quick Task Button */}
+                {/* Footer View Link & Quick Task / Group Chat Buttons */}
+                {p.lastMessageText && (
+                  <div className="mt-3 px-2.5 py-1.5 rounded bg-zinc-50 border border-zinc-200 text-[11px] font-mono text-zinc-600 truncate">
+                    💬 <span className="font-bold text-zinc-800">{p.lastMessageSender || "Chat"}:</span> {p.lastMessageText}
+                  </div>
+                )}
                 <div className="mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800 flex items-center justify-between text-xs font-mono gap-2 flex-wrap">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-zinc-400 uppercase">
-                      {p.startDate ? `📅 ${p.startDate}` : "No date"}
-                    </span>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenProjectChat?.(p);
+                      }}
+                      className={`px-2 py-0.5 text-[10px] font-bold uppercase rounded border transition-colors cursor-pointer flex items-center gap-1 ${
+                        unreadCount > 0
+                          ? "border-red-600 bg-red-600 text-white animate-pulse"
+                          : "border-zinc-300 bg-zinc-100 text-zinc-800 hover:bg-zinc-900 hover:text-white"
+                      }`}
+                      title={`Open ${p.name} Group Chat`}
+                    >
+                      <span>💬 Group Chat</span>
+                      {unreadCount > 0 && <span>({unreadCount})</span>}
+                    </button>
                     <button
                       type="button"
                       onClick={(e) => {
@@ -449,7 +470,7 @@ export default function ProjectsHubView({
                     </button>
                   </div>
                   <span className="font-bold text-red-600 group-hover:translate-x-1 transition-transform flex items-center gap-1">
-                    Open Project →
+                    Open →
                   </span>
                 </div>
               </div>
@@ -559,6 +580,17 @@ export default function ProjectsHubView({
 
                     <td className="py-3.5 px-4 text-right">
                       <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onOpenProjectChat?.(p);
+                          }}
+                          className="px-2 py-1 bg-zinc-100 hover:bg-zinc-900 hover:text-white border border-zinc-300 text-zinc-800 text-[10px] font-bold uppercase rounded cursor-pointer transition-colors"
+                          title={`Open ${p.name} Group Chat`}
+                        >
+                          💬 Chat
+                        </button>
                         <button
                           type="button"
                           onClick={(e) => {

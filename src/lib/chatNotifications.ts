@@ -54,14 +54,29 @@ export function subscribeAdminChatNotifications(
   );
 }
 
+export type StoredPushSubscription = {
+  endpoint: string;
+  expirationTime?: number | null;
+  keys: {
+    p256dh: string;
+    auth: string;
+  };
+  userAgent?: string;
+  platform?: string;
+  createdAt?: string;
+};
+
 export async function sendExpoPushToWorkers(
   db: Firestore,
   opts: {
     recipientUids: string[];
     title: string;
     body: string;
-    taskId: string;
-    taskTitle: string;
+    taskId?: string;
+    taskTitle?: string;
+    tab?: string;
+    url?: string;
+    urgent?: boolean;
   },
 ): Promise<void> {
   const messages: Array<{
@@ -75,10 +90,14 @@ export async function sendExpoPushToWorkers(
     data: { taskId: string; taskTitle: string };
   }> = [];
 
+  const webPushSubs: StoredPushSubscription[] = [];
+
   for (const uid of opts.recipientUids) {
     const snap = await getDoc(doc(db, "workers", uid));
     if (!snap.exists()) continue;
-    const token = snap.data().expoPushToken;
+    const data = snap.data();
+
+    const token = data.expoPushToken;
     if (typeof token === "string" && token.length > 0) {
       messages.push({
         to: token,
@@ -88,13 +107,44 @@ export async function sendExpoPushToWorkers(
         priority: "high",
         channelId: "chat",
         android: { channelId: "chat" },
-        data: { taskId: opts.taskId, taskTitle: opts.taskTitle },
+        data: { taskId: opts.taskId ?? "", taskTitle: opts.taskTitle ?? "" },
       });
+    }
+
+    if (Array.isArray(data.webPushSubscriptions)) {
+      for (const s of data.webPushSubscriptions) {
+        if (s && typeof s.endpoint === "string" && s.keys?.p256dh && s.keys?.auth) {
+          webPushSubs.push(s as StoredPushSubscription);
+        }
+      }
     }
   }
 
+  // 1. Send Web Push to Safari / Chrome installed PWAs
+  if (webPushSubs.length > 0) {
+    try {
+      await fetch("/api/web-push", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          subscriptions: webPushSubs,
+          payload: {
+            title: opts.title,
+            body: opts.body,
+            url: opts.url || (opts.tab ? `/dashboard?tab=${opts.tab}` : "/dashboard"),
+            tab: opts.tab || (opts.taskId ? "tasks" : undefined),
+            taskId: opts.taskId,
+            urgent: opts.urgent,
+          },
+        }),
+      });
+    } catch (err) {
+      console.warn("[WebPush] API error:", err);
+    }
+  }
+
+  // 2. Send Expo Push to native mobile APK installs
   if (messages.length === 0) {
-    console.warn("[ExpoPush] No workers have expoPushToken — is the mobile APK (not Expo Go) installed and logged in?");
     return;
   }
 
@@ -179,6 +229,22 @@ export async function sendChatNotificationToWorkers(
       console.warn("[ExpoPush] send failed", e);
     }
   }
+
+  import("./adminNotifications")
+    .then(({ notifyAdmins }) =>
+      notifyAdmins(db, {
+        targetRoles: ["super_admin", "ops_admin"],
+        category: "chat",
+        eventType: "task_chat_message",
+        title: `💬 Task Chat: ${params.taskTitle}`,
+        body: `${params.senderName}: ${preview}`,
+        href: `/admin/tasks?task=${encodeURIComponent(params.taskId)}`,
+        actorUid: params.senderUid,
+        actorName: params.senderName,
+        taskId: params.taskId,
+      }),
+    )
+    .catch(() => {});
 }
 
 export async function sendChatNotificationToAdmin(
