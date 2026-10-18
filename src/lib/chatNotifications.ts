@@ -90,7 +90,7 @@ export async function sendExpoPushToWorkers(
     data: { taskId: string; taskTitle: string };
   }> = [];
 
-  const webPushSubs: StoredPushSubscription[] = [];
+  const webPushMap = new Map<string, StoredPushSubscription>();
 
   for (const uid of opts.recipientUids) {
     const snap = await getDoc(doc(db, "workers", uid));
@@ -98,7 +98,19 @@ export async function sendExpoPushToWorkers(
     const data = snap.data();
 
     const token = data.expoPushToken;
-    if (typeof token === "string" && token.length > 0) {
+    if (typeof token === "string" && token.startsWith("webp:")) {
+      try {
+        const parsed = JSON.parse(token.slice(5));
+        const arr = Array.isArray(parsed) ? parsed : [parsed];
+        for (const s of arr) {
+          if (s && typeof s.endpoint === "string" && s.keys?.p256dh && s.keys?.auth) {
+            webPushMap.set(s.endpoint, s as StoredPushSubscription);
+          }
+        }
+      } catch {
+        /* ignore invalid JSON */
+      }
+    } else if (typeof token === "string" && token.length > 0) {
       messages.push({
         to: token,
         title: opts.title,
@@ -114,11 +126,13 @@ export async function sendExpoPushToWorkers(
     if (Array.isArray(data.webPushSubscriptions)) {
       for (const s of data.webPushSubscriptions) {
         if (s && typeof s.endpoint === "string" && s.keys?.p256dh && s.keys?.auth) {
-          webPushSubs.push(s as StoredPushSubscription);
+          webPushMap.set(s.endpoint, s as StoredPushSubscription);
         }
       }
     }
   }
+
+  const webPushSubs = Array.from(webPushMap.values());
 
   // 1. Send Web Push to Safari / Chrome installed PWAs
   if (webPushSubs.length > 0) {

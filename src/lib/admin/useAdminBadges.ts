@@ -22,6 +22,8 @@ const DEFAULT_VAPID_PUBLIC_KEY =
   process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ||
   "BC4qV_AA_NGWwJUuOf3I5pKrblvWSHOhhSdY-F0ENgdfzZ3tqFEGPG6HcIj0tv-i8yGkeJA5puekWty8rLH5KQM";
 
+const ADMIN_LOCAL_SUB_KEY = "mft.admin.webPush.sub";
+
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
   const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
@@ -63,6 +65,7 @@ export async function syncAdminWebPush(): Promise<boolean> {
   if (typeof window === "undefined" || !("serviceWorker" in navigator)) return false;
   try {
     const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+    void reg.update().catch(() => {});
     await navigator.serviceWorker.ready;
     if (!("PushManager" in window) || Notification.permission !== "granted") return false;
 
@@ -76,8 +79,7 @@ export async function syncAdminWebPush(): Promise<boolean> {
     }
     const u = auth.currentUser;
     const subJson = sub.toJSON();
-    if (u && subJson.endpoint && subJson.keys?.p256dh && subJson.keys?.auth) {
-      const role = getAdminRole(u.email);
+    if (subJson.endpoint && subJson.keys?.p256dh && subJson.keys?.auth) {
       const entry: StoredPushSubscription = {
         endpoint: subJson.endpoint,
         expirationTime: subJson.expirationTime ?? null,
@@ -85,30 +87,87 @@ export async function syncAdminWebPush(): Promise<boolean> {
         userAgent: typeof navigator !== "undefined" ? navigator.userAgent.slice(0, 160) : "",
         createdAt: new Date().toISOString(),
       };
-      const ref = doc(db, "adminPushSubscriptions", u.uid);
-      const existingSnap = await getDoc(ref).catch(() => null);
-      const existingList: StoredPushSubscription[] = Array.isArray(existingSnap?.data()?.subscriptions)
-        ? existingSnap!.data()!.subscriptions
-        : [];
-      const filtered = existingList.filter((s) => s && typeof s.endpoint === "string" && s.endpoint !== entry.endpoint);
-      const subscriptions = [entry, ...filtered].slice(0, 5);
+      try {
+        localStorage.setItem(ADMIN_LOCAL_SUB_KEY, JSON.stringify(entry));
+      } catch {
+        /* ignore */
+      }
 
-      await setDoc(
-        ref,
-        {
+      if (u) {
+        const role = getAdminRole(u.email);
+        const fallbackRef = doc(db, "alerts", `admin_push_${u.uid}`);
+        const existingFallback = await getDoc(fallbackRef).catch(() => null);
+        const existingPrimary = await getDoc(doc(db, "adminPushSubscriptions", u.uid)).catch(() => null);
+        const existingList: StoredPushSubscription[] = Array.isArray(existingPrimary?.data()?.subscriptions)
+          ? existingPrimary!.data()!.subscriptions
+          : Array.isArray(existingFallback?.data()?.subscriptions)
+          ? existingFallback!.data()!.subscriptions
+          : [];
+        const filtered = existingList.filter((s) => s && typeof s.endpoint === "string" && s.endpoint !== entry.endpoint);
+        const subscriptions = [entry, ...filtered].slice(0, 5);
+
+        const docData = {
           uid: u.uid,
           email: u.email ?? "",
           role,
           subscription: entry,
           subscriptions,
           updatedAt: serverTimestamp(),
-        },
-        { merge: true },
-      );
+        };
+
+        await setDoc(
+          fallbackRef,
+          {
+            ...docData,
+            type: "admin_push_sub",
+            isRead: true,
+            hasPenalty: false,
+          },
+          { merge: true },
+        ).catch(() => {});
+
+        await setDoc(doc(db, "adminPushSubscriptions", u.uid), docData, { merge: true }).catch(() => {});
+      }
     }
     return true;
   } catch (err) {
     console.warn("[AdminWebPush] sync failed:", err);
+    return false;
+  }
+}
+
+export async function testAdminLockScreenPush(): Promise<boolean> {
+  await setDesktopNotify(true);
+  const subs: StoredPushSubscription[] = [];
+  try {
+    const raw = localStorage.getItem(ADMIN_LOCAL_SUB_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as StoredPushSubscription;
+      if (parsed?.endpoint && parsed?.keys?.p256dh && parsed?.keys?.auth) {
+        subs.push(parsed);
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  if (subs.length === 0) return false;
+  try {
+    const res = await fetch("/api/web-push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        subscriptions: subs,
+        delayMs: 4000,
+        payload: {
+          title: "MFT Admin Lock Screen Alert 🔔",
+          body: "Lock-screen & background push notifications are active on your device!",
+          url: "/admin",
+          urgent: true,
+        },
+      }),
+    });
+    return res.ok;
+  } catch {
     return false;
   }
 }
@@ -139,22 +198,33 @@ const ALERT_COPY: Partial<Record<BadgeKey, { title: string; body: (n: number) =>
 };
 
 async function showSwOrDesktopNotification(title: string, body: string, tag: string, href: string) {
+  const uniqueTag = `${tag}-${Date.now()}`;
   try {
     const reg = await navigator.serviceWorker?.getRegistration("/");
+    if (reg && typeof reg.showNotification === "function") {
+      try {
+        await reg.showNotification(title, {
+          body,
+          icon: "/icons/icon-192.png",
+          badge: "/icons/icon-192.png",
+          tag: uniqueTag,
+          silent: false,
+          data: { url: href },
+        });
+        return;
+      } catch {
+        await reg.showNotification(title, {
+          body,
+          icon: "/icons/icon-192.png",
+          data: { url: href },
+        });
+        return;
+      }
+    }
     if (reg?.active) {
       reg.active.postMessage({
         type: "SHOW_LOCAL_NOTIFICATION",
-        payload: { title, body, tag, url: href },
-      });
-      return;
-    }
-    if (reg && typeof reg.showNotification === "function") {
-      await reg.showNotification(title, {
-        body,
-        icon: "/icons/icon-192.png",
-        badge: "/icons/icon-192.png",
-        tag,
-        data: { url: href },
+        payload: { title, body, tag: uniqueTag, url: href },
       });
       return;
     }
@@ -162,7 +232,7 @@ async function showSwOrDesktopNotification(title: string, body: string, tag: str
     /* fallback below */
   }
   try {
-    const n = new Notification(title, { body, tag, icon: "/icons/icon-192.png" });
+    const n = new Notification(title, { body, tag: uniqueTag, icon: "/icons/icon-192.png" });
     n.onclick = () => {
       window.focus();
       navigateTo(href);
@@ -180,7 +250,7 @@ function notifyIncrease(key: BadgeKey, count: number) {
     description: copy.body(count),
     action: { label: "View", onClick: () => navigateTo(copy.href) },
   });
-  if (desktopNotifyEnabled() && document.hidden) {
+  if (desktopNotifyEnabled()) {
     void showSwOrDesktopNotification(`MFT · ${copy.title}`, copy.body(count), `mft-${key}`, copy.href);
   }
 }

@@ -13,8 +13,8 @@ import {
   type Firestore,
   type Unsubscribe,
 } from "firebase/firestore";
-import { sendExpoPushToWorkers } from "@/lib/chatNotifications";
-import { notifyAdmins } from "@/lib/adminNotifications";
+import { sendExpoPushToWorkers } from "./chatNotifications";
+import { notifyAdmins } from "./adminNotifications";
 
 export type ProjectChatMessage = {
   id: string;
@@ -33,22 +33,58 @@ export function subscribeProjectChat(
   callback: (msgs: ProjectChatMessage[]) => void,
   onError?: (err: Error) => void,
 ): Unsubscribe {
-  const q = query(
+  const qTask = query(
+    collection(db, "tasks", `project_${projectId}`, "messages"),
+    orderBy("createdAt", "asc"),
+  );
+  const qProj = query(
     collection(db, "projects", projectId, "messages"),
     orderBy("createdAt", "asc"),
   );
-  return onSnapshot(
-    q,
+
+  let taskMsgs: ProjectChatMessage[] = [];
+  let projMsgs: ProjectChatMessage[] = [];
+
+  const emitMerged = () => {
+    const map = new Map<string, ProjectChatMessage>();
+    for (const m of [...projMsgs, ...taskMsgs]) {
+      const key = `${m.senderUid}_${m.text}_${m.createdAt?.toDate?.()?.getTime() ?? m.id}`;
+      if (!map.has(key)) map.set(key, m);
+    }
+    const merged = Array.from(map.values()).sort((a, b) => {
+      const ta = a.createdAt?.toDate?.()?.getTime() ?? 0;
+      const tb = b.createdAt?.toDate?.()?.getTime() ?? 0;
+      return ta - tb;
+    });
+    callback(merged);
+  };
+
+  const unsub1 = onSnapshot(
+    qTask,
     (snap) => {
-      callback(
-        snap.docs.map((d) => ({ id: d.id, ...d.data() }) as ProjectChatMessage),
-      );
+      taskMsgs = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as ProjectChatMessage);
+      emitMerged();
     },
     (err) => {
-      console.warn("[ProjectChat] Firestore listener error:", err.message);
       onError?.(err);
     },
   );
+
+  const unsub2 = onSnapshot(
+    qProj,
+    (snap) => {
+      projMsgs = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as ProjectChatMessage);
+      emitMerged();
+    },
+    () => {
+      /* ignore if projects/{id}/messages rule is not deployed yet */
+    },
+  );
+
+  return () => {
+    unsub1();
+    unsub2();
+  };
 }
 
 export async function sendProjectMessage(
@@ -61,37 +97,41 @@ export async function sendProjectMessage(
     senderName: string;
     senderRole: "worker" | "admin";
     senderTitle?: string;
+    recipientWorkerIds: string[];
     isSystem?: boolean;
-    recipientWorkerIds?: string[];
   },
 ): Promise<void> {
   const trimmed = params.text.trim();
   if (!trimmed) return;
 
-  await addDoc(collection(db, "projects", params.projectId, "messages"), {
+  const msgData = {
     text: trimmed,
     senderUid: params.senderUid,
     senderName: params.senderName,
     senderRole: params.senderRole,
-    senderTitle: params.senderTitle ?? (params.senderRole === "admin" ? "Admin" : "Team Member"),
+    senderTitle: params.senderTitle || (params.senderRole === "admin" ? "Management" : "Team Member"),
     isSystem: Boolean(params.isSystem),
     createdAt: serverTimestamp(),
-  });
+  };
 
-  // Update project summary metadata for quick preview in hub
+  await addDoc(collection(db, "tasks", `project_${params.projectId}`, "messages"), msgData);
+  await addDoc(collection(db, "projects", params.projectId, "messages"), msgData).catch(() => {});
+
+  const preview = trimmed.length > 80 ? `${trimmed.slice(0, 80)}…` : trimmed;
+
+  // Update project last-message metadata
   await updateDoc(doc(db, "projects", params.projectId), {
     lastMessageAt: serverTimestamp(),
-    lastMessageText: trimmed.slice(0, 120),
+    lastMessageText: preview,
     lastMessageSender: params.senderName,
     updatedAt: serverTimestamp(),
   }).catch(() => {});
 
-  const preview = trimmed.length > 80 ? `${trimmed.slice(0, 80)}…` : trimmed;
-  const targets = (params.recipientWorkerIds ?? []).filter(
+  const targets = params.recipientWorkerIds.filter(
     (uid) => Boolean(uid) && uid !== params.senderUid,
   );
 
-  // Notify workers in the project group
+  // 1. Notify assigned workers on this project
   if (targets.length > 0) {
     await Promise.all(
       targets.map((uid) =>
@@ -121,8 +161,8 @@ export async function sendProjectMessage(
     }).catch(() => {});
   }
 
-  // Notify Super Admin & Account Manager (ops_admin)
-  void notifyAdmins(db, {
+  // 2. Notify Super Admin & Account Manager (ops_admin)
+  await notifyAdmins(db, {
     targetRoles: ["super_admin", "ops_admin"],
     category: "chat",
     eventType: "project_chat_message",

@@ -18,7 +18,7 @@ import {
   isPathAllowedForRole,
   type NavItem,
 } from "@/lib/admin/nav";
-import { useAdminBadges, desktopNotifyEnabled, desktopNotifySupported, setDesktopNotify } from "@/lib/admin/useAdminBadges";
+import { useAdminBadges, desktopNotifyEnabled, desktopNotifySupported, setDesktopNotify, testAdminLockScreenPush } from "@/lib/admin/useAdminBadges";
 import { markAdminNotificationRead, markAllAdminNotificationsRead } from "@/lib/adminNotifications";
 import { isSoundEnabled, playAdminSound, setSoundEnabled } from "@/lib/admin/sound";
 import { FeedbackHost, confirmDialog, toast } from "@/lib/admin/feedback";
@@ -458,17 +458,36 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                     <span className="text-xs text-zinc-500">{totalAlerts} open</span>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => void toggleDesktop()}
-                  className="flex w-full items-center gap-3 border-b border-zinc-100 bg-zinc-50 px-4 py-2.5 text-left transition-colors hover:bg-zinc-100 cursor-pointer"
-                >
+                <div className="flex w-full items-center gap-3 border-b border-zinc-100 bg-zinc-50 px-4 py-2.5 text-left">
                   <Icon d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" className="h-4 w-4 text-zinc-500" />
-                  <span className="flex-1 text-xs text-zinc-700">Background &amp; mobile push alerts</span>
-                  <span className={`relative h-5 w-9 rounded-full transition-colors ${desktopOn ? "bg-red-600" : "bg-zinc-300"}`}>
+                  <span className="flex-1 text-xs text-zinc-700">Lock screen &amp; mobile push</span>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      toast.info("🔒 Lock your phone screen now!", {
+                        description: "Sending lock-screen push alert in 4 seconds...",
+                      });
+                      const ok = await testAdminLockScreenPush();
+                      setDesktopOn(desktopNotifyEnabled());
+                      if (!ok) {
+                        toast.warning("Enable push alerts first", {
+                          description: "Allow notifications in your browser/phone settings.",
+                        });
+                      }
+                    }}
+                    className="rounded border border-zinc-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-zinc-600 hover:bg-zinc-100 cursor-pointer"
+                  >
+                    Test (4s)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void toggleDesktop()}
+                    aria-label="Toggle push notifications"
+                    className={`relative h-5 w-9 rounded-full transition-colors cursor-pointer ${desktopOn ? "bg-red-600" : "bg-zinc-300"}`}
+                  >
                     <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${desktopOn ? "left-[18px]" : "left-0.5"}`} />
-                  </span>
-                </button>
+                  </button>
+                </div>
                 <div className="flex w-full items-center gap-3 border-b border-zinc-100 bg-zinc-50/70 px-4 py-2 text-left">
                   <Icon d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" className="h-4 w-4 text-zinc-500" />
                   <span className="flex-1 text-xs text-zinc-700">Notification sound (mobile &amp; desktop)</span>
