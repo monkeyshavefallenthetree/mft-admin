@@ -359,7 +359,35 @@ test("validatePermissionRequest: blocked with minutes_exhausted when 90m request
   assert.equal(v.ok, false);
   assert.equal(v.reasonCode, "minutes_exhausted");
   assert.deepEqual(v.allowedDurations, [30, 45, 60]);
-  assert.match(v.reasonAr, /المتبقي في رصيد ساعاتك الشهري هو ٦٠ دقيقة فقط/);
+  assert.match(v.reasonAr!, /المتبقي في رصيد ساعاتك الشهري هو ٦٠ دقيقة فقط/);
+});
+test("validatePermissionRequest: blocks multiple permissions exceeding 120m in the same day", () => {
+  // Already used 90m today -> requesting 45m (90 + 45 = 135 > 120) is blocked; only 30m is allowed
+  const vBlocked = validatePermissionRequest(45, { count: 1, minutes: 90 }, undefined, { dailyUsedMinutes: 90 });
+  assert.equal(vBlocked.ok, false);
+  assert.equal(vBlocked.reasonCode, "over_single_cap");
+  assert.deepEqual(vBlocked.allowedDurations, [30]);
+  assert.match(vBlocked.reasonAr!, /إجمالي الأذونات في اليوم الواحد لا يجوز أن يتجاوز ساعتين/);
+
+  // Requesting 30m (90 + 30 = 120) is allowed
+  const vOk = validatePermissionRequest(30, { count: 1, minutes: 90 }, undefined, { dailyUsedMinutes: 90 });
+  assert.equal(vOk.ok, true);
+  assert.equal(vOk.remainingDailyMinutes, 30);
+
+  // Already used 120m today -> 0m left today, any additional permission on the same day is blocked
+  const vFull = validatePermissionRequest(30, { count: 1, minutes: 120 }, undefined, { dailyUsedMinutes: 120 });
+  assert.equal(vFull.ok, false);
+  assert.equal(vFull.reasonCode, "over_single_cap");
+  assert.deepEqual(vFull.allowedDurations, []);
+});
+test("validatePermissionRequest: blocks duplicate permission of the same kind on the same day", () => {
+  const v = validatePermissionRequest(30, { count: 1, minutes: 30 }, undefined, {
+    dailyUsedMinutes: 30,
+    sameKindAlreadyBooked: true,
+  });
+  assert.equal(v.ok, false);
+  assert.equal(v.reasonCode, "over_single_cap");
+  assert.deepEqual(v.allowedDurations, []);
 });
 
 console.log(`\n${passed} passed, ${failures.length} failed`);

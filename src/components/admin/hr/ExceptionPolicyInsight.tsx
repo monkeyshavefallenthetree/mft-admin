@@ -93,7 +93,8 @@ export function checkMonthlyPermission(
   all: InsightRequest[],
   cfg: Policy2026Config,
 ) {
-  const targetYm = (req.exceptionDate || ymd(new Date())).slice(0, 7);
+  const targetDate = req.exceptionDate || ymd(new Date());
+  const targetYm = targetDate.slice(0, 7);
   const approvedInMonth = all.filter(
     (r) =>
       r.id !== req.id &&
@@ -102,12 +103,22 @@ export function checkMonthlyPermission(
       r.status === "approved" &&
       (r.exceptionDate || "").slice(0, 7) === targetYm,
   );
+  const approvedOnDate = approvedInMonth.filter((r) => r.exceptionDate === targetDate);
+  const dailyUsedMinutes = approvedOnDate.reduce(
+    (sum, r) => sum + chargeableMinutes(Number(r.lateMinutes) || 30, cfg),
+    0,
+  );
+  const sameKindAlreadyBooked = approvedOnDate.some((r) => r.type === req.type);
   const usage: CycleUsage = {
     count: approvedInMonth.length,
     minutes: approvedInMonth.reduce((sum, r) => sum + chargeableMinutes(Number(r.lateMinutes) || 30, cfg), 0),
   };
   const requestedMins = Number(req.lateMinutes) || 30;
-  const verdict = validatePermissionRequest(requestedMins, usage, cfg);
+  const verdict = validatePermissionRequest(requestedMins, usage, cfg, {
+    dailyUsedMinutes,
+    dailyUsedCount: approvedOnDate.length,
+    sameKindAlreadyBooked,
+  });
   return { usage, verdict };
 }
 
