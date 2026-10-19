@@ -447,7 +447,12 @@ export default function AdminHRPage() {
         .filter(
           (r) =>
             r.workerId === workerId &&
-            (r.type === "annual_leave" || r.type === "absence" || r.type === "absent") &&
+            (r.type === "annual_leave" ||
+              r.type === "unpaid_leave" ||
+              r.type === "sick_leave" ||
+              r.type === "emergency_leave" ||
+              r.type === "absence" ||
+              r.type === "absent") &&
             r.exceptionDate >= s &&
             r.exceptionDate <= e,
         )

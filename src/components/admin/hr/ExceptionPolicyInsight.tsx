@@ -116,6 +116,42 @@ export default function ExceptionPolicyInsight({
     );
   }
 
+  if (req.type === "unpaid_leave") {
+    return (
+      <div className="mt-3 rounded-lg border border-teal-200 bg-teal-50/70 px-3 py-2.5 text-xs text-teal-900">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="font-semibold">
+            ✅ Unpaid Leave (إجازة بدون مرتب) · {leaveDaysOf(req)} day(s)
+          </span>
+          <span dir="rtl" className="rounded border border-teal-300 bg-white px-1.5 py-0.5 text-[10px] font-bold text-teal-800">
+            متاحة أول ٦ شهور وبعدها
+          </span>
+        </div>
+        <p className="mt-1 text-teal-800" dir="rtl">
+          الإجازة بدون مرتب متاحة خلال أول ٦ شهور (فترة الاختبار) وبعدها. عند الموافقة يتم إعفاء الموظف من مضاعف جزاء الغياب بدون إذن ويُخصم أجر اليوم فقط كإجازة بدون مرتب.
+        </p>
+      </div>
+    );
+  }
+
+  if (req.type === "advance_late") {
+    return (
+      <div className="mt-3 rounded-lg border border-violet-200 bg-violet-50/70 px-3 py-2.5 text-xs text-violet-900">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="font-semibold">
+            ⏰ Advance Late Permission (إذن تأخير مسبق) · {req.lateMinutes || 30} min on {req.exceptionDate || "target date"}
+          </span>
+          <span dir="rtl" className="rounded border border-violet-300 bg-white px-1.5 py-0.5 text-[10px] font-bold text-violet-800">
+            إذن مسبق ليوم معين
+          </span>
+        </div>
+        <p className="mt-1 text-violet-800" dir="rtl">
+          عند الموافقة، يتم تسجيل إذن تأخير معتمد تلقائيًا ليوم {req.exceptionDate} بحيث لا يُطبّق خصم تأخير على الموظف في ذلك اليوم.
+        </p>
+      </div>
+    );
+  }
+
   if (req.type === "overtime" && Number(req.lateMinutes) > 0) {
     const rate = worker?.hourlyRate || defaultHourlyRate;
     const latestEnd = parseHm(cfg.lateCutoffTime) + Math.round(cfg.standardHours * 60);

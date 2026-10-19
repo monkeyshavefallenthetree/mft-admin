@@ -342,7 +342,7 @@ export interface ApprovedRequestRow {
   status: string;
 }
 
-/** Approved overtime + annual-leave requests (used by payroll and leave balances). */
+/** Approved overtime + leave requests (used by payroll and leave balances). */
 export function subscribeApprovedPolicyRequests(callback: (rows: ApprovedRequestRow[]) => void): () => void {
   const q = query(collection(db, "exceptionRequests"), where("status", "==", "approved"));
   return onSnapshot(
@@ -351,7 +351,15 @@ export function subscribeApprovedPolicyRequests(callback: (rows: ApprovedRequest
       const list: ApprovedRequestRow[] = [];
       snap.forEach((d) => {
         const data = d.data();
-        if (data.type === "overtime" || data.type === "annual_leave") {
+        if (
+          data.type === "overtime" ||
+          data.type === "annual_leave" ||
+          data.type === "unpaid_leave" ||
+          data.type === "sick_leave" ||
+          data.type === "emergency_leave" ||
+          data.type === "absence" ||
+          data.type === "absent"
+        ) {
           list.push({ id: d.id, ...data } as ApprovedRequestRow);
         }
       });

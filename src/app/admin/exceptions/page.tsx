@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { collection, onSnapshot, doc, updateDoc, serverTimestamp, writeBatch, addDoc } from "firebase/firestore";
+import { collection, onSnapshot, doc, setDoc, updateDoc, serverTimestamp, writeBatch, addDoc } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 import { downloadCsv } from "@/lib/admin/csv";
 import { useUrlState } from "@/lib/admin/useUrlState";
@@ -42,12 +42,14 @@ interface ExceptionRequest {
 }
 
 function formatExceptionType(type: string | undefined) {
-  if (type === "late") return "Late arrival";
-  if (type === "absent") return "Absent for day";
-  if (type === "overtime") return "Overtime request";
-  if (type === "annual_leave") return "Annual Leave (سنوية)";
-  if (type === "sick_leave") return "Sick Leave (مرضية)";
-  if (type === "emergency_leave") return "Emergency Leave (عارضة)";
+  if (type === "late") return "Late arrival (تأخير)";
+  if (type === "advance_late") return "Advance Late Permission (إذن تأخير مسبق)";
+  if (type === "absent") return "Absent for day (غياب)";
+  if (type === "overtime") return "Overtime request (وقت إضافي)";
+  if (type === "annual_leave") return "Annual Leave (إجازة سنوية)";
+  if (type === "unpaid_leave") return "Unpaid Leave (إجازة بدون مرتب)";
+  if (type === "sick_leave") return "Sick Leave (إجازة مرضية)";
+  if (type === "emergency_leave") return "Emergency Leave (إجازة عارضة)";
   if (type === "advance_request") return "Salary Advance (سلفة)";
   return type || "Other";
 }
@@ -254,6 +256,27 @@ export default function AdminExceptionsPage() {
             createdBy: adminId(),
           });
         }
+        // Automatically record a covered permission ledger entry when an advance late permission or late excuse is approved
+        if ((e?.type === "advance_late" || e?.type === "late") && e.workerId && e.exceptionDate) {
+          void setDoc(
+            doc(db, "permissionLedger", `${e.workerId}_${e.exceptionDate}_late`),
+            {
+              workerId: e.workerId,
+              workerName: e.workerName || "Worker",
+              date: e.exceptionDate,
+              kind: "late",
+              actualMinutes: Number(e.lateMinutes) || 30,
+              chargedMinutes: e.type === "advance_late" ? Math.max(30, Number(e.lateMinutes) || 30) : 0,
+              covered: true,
+              status: "applied",
+              source: "admin",
+              note: `[Approved ${e.type}] ${e.reason || ""}`.trim(),
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            },
+            { merge: true },
+          );
+        }
       });
       toast.success(ids.length === 1 ? "Request approved" : `${ids.length} requests approved`);
       setSelected(new Set());
@@ -456,11 +479,13 @@ export default function AdminExceptionsPage() {
             <Svg d={STATE_ICONS.search} className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
             <input id="exceptions-search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search worker, email or reason…" className="brutal-input pl-9" />
           </div>
-          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="brutal-input md:w-44">
+          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="brutal-input md:w-52">
             <option value="">All request types</option>
             <option value="late">Late arrival</option>
+            <option value="advance_late">Advance Late (إذن تأخير مسبق)</option>
             <option value="absent">Absence</option>
             <option value="overtime">Overtime</option>
+            <option value="unpaid_leave">Unpaid Leave (إجازة بدون مرتب)</option>
             <option value="annual_leave">Annual Leave (سنوية)</option>
             <option value="sick_leave">Sick Leave (مرضية)</option>
             <option value="emergency_leave">Emergency Leave (عارضة)</option>
@@ -543,14 +568,16 @@ export default function AdminExceptionsPage() {
                             ? "border-blue-200 bg-blue-50 text-blue-700"
                             : e.type === "advance_request"
                               ? "border-amber-300 bg-amber-50 text-amber-900 font-bold"
-                              : ["annual_leave", "sick_leave", "emergency_leave"].includes(e.type || "")
-                                ? "border-emerald-200 bg-emerald-50 text-emerald-800 font-semibold"
-                                : "border-orange-200 bg-orange-50 text-orange-700"
+                              : e.type === "advance_late"
+                                ? "border-sky-300 bg-sky-50 text-sky-900 font-semibold"
+                                : ["annual_leave", "unpaid_leave", "sick_leave", "emergency_leave"].includes(e.type || "")
+                                  ? "border-emerald-200 bg-emerald-50 text-emerald-800 font-semibold"
+                                  : "border-orange-200 bg-orange-50 text-orange-700"
                       }`}>
                         {formatExceptionType(e.type)}
-                        {e.type === "late" && e.lateMinutes != null ? ` · ${e.lateMinutes} min` : ""}
+                        {(e.type === "late" || e.type === "advance_late") && e.lateMinutes != null ? ` · ${e.lateMinutes} min` : ""}
                         {e.type === "overtime" && e.lateMinutes != null ? ` · +${e.lateMinutes} min` : ""}
-                        {e.type === "annual_leave" ? ` · ${Number(e.leaveDays) > 0 ? e.leaveDays : 1}d` : ""}
+                        {e.type === "annual_leave" || e.type === "unpaid_leave" ? ` · ${Number(e.leaveDays) > 0 ? e.leaveDays : 1}d` : ""}
                         {e.type === "advance_request" && e.requestedAmount != null ? ` · $${e.requestedAmount}` : ""}
                       </span>
                       <span className={`rounded-md border px-2 py-0.5 text-[11px] font-semibold capitalize ${STATUS_STYLE[st] ?? STATUS_STYLE.pending}`}>{st}</span>
