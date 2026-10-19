@@ -13,7 +13,7 @@ import { BulkBar, BulkButton, EmptyState, PageHeader, SkeletonRows, STATE_ICONS 
 import { ICONS } from "@/lib/admin/nav";
 import ModalPortal from "@/components/admin/ui/ModalPortal";
 import ExceptionPolicyInsight, { checkAnnualLeave, type InsightWorker } from "@/components/admin/hr/ExceptionPolicyInsight";
-import { policyConfigFromSettings } from "@/lib/admin/hrPolicy2026";
+import { chargeableMinutes, policyConfigFromSettings } from "@/lib/admin/hrPolicy2026";
 import { DEFAULT_HR_SETTINGS, type HrSettings } from "@/lib/admin/hrReports";
 import { subscribeHrSettings } from "@/lib/admin/hrSettings";
 
@@ -258,6 +258,7 @@ export default function AdminExceptionsPage() {
         }
         // Automatically record a covered permission ledger entry when an advance late permission or late excuse is approved
         if ((e?.type === "advance_late" || e?.type === "late") && e.workerId && e.exceptionDate) {
+          const actualMins = Number(e.lateMinutes) || 30;
           void setDoc(
             doc(db, "permissionLedger", `${e.workerId}_${e.exceptionDate}_late`),
             {
@@ -265,11 +266,12 @@ export default function AdminExceptionsPage() {
               workerName: e.workerName || "Worker",
               date: e.exceptionDate,
               kind: "late",
-              actualMinutes: Number(e.lateMinutes) || 30,
-              chargedMinutes: e.type === "advance_late" ? Math.max(30, Number(e.lateMinutes) || 30) : 0,
+              actualMinutes: actualMins,
+              chargedMinutes: e.type === "advance_late" ? chargeableMinutes(actualMins, policyCfg) : 0,
               covered: true,
               status: "applied",
               source: "admin",
+              reason: `[Approved ${e.type}] ${e.reason || ""}`.trim(),
               note: `[Approved ${e.type}] ${e.reason || ""}`.trim(),
               createdAt: serverTimestamp(),
               updatedAt: serverTimestamp(),

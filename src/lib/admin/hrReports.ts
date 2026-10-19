@@ -398,6 +398,11 @@ export type PayrollComputed = {
   /** Always 0 under HR-POL-2026: unpaid minutes are already excluded from base pay. Kept for compatibility. */
   shortfallDeduction: number;
   reimbursements: number;
+  /** Approved paid leave days (annual / sick / emergency / official) paid at standard daily pay. */
+  paidLeaveDays: number;
+  paidLeavePay: number;
+  /** Approved unpaid leave days (exempted from 2x absence penalty, unpaid for the day itself). */
+  unpaidLeaveDays: number;
 };
 
 export interface ApprovedOvertimeItem {
@@ -458,8 +463,12 @@ export function computePayrollForWorker(
      * absence penalties for days before the worker joined or onboarded onto MFT.
      */
     workerStartDate?: string | null;
-    /** Approved annual leave / excused days in this period (subtracted from absentDays). */
+    /** Approved total excused leave days in this period (subtracted from absentDays). */
     approvedLeaveDays?: number;
+    /** Approved paid leave days (annual / sick / emergency / official) — paid at standard daily pay. */
+    paidLeaveDays?: number;
+    /** Approved unpaid leave days — exempted from 2x absence penalty, unpaid for the day itself. */
+    unpaidLeaveDays?: number;
     /** When true, do not count future days after today as absent in an in-progress cycle. */
     capAtToday?: boolean;
   },
@@ -503,7 +512,7 @@ export function computePayrollForWorker(
   let runningUsage: CycleUsage = { count: 0, minutes: 0 };
   // Admin "manual" permissions still consume quota, in date order.
   const manualEntries = ledger
-    .filter((e) => e.kind === "manual" && e.status === "applied" && e.covered)
+    .filter((e) => e.kind === "manual" && e.status === "applied" && e.covered && (e.chargedMinutes || 0) > 0)
     .sort((a, b) => a.date.localeCompare(b.date));
   let manualIdx = 0;
   const consumeManualUpTo = (date: string) => {
@@ -557,22 +566,35 @@ export function computePayrollForWorker(
       let permissionPaidMin = 0;
 
       if (firstIn) {
-        // Lateness: minutes & quota come from attendance; the ledger only records the worker's
-        // choice (use a permission vs. accept the salary deduction). No entry → use a permission if possible.
         const ev = evaluateClockIn(firstIn, runningUsage, pcfg);
         if (ev.status !== "on-time") {
           const lateEntry = ledgerFor(date, "late");
-          const wantsPermission = lateEntry ? lateEntry.covered : true;
-          if (wantsPermission && ev.status === "late-covered") {
+          // 1. Admin-approved lateness excuse (chargedMinutes === 0, covered === true) → fully excused without consuming quota
+          if (lateEntry && lateEntry.covered && lateEntry.source === "admin" && (lateEntry.chargedMinutes || 0) === 0) {
             coveredLateCount++;
-            runningUsage = ev.usageAfter;
             permissionPaidMin += ev.lateMinutes;
-          } else {
-            const days = ev.status === "late-uncovered" ? ev.fallbackPenaltyDays : fallbackDaysFor(firstIn);
-            uncoveredLateCount++;
-            totalLatePenaltyDays += days;
-            if (days >= 0.5) veryLateDays++;
-            else lateDays++;
+          }
+          // 2. Admin-approved advance late permission (source === "admin", covered === true, chargedMinutes > 0)
+          else if (lateEntry && lateEntry.covered && lateEntry.source === "admin") {
+            coveredLateCount++;
+            const charged = lateEntry.chargedMinutes || ev.chargedMinutes || 30;
+            runningUsage = { count: runningUsage.count + 1, minutes: runningUsage.minutes + charged };
+            permissionPaidMin += ev.lateMinutes;
+          }
+          // 3. Standard worker / auto permission check
+          else {
+            const wantsPermission = lateEntry ? lateEntry.covered : true;
+            if (wantsPermission && ev.status === "late-covered") {
+              coveredLateCount++;
+              runningUsage = ev.usageAfter;
+              permissionPaidMin += ev.lateMinutes;
+            } else {
+              const days = ev.status === "late-uncovered" ? ev.fallbackPenaltyDays : fallbackDaysFor(firstIn);
+              uncoveredLateCount++;
+              totalLatePenaltyDays += days;
+              if (days >= 0.5) veryLateDays++;
+              else lateDays++;
+            }
           }
         }
 
@@ -617,6 +639,11 @@ export function computePayrollForWorker(
   }
   consumeManualUpTo("9999-12-31");
 
+  const paidLeaveDays = Math.max(0, options?.paidLeaveDays ?? 0);
+  const unpaidLeaveDays = Math.max(0, options?.unpaidLeaveDays ?? 0);
+  const paidLeavePay = paidLeaveDays * std * hr;
+  basePay += paidLeavePay;
+
   const overtimePay = legacyOvertimePay + otDayPay + otNightPay + nightAllowance;
   // Unpaid early-leave minutes are already excluded from base pay, so nothing more is deducted.
   const shortfallDeduction = 0;
@@ -645,8 +672,11 @@ export function computePayrollForWorker(
         })
       : 0;
 
-  const excusedLeave = Math.max(0, Math.round(options?.approvedLeaveDays ?? 0));
-  const absentDays = Math.max(0, expectedWorkDays - daysWorked - excusedLeave);
+  const totalExcusedLeave =
+    options?.approvedLeaveDays != null
+      ? Math.max(0, Math.round(options.approvedLeaveDays))
+      : Math.max(0, Math.round(paidLeaveDays + unpaidLeaveDays));
+  const absentDays = Math.max(0, expectedWorkDays - daysWorked - totalExcusedLeave);
   let absencePenalty = 0;
   if (absentDays > 0) {
     const mult = cfg.absencePenaltyMultiplier || 2;
@@ -719,6 +749,9 @@ export function computePayrollForWorker(
     shortfallMinutes,
     shortfallDeduction: Math.round(shortfallDeduction),
     reimbursements: Math.round(reimbursements),
+    paidLeaveDays,
+    paidLeavePay: Math.round(paidLeavePay),
+    unpaidLeaveDays,
   };
 }
 

@@ -814,7 +814,9 @@ export default function HrComplianceView({
                                       {t(`فعلي ${e.actualMinutes}د ← محتسب ${e.chargedMinutes}د`, `actual ${e.actualMinutes}m → charged ${e.chargedMinutes}m`)}{" "}
                                       ·{" "}
                                       {e.covered
-                                        ? t("مغطى بالرصيد", "covered")
+                                        ? (e.chargedMinutes || 0) === 0
+                                          ? t("استثناء معتمد (بدون خصم من الرصيد)", "approved excuse (0m quota)")
+                                          : t("مغطى بالرصيد", "covered")
                                         : t(`غير مغطى (خصم ${e.fallbackPenaltyDays ?? 0.25} يوم)`, `uncovered (${e.fallbackPenaltyDays ?? 0.25}d penalty)`)}
                                       {e.status === "reversed" && ` · ${t("ملغى", "reversed")}`}
                                     </div>

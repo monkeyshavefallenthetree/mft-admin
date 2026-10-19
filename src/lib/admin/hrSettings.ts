@@ -269,13 +269,24 @@ export async function excuseWorkerAbsence(payload: {
   reason: string;
   adminEmail?: string;
 }): Promise<string> {
+  const mappedType =
+    payload.leaveType === "annual"
+      ? "annual_leave"
+      : payload.leaveType === "unpaid"
+        ? "unpaid_leave"
+        : payload.leaveType === "sick"
+          ? "sick_leave"
+          : payload.leaveType === "casual"
+            ? "emergency_leave"
+            : "absent";
   const ref = collection(db, "exceptionRequests");
   const docRef = await addDoc(ref, {
     workerId: payload.workerId,
     workerName: payload.workerName,
     workerEmail: payload.workerEmail || "",
-    type: "absent",
+    type: mappedType,
     leaveType: payload.leaveType,
+    leaveDays: 1,
     exceptionDate: payload.date,
     reason: `[Approved Excuse: ${payload.leaveType.toUpperCase()}] ${payload.reason}`,
     status: "approved",
@@ -336,13 +347,14 @@ export interface ApprovedRequestRow {
   id: string;
   workerId: string;
   type: string;
+  leaveType?: string;
   exceptionDate: string;
   lateMinutes?: number | null;
   leaveDays?: number | null;
   status: string;
 }
 
-/** Approved overtime + leave requests (used by payroll and leave balances). */
+/** Approved overtime + leave + lateness requests (used by payroll and leave balances). */
 export function subscribeApprovedPolicyRequests(callback: (rows: ApprovedRequestRow[]) => void): () => void {
   const q = query(collection(db, "exceptionRequests"), where("status", "==", "approved"));
   return onSnapshot(
@@ -358,7 +370,9 @@ export function subscribeApprovedPolicyRequests(callback: (rows: ApprovedRequest
           data.type === "sick_leave" ||
           data.type === "emergency_leave" ||
           data.type === "absence" ||
-          data.type === "absent"
+          data.type === "absent" ||
+          data.type === "late" ||
+          data.type === "advance_late"
         ) {
           list.push({ id: d.id, ...data } as ApprovedRequestRow);
         }

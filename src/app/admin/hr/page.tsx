@@ -437,26 +437,31 @@ export default function AdminHRPage() {
     });
   }, [approved, workerSearch, departmentFilter, employmentFilter]);
 
-  /** Builds the HR-POL-2026 payroll inputs (ledger + approved OT + onboarding start date + excused leave) for one worker and period. */
+  /** Builds the HR-POL-2026 payroll inputs (ledger + approved OT + onboarding start date + paid/unpaid leave) for one worker and period. */
   const policyInputsFor = useCallback(
     (w: Worker, start: Date, end: Date) => {
       const workerId = w.id;
       const s = localYmd(start);
       const e = localYmd(end);
-      const approvedLeaveDays = approvedRequests
-        .filter(
-          (r) =>
-            r.workerId === workerId &&
-            (r.type === "annual_leave" ||
-              r.type === "unpaid_leave" ||
-              r.type === "sick_leave" ||
-              r.type === "emergency_leave" ||
-              r.type === "absence" ||
-              r.type === "absent") &&
-            r.exceptionDate >= s &&
-            r.exceptionDate <= e,
-        )
+      const leaveReqs = approvedRequests.filter(
+        (r) =>
+          r.workerId === workerId &&
+          (r.type === "annual_leave" ||
+            r.type === "unpaid_leave" ||
+            r.type === "sick_leave" ||
+            r.type === "emergency_leave" ||
+            r.type === "absence" ||
+            r.type === "absent") &&
+          r.exceptionDate >= s &&
+          r.exceptionDate <= e,
+      );
+      const unpaidLeaveDays = leaveReqs
+        .filter((r) => r.type === "unpaid_leave" || r.leaveType === "unpaid")
         .reduce((sum, r) => sum + (Number(r.leaveDays) > 0 ? Number(r.leaveDays) : 1), 0);
+      const paidLeaveDays = leaveReqs
+        .filter((r) => r.type !== "unpaid_leave" && r.leaveType !== "unpaid")
+        .reduce((sum, r) => sum + (Number(r.leaveDays) > 0 ? Number(r.leaveDays) : 1), 0);
+      const approvedLeaveDays = paidLeaveDays + unpaidLeaveDays;
       const fallbackStart = w.createdAt?.toDate ? localYmd(w.createdAt.toDate()) : null;
       return {
         permissionLedger: ledger.filter((l) => l.workerId === workerId && l.date >= s && l.date <= e),
@@ -470,6 +475,8 @@ export default function AdminHRPage() {
           )
           .map((r) => ({ date: r.exceptionDate, minutes: Number(r.lateMinutes) || 0 })),
         approvedLeaveDays,
+        paidLeaveDays,
+        unpaidLeaveDays,
         workerStartDate: w.attendanceStartDate || w.hireDate || fallbackStart,
         capAtToday: true,
       };

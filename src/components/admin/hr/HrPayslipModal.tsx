@@ -199,8 +199,30 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
                       `Regular Base Hours (${payroll.totalHours} hrs @ EGP ${payroll.hourlyRate}/h)`,
                     )}
                   </span>
-                  <span className="font-bold">EGP {payroll.basePay}</span>
+                  <span className="font-bold">EGP {Math.max(0, payroll.basePay - (payroll.paidLeavePay || 0))}</span>
                 </div>
+                {payroll.paidLeaveDays > 0 && (
+                  <div className="flex justify-between py-1.5 px-2 text-emerald-800 dark:text-emerald-300">
+                    <span>
+                      {t(
+                        `🌴 إجازات مدفوعة الأجر معتمدة (${payroll.paidLeaveDays} يوم)`,
+                        `🌴 Approved Paid Leave (${payroll.paidLeaveDays} day(s))`,
+                      )}
+                    </span>
+                    <span className="font-bold">+EGP {payroll.paidLeavePay}</span>
+                  </div>
+                )}
+                {payroll.unpaidLeaveDays > 0 && (
+                  <div className="flex justify-between py-1.5 px-2 text-teal-800 dark:text-teal-300">
+                    <span>
+                      {t(
+                        `📅 إجازة بدون مرتب معتمدة (${payroll.unpaidLeaveDays} يوم — معفاة من جزاء الغياب 2x)`,
+                        `📅 Approved Unpaid Leave (${payroll.unpaidLeaveDays} day(s) — exempted from 2x penalty)`,
+                      )}
+                    </span>
+                    <span className="font-bold">EGP 0</span>
+                  </div>
+                )}
                 {payroll.policyApplied ? (
                   <>
                     <div className="flex justify-between py-1.5 px-2">

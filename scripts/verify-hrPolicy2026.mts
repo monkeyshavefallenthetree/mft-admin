@@ -90,13 +90,15 @@ test("lateness 106 min → charged 120 and covered (boundary)", () => {
   assert.equal(r.status, "late-covered");
   assert.equal(r.chargedMinutes, 120);
 });
-test("usageFromLedger ignores reversed and uncovered entries", () => {
+test("usageFromLedger ignores reversed, uncovered, and 0-min admin excuse entries", () => {
   const u = usageFromLedger([
     { workerId: "w", date: "2026-10-21", kind: "late", actualMinutes: 5, chargedMinutes: 30, covered: true, status: "applied" },
     { workerId: "w", date: "2026-10-22", kind: "late", actualMinutes: 5, chargedMinutes: 30, covered: true, status: "reversed" },
     { workerId: "w", date: "2026-10-23", kind: "late", actualMinutes: 200, chargedMinutes: 0, covered: false, status: "applied" },
+    { workerId: "w", date: "2026-10-24", kind: "late", actualMinutes: 45, chargedMinutes: 0, covered: true, status: "applied", source: "admin" },
+    { workerId: "w", date: "2026-10-25", kind: "late", actualMinutes: 50, chargedMinutes: 60, covered: true, status: "applied", source: "admin" },
   ]);
-  assert.deepEqual(u, { count: 1, minutes: 30 });
+  assert.deepEqual(u, { count: 2, minutes: 90 });
 });
 
 console.log("\n[3] Flexible shift end");
@@ -256,8 +258,8 @@ test("policyConfigFromSettings derives 11:00 cutoff from 10:00 + 60", () => {
   assert.equal(c.veryLateCutoffTime, "12:00");
 });
 test("effective date gating", () => {
-  assert.equal(isPolicy2026Active({ policy2026Enabled: true, policy2026EffectiveFrom: "2026-10-21" }, "2026-10-20"), false);
-  assert.equal(isPolicy2026Active({ policy2026Enabled: true, policy2026EffectiveFrom: "2026-10-21" }, "2026-10-21"), true);
+  assert.equal(isPolicy2026Active({ policy2026Enabled: true, policy2026EffectiveFrom: "2026-06-01" }, "2026-05-31"), false);
+  assert.equal(isPolicy2026Active({ policy2026Enabled: true, policy2026EffectiveFrom: "2026-10-21" }, "2026-03-01"), true); // legacy 2026-10-21 normalized to 2026-01-01
   assert.equal(isPolicy2026Active({ policy2026Enabled: false }, "2027-01-01"), false);
 });
 test("parseAuditLog handles comma, pipe+ot=, and tab formats", () => {
