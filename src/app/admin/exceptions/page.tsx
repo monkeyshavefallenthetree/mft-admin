@@ -210,12 +210,12 @@ export default function AdminExceptionsPage() {
   const byId = (id: string) => items.find((i) => i.id === id);
 
   const approve = async (requestedIds: string[]) => {
-    // HR-POL-2026: validate annual leave and monthly permission quotas before approving.
+    // HR-POL-2026: validate annual/emergency leave and monthly permission quotas before approving.
     const blocked: string[] = [];
     const ids = requestedIds.filter((id) => {
       const e = byId(id);
       if (!e || !e.workerId) return true;
-      if (e.type === "annual_leave") {
+      if (e.type === "annual_leave" || e.type === "emergency_leave") {
         const res = checkAnnualLeave(e, workersById.get(e.workerId), items, policyCfg, hrSettings.policy2026EffectiveFrom);
         if (res && !res.verdict.ok) {
           blocked.push(`${e.workerName ?? "Worker"}: ${res.verdict.reasonAr}`);
@@ -238,7 +238,39 @@ export default function AdminExceptionsPage() {
     setBusy(true);
     try {
       const batch = writeBatch(db);
-      ids.forEach((id) => batch.update(doc(db, "exceptionRequests", id), { status: "approved", approvedAt: serverTimestamp(), approvedBy: adminId() }));
+      ids.forEach((id) => {
+        batch.update(doc(db, "exceptionRequests", id), {
+          status: "approved",
+          approvedAt: serverTimestamp(),
+          approvedBy: adminId(),
+        });
+        const e = byId(id);
+        // Atomically record a covered permission ledger entry when an advance late permission, early leave permission, or late excuse is approved
+        if ((e?.type === "advance_late" || e?.type === "early_permission" || e?.type === "late") && e.workerId && e.exceptionDate) {
+          const actualMins = Number(e.lateMinutes) || 30;
+          const isEarly = e.type === "early_permission";
+          const suffix = isEarly ? "early" : "late";
+          batch.set(
+            doc(db, "permissionLedger", `${e.workerId}_${e.exceptionDate}_${suffix}`),
+            {
+              workerId: e.workerId,
+              workerName: e.workerName || "Worker",
+              date: e.exceptionDate,
+              kind: isEarly ? "early_leave" : "late",
+              actualMinutes: actualMins,
+              chargedMinutes: e.type === "late" ? 0 : chargeableMinutes(actualMins, policyCfg),
+              covered: true,
+              status: "applied",
+              source: "admin",
+              reason: `[Approved ${e.type}] ${e.reason || ""}`.trim(),
+              note: `[Approved ${e.type}] ${e.reason || ""}`.trim(),
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            },
+            { merge: true },
+          );
+        }
+      });
       await batch.commit();
       ids.forEach((id) => {
         const e = byId(id);
@@ -275,31 +307,6 @@ export default function AdminExceptionsPage() {
             createdBy: adminId(),
           });
         }
-        // Automatically record a covered permission ledger entry when an advance late permission, early leave permission, or late excuse is approved
-        if ((e?.type === "advance_late" || e?.type === "early_permission" || e?.type === "late") && e.workerId && e.exceptionDate) {
-          const actualMins = Number(e.lateMinutes) || 30;
-          const isEarly = e.type === "early_permission";
-          const suffix = isEarly ? "early" : "late";
-          void setDoc(
-            doc(db, "permissionLedger", `${e.workerId}_${e.exceptionDate}_${suffix}`),
-            {
-              workerId: e.workerId,
-              workerName: e.workerName || "Worker",
-              date: e.exceptionDate,
-              kind: isEarly ? "early_leave" : "late",
-              actualMinutes: actualMins,
-              chargedMinutes: e.type === "late" ? 0 : chargeableMinutes(actualMins, policyCfg),
-              covered: true,
-              status: "applied",
-              source: "admin",
-              reason: `[Approved ${e.type}] ${e.reason || ""}`.trim(),
-              note: `[Approved ${e.type}] ${e.reason || ""}`.trim(),
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp(),
-            },
-            { merge: true },
-          );
-        }
       });
       toast.success(ids.length === 1 ? "Request approved" : `${ids.length} requests approved`);
       setSelected(new Set());
@@ -331,6 +338,23 @@ export default function AdminExceptionsPage() {
           const u: Record<string, unknown> = { status: "rejected", rejectedAt: serverTimestamp(), rejectedBy: adminId() };
           if (modalText.trim()) u.adminResponse = modalText.trim();
           batch.update(doc(db, "exceptionRequests", id), u);
+          const x = byId(id);
+          if ((x?.type === "advance_late" || x?.type === "early_permission" || x?.type === "late") && x.workerId && x.exceptionDate) {
+            const isEarly = x.type === "early_permission";
+            const suffix = isEarly ? "early" : "late";
+            batch.set(
+              doc(db, "permissionLedger", `${x.workerId}_${x.exceptionDate}_${suffix}`),
+              {
+                workerId: x.workerId,
+                date: x.exceptionDate,
+                kind: isEarly ? "early_leave" : "late",
+                covered: false,
+                chargedMinutes: 0,
+                updatedAt: serverTimestamp(),
+              },
+              { merge: true },
+            );
+          }
         });
         await batch.commit();
         responseModal.ids.forEach((id) => {

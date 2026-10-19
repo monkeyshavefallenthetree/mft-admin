@@ -327,36 +327,46 @@ export function subscribePermissionLedger(callback: (rows: PermissionLedgerDoc[]
 
 /** Admin reversal of a permission (restores the worker's quota). */
 export async function reversePermission(id: string, adminEmail = "admin"): Promise<void> {
-  await updateDoc(doc(db, "permissionLedger", id), {
-    status: "reversed",
-    reversedAt: serverTimestamp(),
-    reversedBy: adminEmail,
-  });
+  await setDoc(
+    doc(db, "permissionLedger", id),
+    {
+      status: "reversed",
+      reversedAt: serverTimestamp(),
+      reversedBy: adminEmail,
+    },
+    { merge: true },
+  );
 }
 
 /** Re-applies a previously reversed permission. */
 export async function reapplyPermission(id: string, adminEmail = "admin"): Promise<void> {
-  await updateDoc(doc(db, "permissionLedger", id), {
-    status: "applied",
-    reappliedAt: serverTimestamp(),
-    reappliedBy: adminEmail,
-  });
+  await setDoc(
+    doc(db, "permissionLedger", id),
+    {
+      status: "applied",
+      reappliedAt: serverTimestamp(),
+      reappliedBy: adminEmail,
+    },
+    { merge: true },
+  );
 }
 
 export interface ApprovedRequestRow {
   id: string;
   workerId: string;
+  workerName?: string;
   type: string;
   leaveType?: string;
   exceptionDate: string;
   endDate?: string;
   lateMinutes?: number | null;
   leaveDays?: number | null;
+  reason?: string;
   status: string;
   createdAt?: { toDate: () => Date };
 }
 
-/** Approved overtime + leave + lateness requests (used by payroll and leave balances). */
+/** Approved overtime + leave + lateness + early permission requests (used by payroll and leave/permission balances). */
 export function subscribeApprovedPolicyRequests(callback: (rows: ApprovedRequestRow[]) => void): () => void {
   const q = query(collection(db, "exceptionRequests"), where("status", "==", "approved"));
   return onSnapshot(
@@ -374,7 +384,8 @@ export function subscribeApprovedPolicyRequests(callback: (rows: ApprovedRequest
           data.type === "absence" ||
           data.type === "absent" ||
           data.type === "late" ||
-          data.type === "advance_late"
+          data.type === "advance_late" ||
+          data.type === "early_permission"
         ) {
           list.push({ id: d.id, ...data } as ApprovedRequestRow);
         }
@@ -386,6 +397,68 @@ export function subscribeApprovedPolicyRequests(callback: (rows: ApprovedRequest
       callback([]);
     },
   );
+}
+
+/**
+ * Merges `permissionLedger` entries with approved `advance_late` and `early_permission`
+ * requests from `exceptionRequests` so approved permissions always reflect in worker
+ * permission balances and payroll even if the ledger doc was created before approval
+ * (with `covered: false`) or without a clock-in/out session.
+ */
+export function mergeLedgerWithApprovedRequests(
+  ledger: PermissionLedgerDoc[],
+  approvedRequests: ApprovedRequestRow[],
+  minMinutes = 30,
+  maxSingleMinutes = 120,
+): PermissionLedgerDoc[] {
+  const byKey = new Map<string, PermissionLedgerDoc>();
+  for (const row of ledger) {
+    byKey.set(`${row.workerId}_${row.date}_${row.kind}`, row);
+  }
+  const minStep = Math.max(1, minMinutes);
+  const maxStep = Math.max(minStep, maxSingleMinutes);
+
+  for (const req of approvedRequests) {
+    if (req.status !== "approved" || !req.workerId || !req.exceptionDate) continue;
+    if (req.type !== "advance_late" && req.type !== "early_permission") continue;
+
+    const isEarly = req.type === "early_permission";
+    const kind: PermissionLedgerDoc["kind"] = isEarly ? "early_leave" : "late";
+    const key = `${req.workerId}_${req.exceptionDate}_${kind}`;
+    const docId = `${req.workerId}_${req.exceptionDate}_${isEarly ? "early" : "late"}`;
+    const rawMins = Math.max(minStep, Number(req.lateMinutes) || minStep);
+    const chargedMins = Math.min(maxStep, Math.max(minStep, Math.ceil(rawMins / minStep) * minStep));
+    const existing = byKey.get(key);
+
+    if (!existing) {
+      byKey.set(key, {
+        id: docId,
+        workerId: req.workerId,
+        workerName: req.workerName,
+        date: req.exceptionDate,
+        kind,
+        actualMinutes: rawMins,
+        chargedMinutes: chargedMins,
+        covered: true,
+        fallbackPenaltyDays: 0,
+        source: "admin",
+        reason: req.reason || (isEarly ? "إذن انصراف مبكر معتمد" : "إذن تأخير معتمد"),
+        status: "applied",
+        createdAt: req.createdAt ?? null,
+      });
+    } else if (existing.status !== "reversed" && (!existing.covered || (existing.chargedMinutes || 0) === 0)) {
+      byKey.set(key, {
+        ...existing,
+        covered: true,
+        actualMinutes: existing.actualMinutes || rawMins,
+        chargedMinutes: existing.chargedMinutes || chargedMins,
+        fallbackPenaltyDays: 0,
+        source: "admin",
+      });
+    }
+  }
+
+  return Array.from(byKey.values()).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
 }
 
 export type ReimbursementDoc = {

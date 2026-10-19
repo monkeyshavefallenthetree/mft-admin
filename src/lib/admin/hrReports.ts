@@ -508,18 +508,26 @@ export function computePayrollForWorker(
   let coveredLateCount = 0;
   let uncoveredLateCount = 0;
   let shortfallMinutes = 0;
-  // Permission quota consumed this period, re-verified from attendance (not from browser-written numbers).
+  // Permission quota consumed this period, re-verified from attendance + approved permission ledger.
   let runningUsage: CycleUsage = { count: 0, minutes: 0 };
-  // Admin "manual" permissions still consume quota, in date order.
-  const manualEntries = ledger
-    .filter((e) => e.kind === "manual" && e.status === "applied" && e.covered && (e.chargedMinutes || 0) > 0)
+  const consumedLedgerIds = new Set<string>();
+  const activeCoveredEntries = ledger
+    .filter((e) => e.status === "applied" && e.covered && (e.chargedMinutes || 0) > 0)
     .sort((a, b) => a.date.localeCompare(b.date));
-  let manualIdx = 0;
-  const consumeManualUpTo = (date: string) => {
-    while (manualIdx < manualEntries.length && manualEntries[manualIdx]!.date <= date) {
-      const m = manualEntries[manualIdx]!;
-      runningUsage = { count: runningUsage.count + 1, minutes: runningUsage.minutes + (m.chargedMinutes || 0) };
-      manualIdx++;
+
+  const consumeUnmatchedUpTo = (date: string, includeSameDayNonManual: boolean) => {
+    for (const entry of activeCoveredEntries) {
+      const key = `${entry.date}_${entry.kind}_${entry.id ?? ""}`;
+      if (consumedLedgerIds.has(key)) continue;
+      if (entry.kind === "manual") {
+        if (entry.date <= date) {
+          consumedLedgerIds.add(key);
+          runningUsage = { count: runningUsage.count + 1, minutes: runningUsage.minutes + (entry.chargedMinutes || 0) };
+        }
+      } else if (includeSameDayNonManual ? entry.date <= date : entry.date < date) {
+        consumedLedgerIds.add(key);
+        runningUsage = { count: runningUsage.count + 1, minutes: runningUsage.minutes + (entry.chargedMinutes || 0) };
+      }
     }
   };
   /** Legacy tier penalty (0.25 / 0.5 day) for a late clock-in, regardless of quota. */
@@ -553,7 +561,7 @@ export function computePayrollForWorker(
 
     // ── HR-POL-2026 ──
     policyApplied = true;
-    consumeManualUpTo(date);
+    consumeUnmatchedUpTo(date, false);
     const d = new Date(date + "T12:00:00");
     const isOffDay = weekend.includes(d.getDay()) || holidaySet.has(date);
     const firstIn = toJsDate(s.startTime) ?? toJsDate(s.loginTime);
@@ -569,6 +577,9 @@ export function computePayrollForWorker(
         const ev = evaluateClockIn(firstIn, runningUsage, pcfg);
         if (ev.status !== "on-time") {
           const lateEntry = ledgerFor(date, "late");
+          const lateKey = lateEntry ? `${lateEntry.date}_${lateEntry.kind}_${lateEntry.id ?? ""}` : "";
+          const alreadyConsumedLate = lateKey ? consumedLedgerIds.has(lateKey) : false;
+          if (lateKey) consumedLedgerIds.add(lateKey);
           // 1. Admin-approved lateness excuse (chargedMinutes === 0, covered === true) → fully excused without consuming quota
           if (lateEntry && lateEntry.covered && lateEntry.source === "admin" && (lateEntry.chargedMinutes || 0) === 0) {
             coveredLateCount++;
@@ -576,9 +587,11 @@ export function computePayrollForWorker(
           }
           // 2. Admin-approved advance late permission (source === "admin", covered === true, chargedMinutes > 0)
           else if (lateEntry && lateEntry.covered && lateEntry.source === "admin") {
+            if (!alreadyConsumedLate) {
+              const charged = lateEntry.chargedMinutes || ev.chargedMinutes || 30;
+              runningUsage = { count: runningUsage.count + 1, minutes: runningUsage.minutes + charged };
+            }
             coveredLateCount++;
-            const charged = lateEntry.chargedMinutes || ev.chargedMinutes || 30;
-            runningUsage = { count: runningUsage.count + 1, minutes: runningUsage.minutes + charged };
             permissionPaidMin += ev.lateMinutes;
           }
           // 3. Permission check — NEVER auto-count a permission unless approved (lateEntry.covered === true)
@@ -586,7 +599,9 @@ export function computePayrollForWorker(
             const wantsPermission = Boolean(lateEntry?.covered);
             if (wantsPermission && ev.status === "late-covered") {
               coveredLateCount++;
-              runningUsage = ev.usageAfter;
+              if (!alreadyConsumedLate) {
+                runningUsage = ev.usageAfter;
+              }
               permissionPaidMin += ev.lateMinutes;
             } else {
               const days = ev.status === "late-uncovered" ? ev.fallbackPenaltyDays : fallbackDaysFor(firstIn);
@@ -603,8 +618,15 @@ export function computePayrollForWorker(
           const reqEnd = requiredShiftEnd(firstIn, pcfg);
           const el = evaluateEarlyLeave(lastOut, reqEnd, runningUsage, pcfg);
           if (el.isEarly) {
-            if (ledgerFor(date, "early_leave")?.covered && el.canUsePermission) {
-              runningUsage = { count: runningUsage.count + 1, minutes: runningUsage.minutes + el.chargedMinutes };
+            const earlyEntry = ledgerFor(date, "early_leave");
+            const earlyKey = earlyEntry ? `${earlyEntry.date}_${earlyEntry.kind}_${earlyEntry.id ?? ""}` : "";
+            const alreadyConsumedEarly = earlyKey ? consumedLedgerIds.has(earlyKey) : false;
+            if (earlyKey) consumedLedgerIds.add(earlyKey);
+            if (earlyEntry?.covered && (earlyEntry.source === "admin" || el.canUsePermission)) {
+              if (!alreadyConsumedEarly) {
+                const charged = earlyEntry.chargedMinutes || el.chargedMinutes || 30;
+                runningUsage = { count: runningUsage.count + 1, minutes: runningUsage.minutes + charged };
+              }
               permissionPaidMin += el.remainingMinutes;
             } else {
               shortfallMinutes += el.remainingMinutes;
@@ -637,7 +659,7 @@ export function computePayrollForWorker(
       overtimeHours += ot.totalMinutes / 60;
     }
   }
-  consumeManualUpTo("9999-12-31");
+  consumeUnmatchedUpTo("9999-12-31", true);
 
   const paidLeaveDays = Math.max(0, options?.paidLeaveDays ?? 0);
   const unpaidLeaveDays = Math.max(0, options?.unpaidLeaveDays ?? 0);

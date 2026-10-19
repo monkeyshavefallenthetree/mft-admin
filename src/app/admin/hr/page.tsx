@@ -40,6 +40,7 @@ import {
   setPayrollCycleStatus,
   subscribePermissionLedger,
   subscribeApprovedPolicyRequests,
+  mergeLedgerWithApprovedRequests,
   subscribeReimbursements,
   type PayrollCycleRecord,
   type PermissionLedgerDoc,
@@ -309,6 +310,17 @@ export default function AdminHRPage() {
   useEffect(() => subscribeApprovedPolicyRequests(setApprovedRequests), []);
   useEffect(() => subscribeReimbursements(setReimbursements), []);
 
+  const effectiveLedger = useMemo(
+    () =>
+      mergeLedgerWithApprovedRequests(
+        ledger,
+        approvedRequests,
+        settings.permissionMinMinutes ?? 30,
+        settings.permissionMaxSingleMinutes ?? 120,
+      ),
+    [ledger, approvedRequests, settings.permissionMinMinutes, settings.permissionMaxSingleMinutes],
+  );
+
   const approved = useMemo(() => workers.filter((w) => w.status === "approved"), [workers]);
   const today = todayYmd();
 
@@ -465,7 +477,7 @@ export default function AdminHRPage() {
       const approvedLeaveDays = paidLeaveDays + unpaidLeaveDays;
       const fallbackStart = w.createdAt?.toDate ? localYmd(w.createdAt.toDate()) : null;
       return {
-        permissionLedger: ledger.filter((l) => l.workerId === workerId && l.date >= s && l.date <= e),
+        permissionLedger: effectiveLedger.filter((l) => l.workerId === workerId && l.date >= s && l.date <= e),
         approvedOvertime: approvedRequests
           .filter(
             (r) =>
@@ -482,7 +494,7 @@ export default function AdminHRPage() {
         capAtToday: true,
       };
     },
-    [ledger, approvedRequests],
+    [effectiveLedger, approvedRequests],
   );
 
   // Comprehensive Payroll Calculations for Active Period
@@ -1145,7 +1157,7 @@ export default function AdminHRPage() {
         <div className="space-y-5 animate-fade-in font-mono">
           <HrComplianceView
             workers={approved}
-            ledger={ledger}
+            ledger={effectiveLedger}
             approvedRequests={approvedRequests}
             reimbursements={reimbursements}
             settings={settings}

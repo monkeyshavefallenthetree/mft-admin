@@ -11,7 +11,12 @@ import {
   type LeaveLawType,
 } from "@/lib/admin/hrPolicy2026";
 import { DEFAULT_HR_SETTINGS, type HrSettings } from "@/lib/admin/hrReports";
-import { saveWorkerLeaveProfile, subscribeHrSettings } from "@/lib/admin/hrSettings";
+import {
+  saveWorkerLeaveProfile,
+  subscribeApprovedPolicyRequests,
+  subscribeHrSettings,
+  type ApprovedRequestRow,
+} from "@/lib/admin/hrSettings";
 import { toast } from "@/lib/admin/feedback";
 import { logActivity } from "@/lib/admin/activity";
 import { useHrLang } from "@/lib/admin/hrI18n";
@@ -52,6 +57,7 @@ function shiftDateMonths(monthsAgo: number): string {
 export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", onSaved }: Props) {
   const { isAr, dir, t } = useHrLang();
   const [settings, setSettings] = useState<HrSettings>(DEFAULT_HR_SETTINGS);
+  const [approvedRequests, setApprovedRequests] = useState<ApprovedRequestRow[]>([]);
   const [hireDate, setHireDate] = useState(worker.hireDate ?? "");
   const [attendanceStartDate, setAttendanceStartDate] = useState(worker.attendanceStartDate ?? "");
   const [leaveLawType, setLeaveLawType] = useState<LeaveLawType>(worker.leaveLawType === "legacy_21" ? "legacy_21" : "new_15");
@@ -65,6 +71,7 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
   const [saving, setSaving] = useState(false);
 
   useEffect(() => subscribeHrSettings(setSettings), []);
+  useEffect(() => subscribeApprovedPolicyRequests(setApprovedRequests), []);
   useEffect(() => {
     setHireDate(worker.hireDate ?? "");
     setAttendanceStartDate(worker.attendanceStartDate ?? "");
@@ -92,6 +99,13 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
   const todayYmd = ymd(new Date());
   const fallback = worker.createdAt?.toDate ? ymd(worker.createdAt.toDate()) : "";
   const effectiveHire = hireDate || fallback;
+  const usedLeave = useMemo(
+    () =>
+      approvedRequests
+        .filter((r) => r.workerId === worker.id && (r.type === "annual_leave" || r.type === "emergency_leave") && r.exceptionDate)
+        .map((r) => ({ date: r.exceptionDate, days: Number(r.leaveDays) > 0 ? Number(r.leaveDays) : 1 })),
+    [approvedRequests, worker.id],
+  );
   const preview = useMemo(() => {
     if (!effectiveHire) return null;
     return computeLeaveAccrual(
@@ -99,13 +113,14 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
       new Date(),
       {
         leaveLawType,
+        usedLeave,
         carriedOverApproved: carry,
         priorUsedLeaveDays: priorUsed,
         priorUsedAsOf: priorUsedRecordedOn({ attendanceStartDate }, settings),
       },
       policyConfigFromSettings(settings),
     );
-  }, [effectiveHire, leaveLawType, carry, priorUsed, attendanceStartDate, settings]);
+  }, [effectiveHire, leaveLawType, usedLeave, carry, priorUsed, attendanceStartDate, settings]);
 
   const dirty =
     hireDate !== (worker.hireDate ?? "") ||

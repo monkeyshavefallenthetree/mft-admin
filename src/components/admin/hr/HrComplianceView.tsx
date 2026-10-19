@@ -216,7 +216,7 @@ export default function HrComplianceView({
         const leaveLawType: LeaveLawType =
           (draft ? draft.leaveLawType : w.leaveLawType) === "legacy_21" ? "legacy_21" : "new_15";
         const usedLeave = approvedRequests
-          .filter((r) => r.workerId === w.id && r.type === "annual_leave" && r.exceptionDate)
+          .filter((r) => r.workerId === w.id && (r.type === "annual_leave" || r.type === "emergency_leave") && r.exceptionDate)
           .map((r) => ({ date: r.exceptionDate, days: Number(r.leaveDays) > 0 ? Number(r.leaveDays) : 1 }));
         const accrual = hire
           ? computeLeaveAccrual(

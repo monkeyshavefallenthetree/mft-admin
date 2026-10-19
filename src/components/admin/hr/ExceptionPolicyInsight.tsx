@@ -58,7 +58,14 @@ export function checkAnnualLeave(
   const hire = worker?.hireDate || (worker?.createdAt?.toDate ? ymd(worker.createdAt.toDate()) : "");
   if (!hire) return null;
   const usedLeave = all
-    .filter((r) => r.id !== req.id && r.workerId === req.workerId && r.type === "annual_leave" && r.status === "approved" && r.exceptionDate)
+    .filter(
+      (r) =>
+        r.id !== req.id &&
+        r.workerId === req.workerId &&
+        (r.type === "annual_leave" || r.type === "emergency_leave") &&
+        r.status === "approved" &&
+        r.exceptionDate,
+    )
     .map((r) => ({ date: r.exceptionDate as string, days: leaveDaysOf(r) }));
   const asOf = req.exceptionDate ? new Date(req.exceptionDate + "T12:00:00") : new Date();
   const accrual = computeLeaveAccrual(
@@ -119,7 +126,7 @@ export default function ExceptionPolicyInsight({
   defaultHourlyRate: number;
   policyEffectiveFrom?: string;
 }) {
-  if (req.type === "annual_leave") {
+  if (req.type === "annual_leave" || req.type === "emergency_leave") {
     const res = checkAnnualLeave(req, worker, all, cfg, policyEffectiveFrom);
     if (!res) return null;
     const { accrual, verdict } = res;
