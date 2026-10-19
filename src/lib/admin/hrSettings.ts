@@ -349,9 +349,11 @@ export interface ApprovedRequestRow {
   type: string;
   leaveType?: string;
   exceptionDate: string;
+  endDate?: string;
   lateMinutes?: number | null;
   leaveDays?: number | null;
   status: string;
+  createdAt?: { toDate: () => Date };
 }
 
 /** Approved overtime + leave + lateness requests (used by payroll and leave balances). */

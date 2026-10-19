@@ -28,6 +28,7 @@ export interface InsightRequest {
   type?: string;
   status?: string;
   exceptionDate?: string;
+  endDate?: string;
   lateMinutes?: number;
   leaveDays?: number;
 }
@@ -96,7 +97,7 @@ export default function ExceptionPolicyInsight({
       >
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="font-semibold text-zinc-800">
-            HR-POL-2026 leave check · requesting {leaveDaysOf(req)} day(s)
+            HR-POL-2026 leave check · {req.exceptionDate} → {req.endDate || req.exceptionDate} ({leaveDaysOf(req)} day(s))
           </span>
           <span dir="rtl" className="rounded border border-zinc-300 bg-white px-1.5 py-0.5 text-[10px] font-bold">
             {LEAVE_PHASE_AR[accrual.phase]}
@@ -121,15 +122,9 @@ export default function ExceptionPolicyInsight({
       <div className="mt-3 rounded-lg border border-teal-200 bg-teal-50/70 px-3 py-2.5 text-xs text-teal-900">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="font-semibold">
-            ✅ Unpaid Leave (إجازة بدون مرتب) · {leaveDaysOf(req)} day(s)
-          </span>
-          <span dir="rtl" className="rounded border border-teal-300 bg-white px-1.5 py-0.5 text-[10px] font-bold text-teal-800">
-            متاحة أول ٦ شهور وبعدها
+            📅 Unpaid Leave (إجازة بدون مرتب) · {req.exceptionDate} → {req.endDate || req.exceptionDate} ({leaveDaysOf(req)} day(s))
           </span>
         </div>
-        <p className="mt-1 text-teal-800" dir="rtl">
-          الإجازة بدون مرتب متاحة خلال أول ٦ شهور (فترة الاختبار) وبعدها. عند الموافقة يتم إعفاء الموظف من مضاعف جزاء الغياب بدون إذن ويُخصم أجر اليوم فقط كإجازة بدون مرتب.
-        </p>
       </div>
     );
   }

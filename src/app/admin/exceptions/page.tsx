@@ -27,6 +27,7 @@ interface ExceptionRequest {
   leaveDays?: number;
   requestedAmount?: number;
   exceptionDate?: string;
+  endDate?: string;
   reason?: string;
   supportingEvidence?: string;
   status?: string;
@@ -57,6 +58,14 @@ function formatExceptionType(type: string | undefined) {
 function formatTs(t: { toDate: () => Date } | undefined) {
   if (!t?.toDate) return "—";
   return t.toDate().toLocaleString([], { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function formatSubmittedYmd(t: { toDate: () => Date } | undefined) {
+  if (!t?.toDate) return "—";
+  const d = t.toDate();
+  const ymdStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const timeStr = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return `${ymdStr} (${timeStr})`;
 }
 
 function timeAgo(t: { toDate: () => Date } | undefined) {
@@ -399,18 +408,20 @@ export default function AdminExceptionsPage() {
 
 
   const exportCsv = () => {
-    const rows: (string | number)[][] = [["Worker", "Email", "Type", "Late Minutes", "Exception Date", "Reason", "Evidence", "Status", "Submitted", "Admin Response"]];
+    const rows: (string | number)[][] = [["Worker", "Email", "Type", "Late Minutes", "Leave Days", "Start Date", "End Date", "Reason", "Evidence", "Status", "Submitted At", "Admin Response"]];
     for (const e of filtered) {
       rows.push([
         e.workerName || "",
         e.workerEmail || "",
         formatExceptionType(e.type),
         e.lateMinutes ?? "",
+        e.leaveDays ?? "",
         e.exceptionDate || "",
+        e.endDate || e.exceptionDate || "",
         e.reason || "",
         e.supportingEvidence || "",
         statusOf(e).toUpperCase(),
-        formatTs(e.createdAt || e.submittedAt),
+        formatSubmittedYmd(e.createdAt || e.submittedAt),
         e.adminResponse || "",
       ]);
     }
@@ -548,6 +559,9 @@ export default function AdminExceptionsPage() {
           {filtered.map((e) => {
             const st = statusOf(e);
             const isSel = selected.has(e.id);
+            const isLeaveReq = ["annual_leave", "unpaid_leave", "sick_leave", "emergency_leave"].includes(e.type || "");
+            const startStr = e.exceptionDate || "unspecified date";
+            const endStr = e.endDate || startStr;
             return (
               <article key={e.id} className={`ui-card overflow-hidden transition-all ${isSel ? "ring-2 ring-red-500/40" : ""}`}>
                 <div className="flex items-start gap-4 p-5">
@@ -572,21 +586,30 @@ export default function AdminExceptionsPage() {
                               ? "border-amber-300 bg-amber-50 text-amber-900 font-bold"
                               : e.type === "advance_late"
                                 ? "border-sky-300 bg-sky-50 text-sky-900 font-semibold"
-                                : ["annual_leave", "unpaid_leave", "sick_leave", "emergency_leave"].includes(e.type || "")
+                                : isLeaveReq
                                   ? "border-emerald-200 bg-emerald-50 text-emerald-800 font-semibold"
                                   : "border-orange-200 bg-orange-50 text-orange-700"
                       }`}>
                         {formatExceptionType(e.type)}
                         {(e.type === "late" || e.type === "advance_late") && e.lateMinutes != null ? ` · ${e.lateMinutes} min` : ""}
                         {e.type === "overtime" && e.lateMinutes != null ? ` · +${e.lateMinutes} min` : ""}
-                        {e.type === "annual_leave" || e.type === "unpaid_leave" ? ` · ${Number(e.leaveDays) > 0 ? e.leaveDays : 1}d` : ""}
+                        {isLeaveReq ? ` · ${Number(e.leaveDays) > 0 ? e.leaveDays : 1}d` : ""}
                         {e.type === "advance_request" && e.requestedAmount != null ? ` · $${e.requestedAmount}` : ""}
                       </span>
                       <span className={`rounded-md border px-2 py-0.5 text-[11px] font-semibold capitalize ${STATUS_STYLE[st] ?? STATUS_STYLE.pending}`}>{st}</span>
                     </div>
-                    <p className="mt-0.5 text-xs text-zinc-500">
-                      {e.workerEmail ? `${e.workerEmail} · ` : ""}For <span className="font-medium text-zinc-700">{e.exceptionDate || "unspecified date"}</span> · submitted {timeAgo(e.createdAt || e.submittedAt)}
-                    </p>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-zinc-600">
+                      {e.workerEmail && <span>{e.workerEmail}</span>}
+                      <span className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 font-semibold text-zinc-800" dir="rtl">
+                        {isLeaveReq
+                          ? `📅 فترة الإجازة: من ${startStr} إلى ${endStr} (${Number(e.leaveDays) > 0 ? e.leaveDays : 1} يوم)`
+                          : `📅 تاريخ الطلب: ${startStr}`}
+                      </span>
+                      <span className="inline-flex items-center gap-1 rounded-md border border-sky-200 bg-sky-50 px-2 py-0.5 font-semibold text-sky-800" dir="rtl">
+                        📩 تاريخ تقديم الطلب: <span dir="ltr">{formatSubmittedYmd(e.createdAt || e.submittedAt)}</span>
+                        {timeAgo(e.createdAt || e.submittedAt) ? ` (${timeAgo(e.createdAt || e.submittedAt)})` : ""}
+                      </span>
+                    </div>
 
                     <p className="mt-3 whitespace-pre-wrap rounded-lg bg-zinc-50 px-3 py-2.5 text-[13px] leading-relaxed text-zinc-800">{e.reason || <span className="italic text-zinc-400">No written reason provided</span>}</p>
 
