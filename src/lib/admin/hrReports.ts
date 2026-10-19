@@ -581,9 +581,9 @@ export function computePayrollForWorker(
             runningUsage = { count: runningUsage.count + 1, minutes: runningUsage.minutes + charged };
             permissionPaidMin += ev.lateMinutes;
           }
-          // 3. Standard worker / auto permission check
+          // 3. Permission check — NEVER auto-count a permission unless approved (lateEntry.covered === true)
           else {
-            const wantsPermission = lateEntry ? lateEntry.covered : true;
+            const wantsPermission = Boolean(lateEntry?.covered);
             if (wantsPermission && ev.status === "late-covered") {
               coveredLateCount++;
               runningUsage = ev.usageAfter;

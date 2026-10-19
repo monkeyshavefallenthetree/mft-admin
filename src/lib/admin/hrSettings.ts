@@ -535,6 +535,7 @@ export async function saveWorkerLeaveProfile(
   data: {
     hireDate?: string | null;
     attendanceStartDate?: string | null;
+    leaveLawType?: "new_15" | "legacy_21";
     priorUsedLeaveDays?: number;
     carriedOverLeaveDays?: number;
     carryOverApprovedBy?: string;

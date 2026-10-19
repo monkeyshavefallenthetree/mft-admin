@@ -2,24 +2,19 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-  LEAVE_PHASE_AR,
   computeLeaveAccrual,
+  leavePhaseLabelAr,
+  leavePhaseLabelEn,
   policyConfigFromSettings,
   priorUsedRecordedOn,
   ymd,
-  type LeavePhase,
+  type LeaveLawType,
 } from "@/lib/admin/hrPolicy2026";
 import { DEFAULT_HR_SETTINGS, type HrSettings } from "@/lib/admin/hrReports";
 import { saveWorkerLeaveProfile, subscribeHrSettings } from "@/lib/admin/hrSettings";
 import { toast } from "@/lib/admin/feedback";
 import { logActivity } from "@/lib/admin/activity";
 import { useHrLang } from "@/lib/admin/hrI18n";
-
-const LEAVE_PHASE_EN: Record<LeavePhase, string> = {
-  probation: "Probation Period",
-  year1: "Year 1 (15d / yr)",
-  year2plus: "Year 2+ (21d / yr)",
-};
 
 interface Props {
   worker: {
@@ -28,6 +23,7 @@ interface Props {
     lastName?: string;
     hireDate?: string;
     attendanceStartDate?: string;
+    leaveLawType?: LeaveLawType;
     priorUsedLeaveDays?: number;
     carriedOverLeaveDays?: number;
     carryOverApprovedBy?: string;
@@ -48,6 +44,7 @@ function shiftDateMonths(monthsAgo: number): string {
 /**
  * HR-POL-2026 contract, joining date, compensation & leave onboarding editor (Bilingual AR/EN):
  * - Company Hire Date (`hireDate`): when the worker originally signed with the company (drives probation & 15d/21d tier)
+ * - Labor Law Mode (`leaveLawType`): "new_15" (15d first year) vs "legacy_21" (Old Labor Law: 21d first year)
  * - System Attendance Start Date (`attendanceStartDate`): when MFT begins counting expected workdays/absences
  * - Hourly Rate (`hourlyRate`) & Monthly Salary (`expectedSalary`) with 1-click auto-calculation
  * - Prior Used Leave (`priorUsedLeaveDays`) & Approved Carry-Over (`carriedOverLeaveDays`)
@@ -57,6 +54,7 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
   const [settings, setSettings] = useState<HrSettings>(DEFAULT_HR_SETTINGS);
   const [hireDate, setHireDate] = useState(worker.hireDate ?? "");
   const [attendanceStartDate, setAttendanceStartDate] = useState(worker.attendanceStartDate ?? "");
+  const [leaveLawType, setLeaveLawType] = useState<LeaveLawType>(worker.leaveLawType === "legacy_21" ? "legacy_21" : "new_15");
   const [hourlyRate, setHourlyRate] = useState<number>(worker.hourlyRate ?? 31.25);
   const [monthlySalary, setMonthlySalary] = useState<string>(
     worker.expectedSalary != null ? String(worker.expectedSalary) : String(Math.round((worker.hourlyRate ?? 31.25) * 192)),
@@ -70,6 +68,7 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
   useEffect(() => {
     setHireDate(worker.hireDate ?? "");
     setAttendanceStartDate(worker.attendanceStartDate ?? "");
+    setLeaveLawType(worker.leaveLawType === "legacy_21" ? "legacy_21" : "new_15");
     setHourlyRate(worker.hourlyRate ?? 31.25);
     setMonthlySalary(
       worker.expectedSalary != null ? String(worker.expectedSalary) : String(Math.round((worker.hourlyRate ?? 31.25) * 192)),
@@ -81,6 +80,7 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
     worker.id,
     worker.hireDate,
     worker.attendanceStartDate,
+    worker.leaveLawType,
     worker.hourlyRate,
     worker.expectedSalary,
     worker.priorUsedLeaveDays,
@@ -98,17 +98,19 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
       effectiveHire,
       new Date(),
       {
+        leaveLawType,
         carriedOverApproved: carry,
         priorUsedLeaveDays: priorUsed,
         priorUsedAsOf: priorUsedRecordedOn({ attendanceStartDate }, settings),
       },
       policyConfigFromSettings(settings),
     );
-  }, [effectiveHire, carry, priorUsed, attendanceStartDate, settings]);
+  }, [effectiveHire, leaveLawType, carry, priorUsed, attendanceStartDate, settings]);
 
   const dirty =
     hireDate !== (worker.hireDate ?? "") ||
     attendanceStartDate !== (worker.attendanceStartDate ?? "") ||
+    leaveLawType !== (worker.leaveLawType === "legacy_21" ? "legacy_21" : "new_15") ||
     hourlyRate !== (worker.hourlyRate ?? 31.25) ||
     monthlySalary !== (worker.expectedSalary != null ? String(worker.expectedSalary) : String(Math.round((worker.hourlyRate ?? 31.25) * 192))) ||
     priorUsed !== (worker.priorUsedLeaveDays ?? 0) ||
@@ -130,6 +132,7 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
       await saveWorkerLeaveProfile(worker.id, {
         hireDate: hireDate || null,
         attendanceStartDate: attendanceStartDate || null,
+        leaveLawType,
         hourlyRate: Number.isFinite(hourlyRate) && hourlyRate > 0 ? hourlyRate : 31.25,
         expectedSalary: monthlySalary ? Number(monthlySalary) || monthlySalary : null,
         priorUsedLeaveDays: priorUsed,
@@ -140,7 +143,7 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
         action: "updated",
         entity: "worker",
         entityId: worker.id,
-        label: `Contract & leave profile updated for ${`${worker.firstName ?? ""} ${worker.lastName ?? ""}`.trim()} (joined ${hireDate || "—"}, system start ${attendanceStartDate || "auto"}, rate ${hourlyRate} EGP/h)`,
+        label: `Contract & leave profile updated for ${`${worker.firstName ?? ""} ${worker.lastName ?? ""}`.trim()} (joined ${hireDate || "—"}, law ${leaveLawType}, system start ${attendanceStartDate || "auto"}, rate ${hourlyRate} EGP/h)`,
       });
       toast.success(t("تم حفظ بيانات التعيين والراتب ورصيد الإجازات بنجاح", "Contract, rate & leave profile saved"));
       onSaved?.();
@@ -173,7 +176,7 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
         </div>
         {preview && (
           <span className="px-2.5 py-1 rounded bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-[11px] font-bold">
-            {isAr ? LEAVE_PHASE_AR[preview.phase] : LEAVE_PHASE_EN[preview.phase]} ·{" "}
+            {isAr ? leavePhaseLabelAr(preview) : leavePhaseLabelEn(preview)} ·{" "}
             {isAr ? `${preview.serviceMonths} شهر خدمة` : `${preview.serviceMonths} mo tenure`}
           </span>
         )}
@@ -264,6 +267,63 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
         </label>
       </div>
 
+      {/* Row 1.5: Labor Law Option for First-Year Annual Leave (15 days vs Old Labor Law 21 days) */}
+      <div className="p-3 bg-sky-50/50 dark:bg-sky-950/20 border border-sky-200 dark:border-sky-900 rounded space-y-2 text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-zinc-900 dark:text-zinc-100 font-bold">
+            {t("⚖️ نظام قانون العمل للإجازة السنوية (أول سنة):", "⚖️ Labor Law Entitlement Mode (First Year):")}
+          </span>
+          <span className="text-[10px] text-sky-700 dark:text-sky-300 font-bold">
+            {leaveLawType === "legacy_21"
+              ? t("قانون عمل قديم: 21 يوم من أول سنة (1.75 يوم/شهر)", "Old Labor Law: 21 days from Year 1 (1.75d/mo)")
+              : t("قانون العمل الجديد: 15 يوم أول سنة ثم 21 يوم", "New Law: 15 days in Year 1, then 21 days")}
+          </span>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+          <button
+            type="button"
+            onClick={() => setLeaveLawType("new_15")}
+            className={`text-start p-2.5 rounded border-2 transition-all cursor-pointer ${
+              leaveLawType === "new_15"
+                ? "border-red-600 bg-red-50/70 dark:bg-red-950/30 text-zinc-950 dark:text-white shadow-[2px_2px_0px_0px_#dc2626]"
+                : "border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 hover:border-zinc-500"
+            }`}
+          >
+            <div className="font-bold flex items-center justify-between">
+              <span>{t("📋 قانون العمل الجديد (15 يوم أول سنة)", "📋 Standard Law (15 days in Year 1)")}</span>
+              {leaveLawType === "new_15" && <span className="text-red-600 font-black">✓</span>}
+            </div>
+            <p className="text-[10px] text-zinc-500 dark:text-zinc-400 mt-1">
+              {t(
+                "بعد أول 6 شهور ينزل 7.5 يوم، ويكمل 15 يوم بنهاية أول سنة (1.25/شهر)، ثم يرتفع إلى 21 يوم بعد السنة الأولى (1.75/شهر).",
+                "After 6 months drops 7.5d, reaches 15d at end of Year 1 (1.25d/mo), then rises to 21d/yr after Year 1 (1.75d/mo).",
+              )}
+            </p>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setLeaveLawType("legacy_21")}
+            className={`text-start p-2.5 rounded border-2 transition-all cursor-pointer ${
+              leaveLawType === "legacy_21"
+                ? "border-red-600 bg-red-50/70 dark:bg-red-950/30 text-zinc-950 dark:text-white shadow-[2px_2px_0px_0px_#dc2626]"
+                : "border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 hover:border-zinc-500"
+            }`}
+          >
+            <div className="font-bold flex items-center justify-between">
+              <span>{t("⚖️ قانون عمل قديم (21 يوم أول سنة بدل 15)", "⚖️ Old Labor Law (21 days in Year 1 instead of 15)")}</span>
+              {leaveLawType === "legacy_21" && <span className="text-red-600 font-black">✓</span>}
+            </div>
+            <p className="text-[10px] text-zinc-500 dark:text-zinc-400 mt-1">
+              {t(
+                "ينزل 21 يوم من أول سنة بدل 15 (بعد أول 6 شهور ينزل 10.5 يوم، ويكمل 21 يوم بنهاية أول سنة بمعدل 1.75 يوم/شهر).",
+                "Grants 21 days in Year 1 instead of 15 (after 6 months drops 10.5d, reaches 21d at end of Year 1 at 1.75d/mo).",
+              )}
+            </p>
+          </button>
+        </div>
+      </div>
+
       {/* Row 2: Compensation (Hourly Rate & Monthly Salary) */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs p-3 bg-emerald-50/40 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900 rounded">
         <label className="block">
@@ -343,7 +403,7 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
         </label>
         <label className="block">
           <span className="text-zinc-700 dark:text-zinc-300 font-bold">
-            {t("٦. رصيد مرحّل معتمد (أيام)", "6. Approved Carry-Over (days)")}
+            {t("٦. الرصيد المُرحّل والمُعتمد من الإدارة (أيام)", "6. Approved Carry-Over Balance (days)")}
           </span>
           <input
             type="number"
@@ -354,7 +414,7 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
             className="mt-1 w-full bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 px-2.5 py-1.5 font-bold rounded focus:outline-none focus:ring-2 focus:ring-red-600"
           />
           <span className="text-[10px] text-zinc-400">
-            {t("من العام السابق (بحد أقصى 7 أيام)", "From previous year (max 7d)")}
+            {t("يُضاف إلى الرصيد المُرحّل قانونياً واستحقاق ما بعد السنة الأولى", "Added to legally carried-over & post-Year-1 balance")}
           </span>
         </label>
         <label className="block">
@@ -377,11 +437,20 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
           <div className="text-[11px] text-zinc-600 dark:text-zinc-300 space-y-0.5">
             <p>
               {t("نهاية فترة الاختبار:", "Probation ends:")} <strong>{preview.probationEndsOn}</strong> ·{" "}
-              {t("بداية شريحة 21 يوم:", "21d tier from:")} <strong>{preview.tier2StartsOn}</strong>
+              {t("استحقاق ما بعد السنة الأولى (21 يوم / 1.75 شهرياً):", "Post-Year 1 (21d / 1.75/mo) from:")}{" "}
+              <strong>{preview.tier2StartsOn}</strong>
             </p>
             <p>
-              {t("المتراكم:", "Accrued:")} <strong>{preview.accruedDays}d</strong>
-              {carry > 0 ? <> + {t("مرحّل:", "Carry:")} <strong>{carry}d</strong></> : null}
+              {t("المتراكم:", "Accrued:")} <strong>{preview.accruedDays}d ({preview.monthlyRate}/mo)</strong>
+              {preview.totalCarryOverDays > 0 ? (
+                <>
+                  {" "}
+                  + {t("مُرحّل قانونياً ومعتمد:", "Carried over (legal + approved):")}{" "}
+                  <strong>
+                    {preview.totalCarryOverDays}d ({preview.legalCarryOverDays}d + {preview.carriedOverApproved}d)
+                  </strong>
+                </>
+              ) : null}
               {priorUsed > 0 ? <> − {t("مستهلك سابقًا:", "Prior used:")} <strong>{priorUsed}d</strong></> : null}
               {" = "}
               <strong className="text-emerald-700 dark:text-emerald-400">

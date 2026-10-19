@@ -12,7 +12,7 @@ import { notifyAdmins } from "@/lib/adminNotifications";
 import { BulkBar, BulkButton, EmptyState, PageHeader, SkeletonRows, STATE_ICONS } from "@/components/admin/ui/States";
 import { ICONS } from "@/lib/admin/nav";
 import ModalPortal from "@/components/admin/ui/ModalPortal";
-import ExceptionPolicyInsight, { checkAnnualLeave, type InsightWorker } from "@/components/admin/hr/ExceptionPolicyInsight";
+import ExceptionPolicyInsight, { checkAnnualLeave, checkMonthlyPermission, type InsightWorker } from "@/components/admin/hr/ExceptionPolicyInsight";
 import { chargeableMinutes, policyConfigFromSettings } from "@/lib/admin/hrPolicy2026";
 import { DEFAULT_HR_SETTINGS, type HrSettings } from "@/lib/admin/hrReports";
 import { subscribeHrSettings } from "@/lib/admin/hrSettings";
@@ -43,8 +43,9 @@ interface ExceptionRequest {
 }
 
 function formatExceptionType(type: string | undefined) {
-  if (type === "late") return "Late arrival (تأخير)";
-  if (type === "advance_late") return "Advance Late Permission (إذن تأخير مسبق)";
+  if (type === "late") return "Late Excuse (استثناء تأخير)";
+  if (type === "advance_late") return "Late Permission (إذن تأخير شهري)";
+  if (type === "early_permission") return "Early Leave Permission (إذن انصراف مبكر)";
   if (type === "absent") return "Absent for day (غياب)";
   if (type === "overtime") return "Overtime request (وقت إضافي)";
   if (type === "annual_leave") return "Annual Leave (إجازة سنوية)";
@@ -209,20 +210,29 @@ export default function AdminExceptionsPage() {
   const byId = (id: string) => items.find((i) => i.id === id);
 
   const approve = async (requestedIds: string[]) => {
-    // HR-POL-2026: annual leave cannot be approved during probation or beyond the accrued balance.
+    // HR-POL-2026: validate annual leave and monthly permission quotas before approving.
     const blocked: string[] = [];
     const ids = requestedIds.filter((id) => {
       const e = byId(id);
-      if (e?.type !== "annual_leave" || !e.workerId) return true;
-      const res = checkAnnualLeave(e, workersById.get(e.workerId), items, policyCfg, hrSettings.policy2026EffectiveFrom);
-      if (res && !res.verdict.ok) {
-        blocked.push(`${e.workerName ?? "Worker"}: ${res.verdict.reasonAr}`);
-        return false;
+      if (!e || !e.workerId) return true;
+      if (e.type === "annual_leave") {
+        const res = checkAnnualLeave(e, workersById.get(e.workerId), items, policyCfg, hrSettings.policy2026EffectiveFrom);
+        if (res && !res.verdict.ok) {
+          blocked.push(`${e.workerName ?? "Worker"}: ${res.verdict.reasonAr}`);
+          return false;
+        }
+      }
+      if (e.type === "advance_late" || e.type === "early_permission") {
+        const res = checkMonthlyPermission(e, items, policyCfg);
+        if (!res.verdict.ok) {
+          blocked.push(`${e.workerName ?? "Worker"}: ${res.verdict.reasonAr}`);
+          return false;
+        }
       }
       return true;
     });
     if (blocked.length) {
-      toast.warning(`${blocked.length} annual-leave request(s) blocked by HR-POL-2026`, { description: blocked.join("\n") });
+      toast.warning(`${blocked.length} request(s) blocked by HR-POL-2026`, { description: blocked.join("\n") });
     }
     if (!ids.length) return;
     setBusy(true);
@@ -265,18 +275,20 @@ export default function AdminExceptionsPage() {
             createdBy: adminId(),
           });
         }
-        // Automatically record a covered permission ledger entry when an advance late permission or late excuse is approved
-        if ((e?.type === "advance_late" || e?.type === "late") && e.workerId && e.exceptionDate) {
+        // Automatically record a covered permission ledger entry when an advance late permission, early leave permission, or late excuse is approved
+        if ((e?.type === "advance_late" || e?.type === "early_permission" || e?.type === "late") && e.workerId && e.exceptionDate) {
           const actualMins = Number(e.lateMinutes) || 30;
+          const isEarly = e.type === "early_permission";
+          const suffix = isEarly ? "early" : "late";
           void setDoc(
-            doc(db, "permissionLedger", `${e.workerId}_${e.exceptionDate}_late`),
+            doc(db, "permissionLedger", `${e.workerId}_${e.exceptionDate}_${suffix}`),
             {
               workerId: e.workerId,
               workerName: e.workerName || "Worker",
               date: e.exceptionDate,
-              kind: "late",
+              kind: isEarly ? "early_leave" : "late",
               actualMinutes: actualMins,
-              chargedMinutes: e.type === "advance_late" ? chargeableMinutes(actualMins, policyCfg) : 0,
+              chargedMinutes: e.type === "late" ? 0 : chargeableMinutes(actualMins, policyCfg),
               covered: true,
               status: "applied",
               source: "admin",
@@ -494,8 +506,9 @@ export default function AdminExceptionsPage() {
           </div>
           <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="brutal-input md:w-52">
             <option value="">All request types</option>
-            <option value="late">Late arrival</option>
-            <option value="advance_late">Advance Late (إذن تأخير مسبق)</option>
+            <option value="late">Late Excuse (استثناء تأخير)</option>
+            <option value="advance_late">Late Permission (إذن تأخير شهري)</option>
+            <option value="early_permission">Early Permission (إذن انصراف مبكر)</option>
             <option value="absent">Absence</option>
             <option value="overtime">Overtime</option>
             <option value="unpaid_leave">Unpaid Leave (إجازة بدون مرتب)</option>
@@ -584,14 +597,14 @@ export default function AdminExceptionsPage() {
                             ? "border-blue-200 bg-blue-50 text-blue-700"
                             : e.type === "advance_request"
                               ? "border-amber-300 bg-amber-50 text-amber-900 font-bold"
-                              : e.type === "advance_late"
+                              : e.type === "advance_late" || e.type === "early_permission"
                                 ? "border-sky-300 bg-sky-50 text-sky-900 font-semibold"
                                 : isLeaveReq
                                   ? "border-emerald-200 bg-emerald-50 text-emerald-800 font-semibold"
                                   : "border-orange-200 bg-orange-50 text-orange-700"
                       }`}>
                         {formatExceptionType(e.type)}
-                        {(e.type === "late" || e.type === "advance_late") && e.lateMinutes != null ? ` · ${e.lateMinutes} min` : ""}
+                        {(e.type === "late" || e.type === "advance_late" || e.type === "early_permission") && e.lateMinutes != null ? ` · ${e.lateMinutes} min` : ""}
                         {e.type === "overtime" && e.lateMinutes != null ? ` · +${e.lateMinutes} min` : ""}
                         {isLeaveReq ? ` · ${Number(e.leaveDays) > 0 ? e.leaveDays : 1}d` : ""}
                         {e.type === "advance_request" && e.requestedAmount != null ? ` · $${e.requestedAmount}` : ""}

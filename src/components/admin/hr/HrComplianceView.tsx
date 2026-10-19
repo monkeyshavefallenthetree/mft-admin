@@ -3,12 +3,14 @@
 import { Fragment, useMemo, useState } from "react";
 import Link from "next/link";
 import {
-  LEAVE_PHASE_AR,
   computeLeaveAccrual,
+  leavePhaseLabelAr,
+  leavePhaseLabelEn,
   policyConfigFromSettings,
   priorUsedRecordedOn,
   usageFromLedger,
   ymd,
+  type LeaveLawType,
   type LeavePhase,
 } from "@/lib/admin/hrPolicy2026";
 import { getPayrollCycleRange, type HrSettings } from "@/lib/admin/hrReports";
@@ -25,12 +27,6 @@ import { toast, confirmDialog } from "@/lib/admin/feedback";
 import { logActivity } from "@/lib/admin/activity";
 import { useHrLang } from "@/lib/admin/hrI18n";
 
-const LEAVE_PHASE_EN: Record<LeavePhase, string> = {
-  probation: "Probation",
-  year1: "Year 1 (15d)",
-  year2plus: "Year 2+ (21d)",
-};
-
 interface WorkerLite {
   id: string;
   firstName: string;
@@ -41,6 +37,7 @@ interface WorkerLite {
   expectedSalary?: number | string;
   hireDate?: string;
   attendanceStartDate?: string;
+  leaveLawType?: LeaveLawType;
   priorUsedLeaveDays?: number;
   carriedOverLeaveDays?: number;
   carryOverApprovedBy?: string;
@@ -81,6 +78,7 @@ function shiftDateMonths(monthsAgo: number): string {
 type DraftRow = {
   hireDate: string;
   attendanceStartDate: string;
+  leaveLawType: LeaveLawType;
   hourlyRate: number;
   priorUsedLeaveDays: number;
   carriedOverLeaveDays: number;
@@ -117,6 +115,7 @@ export default function HrComplianceView({
       drafts[w.id] ?? {
         hireDate: w.hireDate ?? "",
         attendanceStartDate: w.attendanceStartDate ?? "",
+        leaveLawType: w.leaveLawType === "legacy_21" ? "legacy_21" : "new_15",
         hourlyRate: w.hourlyRate ?? settings.defaultHourlyRate ?? 31.25,
         priorUsedLeaveDays: w.priorUsedLeaveDays ?? 0,
         carriedOverLeaveDays: w.carriedOverLeaveDays ?? 0,
@@ -143,6 +142,7 @@ export default function HrComplianceView({
       await saveWorkerLeaveProfile(w.id, {
         hireDate: d.hireDate || null,
         attendanceStartDate: d.attendanceStartDate || null,
+        leaveLawType: d.leaveLawType,
         hourlyRate: d.hourlyRate > 0 ? d.hourlyRate : 31.25,
         priorUsedLeaveDays: d.priorUsedLeaveDays,
         carriedOverLeaveDays: d.carriedOverLeaveDays,
@@ -152,7 +152,7 @@ export default function HrComplianceView({
         action: "updated",
         entity: "worker",
         entityId: w.id,
-        label: `Updated joining date & leave profile for ${name} (joined ${d.hireDate || "—"}, system start ${d.attendanceStartDate || "auto"}, rate ${d.hourlyRate})`,
+        label: `Updated joining date & leave profile for ${name} (joined ${d.hireDate || "—"}, law ${d.leaveLawType}, system start ${d.attendanceStartDate || "auto"}, rate ${d.hourlyRate})`,
       });
       toast.success(t(`تم حفظ بيانات ${name}`, `Saved ${name}`));
       if (!onboardingMode) setEditingRowId(null);
@@ -213,6 +213,8 @@ export default function HrComplianceView({
         const fallbackHire = w.createdAt?.toDate ? ymd(w.createdAt.toDate()) : null;
         const draft = drafts[w.id];
         const hire = (draft ? draft.hireDate : w.hireDate) || fallbackHire;
+        const leaveLawType: LeaveLawType =
+          (draft ? draft.leaveLawType : w.leaveLawType) === "legacy_21" ? "legacy_21" : "new_15";
         const usedLeave = approvedRequests
           .filter((r) => r.workerId === w.id && r.type === "annual_leave" && r.exceptionDate)
           .map((r) => ({ date: r.exceptionDate, days: Number(r.leaveDays) > 0 ? Number(r.leaveDays) : 1 }));
@@ -221,6 +223,7 @@ export default function HrComplianceView({
               hire,
               today,
               {
+                leaveLawType,
                 usedLeave,
                 carriedOverApproved: draft ? draft.carriedOverLeaveDays : w.carriedOverLeaveDays ?? 0,
                 priorUsedLeaveDays: draft ? draft.priorUsedLeaveDays : w.priorUsedLeaveDays ?? 0,
@@ -521,6 +524,7 @@ export default function HrComplianceView({
                 const rowDirty =
                   draft.hireDate !== (r.worker.hireDate ?? "") ||
                   draft.attendanceStartDate !== (r.worker.attendanceStartDate ?? "") ||
+                  draft.leaveLawType !== (r.worker.leaveLawType === "legacy_21" ? "legacy_21" : "new_15") ||
                   draft.hourlyRate !== (r.worker.hourlyRate ?? settings.defaultHourlyRate ?? 31.25) ||
                   draft.priorUsedLeaveDays !== (r.worker.priorUsedLeaveDays ?? 0) ||
                   draft.carriedOverLeaveDays !== (r.worker.carriedOverLeaveDays ?? 0);
@@ -546,7 +550,7 @@ export default function HrComplianceView({
                           type="button"
                           onClick={() => setEditingRowId(editingRowId === r.worker.id ? null : r.worker.id)}
                           className="text-start group cursor-pointer"
-                          title={t("اضغط لتعديل تاريخ التعيين وتاريخ بدء النظام وأجر الساعة", "Click to edit joining date, system start date & hourly rate")}
+                          title={t("اضغط لتعديل تاريخ التعيين ونظام قانون الإجازات وأجر الساعة", "Click to edit joining date, labor law mode, system start date & hourly rate")}
                         >
                           <div className="flex items-center gap-1.5">
                             <span className="text-[10px] uppercase text-zinc-400">{t("التعيين:", "Joined:")}</span>
@@ -582,10 +586,15 @@ export default function HrComplianceView({
                                 PHASE_STYLE[r.accrual.phase]
                               }`}
                             >
-                              {isAr ? LEAVE_PHASE_AR[r.accrual.phase] : LEAVE_PHASE_EN[r.accrual.phase]}
+                              {isAr ? leavePhaseLabelAr(r.accrual) : leavePhaseLabelEn(r.accrual)}
                             </span>
-                            <div className="text-[10px] text-zinc-400 mt-0.5">
-                              {isAr ? `${r.accrual.serviceMonths} شهر خدمة` : `${r.accrual.serviceMonths} mo tenure`}
+                            <div className="text-[10px] text-zinc-400 mt-0.5 flex flex-wrap items-center gap-1">
+                              <span>{isAr ? `${r.accrual.serviceMonths} شهر خدمة` : `${r.accrual.serviceMonths} mo tenure`}</span>
+                              {r.accrual.leaveLawType === "legacy_21" && (
+                                <span className="px-1 py-0.2 rounded bg-violet-100 dark:bg-violet-950/60 text-violet-800 dark:text-violet-300 font-bold">
+                                  {t("⚖️ قانون قديم (21 يوم أول سنة)", "⚖️ Old Law (21d Y1)")}
+                                </span>
+                              )}
                             </div>
                           </div>
                         ) : (
@@ -602,8 +611,8 @@ export default function HrComplianceView({
                         {r.accrual && r.accrual.phase !== "probation" && (
                           <div className="text-[10px] font-normal text-zinc-400">
                             {isAr
-                              ? `${r.accrual.accruedDays} مستحق − ${r.accrual.usedDays} مستخدم`
-                              : `${r.accrual.accruedDays}d accrued − ${r.accrual.usedDays}d used`}
+                              ? `${r.accrual.accruedDays} مستحق${r.accrual.totalCarryOverDays > 0 ? ` + ${r.accrual.totalCarryOverDays} مرحّل` : ""} − ${r.accrual.usedDays} مستخدم`
+                              : `${r.accrual.accruedDays}d accrued${r.accrual.totalCarryOverDays > 0 ? ` + ${r.accrual.totalCarryOverDays}d carry` : ""} − ${r.accrual.usedDays}d used`}
                           </div>
                         )}
                       </td>
@@ -660,7 +669,7 @@ export default function HrComplianceView({
                       </td>
                     </tr>
 
-                    {/* Inline Editor for Company Joining Date, System Start Date, Hourly Rate, Prior Used Leave & Carry-Over */}
+                    {/* Inline Editor for Company Joining Date, Labor Law Mode, System Start Date, Hourly Rate, Prior Used Leave & Carry-Over */}
                     {isEditingRow && (
                       <tr className="bg-amber-50/50 dark:bg-zinc-950/70 border-s-4 border-red-600">
                         <td colSpan={9} className="p-3">
@@ -696,6 +705,36 @@ export default function HrComplianceView({
                                     -{p.l}
                                   </button>
                                 ))}
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] font-bold uppercase text-zinc-600 dark:text-zinc-300">
+                                {t("⚖️ نظام قانون العمل (أول سنة)", "⚖️ Labor Law (First Year)")}
+                              </label>
+                              <div className="flex items-center gap-1 mt-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setDraftField(r.worker, { leaveLawType: "new_15" })}
+                                  className={`px-2 py-1 text-[11px] font-bold rounded border-2 cursor-pointer transition-colors ${
+                                    draft.leaveLawType === "new_15"
+                                      ? "border-red-600 bg-red-600 text-white"
+                                      : "border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300"
+                                  }`}
+                                >
+                                  {t("قانون جديد (15 يوم أول سنة)", "New Law (15d Y1)")}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setDraftField(r.worker, { leaveLawType: "legacy_21" })}
+                                  className={`px-2 py-1 text-[11px] font-bold rounded border-2 cursor-pointer transition-colors ${
+                                    draft.leaveLawType === "legacy_21"
+                                      ? "border-red-600 bg-red-600 text-white"
+                                      : "border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300"
+                                  }`}
+                                >
+                                  {t("قانون عمل قديم (21 يوم أول سنة)", "Old Law (21d Y1)")}
+                                </button>
                               </div>
                             </div>
 
@@ -840,8 +879,8 @@ export default function HrComplianceView({
                           {r.accrual && (
                             <p className="mt-3 text-[10px] text-zinc-500">
                               {isAr
-                                ? `تفاصيل الإجازات: المتراكم ${r.accrual.accruedDays} يوم · المستخدم ${r.accrual.usedDays} يوم (منها ${r.accrual.priorUsedLeaveDays} يوم قبل النظام) · المرحّل المعتمد ${r.accrual.carriedOverApproved} يوم · المعدل الحالي ${r.accrual.monthlyRate} يوم/شهر · شريحة 21 يوم تبدأ في ${r.accrual.tier2StartsOn}`
-                                : `Leave: accrued ${r.accrual.accruedDays}d · used ${r.accrual.usedDays}d (incl. ${r.accrual.priorUsedLeaveDays}d prior to MFT) · approved carry-over ${r.accrual.carriedOverApproved}d · current rate ${r.accrual.monthlyRate}/month · 21-day tier from ${r.accrual.tier2StartsOn}`}
+                                ? `تفاصيل الإجازات: المتراكم ${r.accrual.accruedDays} يوم · الرصيد المُرحّل قانونياً والمُعتمد من الإدارة ${r.accrual.totalCarryOverDays} يوم (قانوني ${r.accrual.legalCarryOverDays} + معتمد ${r.accrual.carriedOverApproved}) · المستخدم ${r.accrual.usedDays} يوم (منها ${r.accrual.priorUsedLeaveDays} يوم قبل النظام) · المعدل الحالي ${r.accrual.monthlyRate} يوم/شهر (${r.accrual.annualEntitlementDays} يوم/سنة) · استحقاق ما بعد السنة الأولى (21 يوم / 1.75 شهرياً) يبدأ في ${r.accrual.tier2StartsOn}`
+                                : `Leave: accrued ${r.accrual.accruedDays}d · carried over ${r.accrual.totalCarryOverDays}d (legal ${r.accrual.legalCarryOverDays}d + approved ${r.accrual.carriedOverApproved}d) · used ${r.accrual.usedDays}d (incl. ${r.accrual.priorUsedLeaveDays}d prior to MFT) · rate ${r.accrual.monthlyRate}/month (${r.accrual.annualEntitlementDays}d/yr) · post-Year-1 (21d / 1.75/mo) from ${r.accrual.tier2StartsOn}`}
                             </p>
                           )}
                         </td>

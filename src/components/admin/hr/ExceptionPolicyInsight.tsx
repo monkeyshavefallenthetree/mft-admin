@@ -1,14 +1,19 @@
 "use client";
 
 import {
-  LEAVE_PHASE_AR,
+  chargeableMinutes,
   computeLeaveAccrual,
+  leavePhaseLabelAr,
   parseHm,
   formatHm,
   splitOvertimePay,
+  toArabicDigits,
   validateLeaveRequest,
+  validatePermissionRequest,
   priorUsedRecordedOn,
   ymd,
+  type CycleUsage,
+  type LeaveLawType,
   type Policy2026Config,
 } from "@/lib/admin/hrPolicy2026";
 
@@ -16,6 +21,7 @@ export interface InsightWorker {
   id: string;
   hireDate?: string;
   attendanceStartDate?: string;
+  leaveLawType?: LeaveLawType;
   priorUsedLeaveDays?: number;
   carriedOverLeaveDays?: number;
   hourlyRate?: number;
@@ -59,6 +65,7 @@ export function checkAnnualLeave(
     hire,
     asOf,
     {
+      leaveLawType: worker?.leaveLawType,
       usedLeave,
       carriedOverApproved: worker?.carriedOverLeaveDays ?? 0,
       priorUsedLeaveDays: worker?.priorUsedLeaveDays ?? 0,
@@ -68,6 +75,33 @@ export function checkAnnualLeave(
   );
   const verdict = validateLeaveRequest(accrual, leaveDaysOf(req));
   return { accrual, verdict, hireIsFallback: !worker?.hireDate };
+}
+
+/**
+ * Validates a monthly permission request (advance_late or early_permission) against the worker's
+ * approved permissions in the same calendar month (4 permissions / 240 mins cap, 30–120 mins each).
+ */
+export function checkMonthlyPermission(
+  req: InsightRequest,
+  all: InsightRequest[],
+  cfg: Policy2026Config,
+) {
+  const targetYm = (req.exceptionDate || ymd(new Date())).slice(0, 7);
+  const approvedInMonth = all.filter(
+    (r) =>
+      r.id !== req.id &&
+      r.workerId === req.workerId &&
+      (r.type === "advance_late" || r.type === "early_permission") &&
+      r.status === "approved" &&
+      (r.exceptionDate || "").slice(0, 7) === targetYm,
+  );
+  const usage: CycleUsage = {
+    count: approvedInMonth.length,
+    minutes: approvedInMonth.reduce((sum, r) => sum + chargeableMinutes(Number(r.lateMinutes) || 30, cfg), 0),
+  };
+  const requestedMins = Number(req.lateMinutes) || 30;
+  const verdict = validatePermissionRequest(requestedMins, usage, cfg);
+  return { usage, verdict };
 }
 
 export default function ExceptionPolicyInsight({
@@ -100,12 +134,14 @@ export default function ExceptionPolicyInsight({
             HR-POL-2026 leave check · {req.exceptionDate} → {req.endDate || req.exceptionDate} ({leaveDaysOf(req)} day(s))
           </span>
           <span dir="rtl" className="rounded border border-zinc-300 bg-white px-1.5 py-0.5 text-[10px] font-bold">
-            {LEAVE_PHASE_AR[accrual.phase]}
+            {leavePhaseLabelAr(accrual)}
           </span>
         </div>
         <p className="mt-1 text-zinc-600">
           Balance on {accrual.asOf}: <strong>{accrual.balance}d</strong> (requestable {accrual.requestableDays}d) · accrued{" "}
-          {accrual.accruedDays}d · used {accrual.usedDays}d · probation ends {accrual.probationEndsOn}
+          {accrual.accruedDays}d ({accrual.monthlyRate}d/mo · {accrual.annualEntitlementDays}d/yr) · carried-over &amp; approved{" "}
+          <strong>+{accrual.totalCarryOverDays}d</strong> (legal {accrual.legalCarryOverDays}d + approved {accrual.carriedOverApproved}d) · used{" "}
+          {accrual.usedDays}d · probation ends {accrual.probationEndsOn}
           {res.hireIsFallback && <span className="text-amber-600"> · ⚠ hire date not set (using sign-up date)</span>}
         </p>
         {!verdict.ok && (
@@ -129,20 +165,36 @@ export default function ExceptionPolicyInsight({
     );
   }
 
-  if (req.type === "advance_late") {
+  if (req.type === "advance_late" || req.type === "early_permission") {
+    const { usage, verdict } = checkMonthlyPermission(req, all, cfg);
+    const isEarly = req.type === "early_permission";
     return (
-      <div className="mt-3 rounded-lg border border-violet-200 bg-violet-50/70 px-3 py-2.5 text-xs text-violet-900">
+      <div
+        className={`mt-3 rounded-lg border px-3 py-2.5 text-xs ${
+          verdict.ok
+            ? "border-violet-200 bg-violet-50/70 text-violet-900"
+            : "border-red-200 bg-red-50/80 text-red-900"
+        }`}
+      >
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="font-semibold">
-            ⏰ Advance Late Permission (إذن تأخير مسبق) · {req.lateMinutes || 30} min on {req.exceptionDate || "target date"}
+            ⏱️ {isEarly ? "Early Leave Permission (إذن انصراف مبكر)" : "Late Permission (إذن تأخير شهري)"} ·{" "}
+            {verdict.chargedMinutes} min (requested {req.lateMinutes || 30} min) on {req.exceptionDate || "target date"}
           </span>
-          <span dir="rtl" className="rounded border border-violet-300 bg-white px-1.5 py-0.5 text-[10px] font-bold text-violet-800">
-            إذن مسبق ليوم معين
+          <span dir="rtl" className="rounded border border-violet-300 bg-white px-2 py-0.5 text-[10px] font-bold text-violet-800">
+            المتبقي قبل الاعتماد: {toArabicDigits(verdict.remainingCount)} من {toArabicDigits(cfg.permissionMaxCount)} أذونات ·{" "}
+            {toArabicDigits(verdict.remainingMinutes)} د
           </span>
         </div>
-        <p className="mt-1 text-violet-800" dir="rtl">
-          عند الموافقة، يتم تسجيل إذن تأخير معتمد تلقائيًا ليوم {req.exceptionDate} بحيث لا يُطبّق خصم تأخير على الموظف في ذلك اليوم.
-        </p>
+        {verdict.ok ? (
+          <p className="mt-1 text-violet-800" dir="rtl">
+            عند موافقة الأدمن، يُعتمد الإذن ({toArabicDigits(verdict.chargedMinutes)} دقيقة) ويُخصم من رصيد الأذونات الشهري للموظف (المستخدم حالياً: {toArabicDigits(usage.count)} أذونات / {toArabicDigits(usage.minutes)} د).
+          </p>
+        ) : (
+          <p className="mt-1 font-bold text-red-700" dir="rtl">
+            ❌ {verdict.reasonAr}
+          </p>
+        )}
       </div>
     );
   }

@@ -17,6 +17,7 @@ import {
   splitOvertimePay,
   usageFromLedger,
   validateLeaveRequest,
+  validatePermissionRequest,
   validateReimbursement,
   isPolicy2026Active,
   completedMonthsBetween,
@@ -130,50 +131,69 @@ test("late + early same day are two permissions", () => {
 
 console.log("\n[5] Annual leave accrual");
 const hire = "2026-01-15";
-test("month 6 (probation) → 0 days, phase probation", () => {
+test("before completing 6 months (probation) → 0 days, phase probation", () => {
   const r = computeLeaveAccrual(hire, parseYmd("2026-07-14")!);
   assert.equal(r.phase, "probation");
   assert.equal(r.accruedDays, 0);
   assert.equal(r.probationEndsOn, "2026-07-15");
 });
-test("probation ends, month 7 in progress → year1, still 0 accrued", () => {
-  const r = computeLeaveAccrual(hire, parseYmd("2026-07-20")!);
+test("after completing 6 months → 7.5 days drop retroactively (6 × 1.25)", () => {
+  const r = computeLeaveAccrual(hire, parseYmd("2026-07-15")!);
   assert.equal(r.phase, "year1");
-  assert.equal(r.accruedDays, 0);
+  assert.equal(r.accruedDays, 7.5);
+  assert.equal(r.balance, 7.5);
 });
-test("7 completed months → 1.25", () => {
-  assert.equal(computeLeaveAccrual(hire, parseYmd("2026-08-15")!).accruedDays, 1.25);
+test("7 completed months → 7.5 + 1.25 = 8.75", () => {
+  assert.equal(computeLeaveAccrual(hire, parseYmd("2026-08-15")!).accruedDays, 8.75);
 });
-test("18 completed months → exactly 15 days (aligns 1.25 × 12)", () => {
-  const r = computeLeaveAccrual(hire, parseYmd("2027-07-15")!);
+test("12 completed months (end of Year 1) → exactly 15 days (12 × 1.25)", () => {
+  const r = computeLeaveAccrual(hire, parseYmd("2027-01-15")!);
   assert.equal(r.accruedDays, 15);
+  assert.equal(r.balance, 15);
   assert.equal(r.phase, "year2plus");
-  assert.equal(r.tier2StartsOn, "2027-07-15");
+  assert.equal(r.tier2StartsOn, "2027-01-15");
 });
-test("19 months → 15 carried capped to 7, + 1.75", () => {
-  const r = computeLeaveAccrual(hire, parseYmd("2027-08-15")!);
+test("13 months (1st month after Year 1) → 15 carried capped to 7, + 1.75 (21d/yr entitlement + legal carry-over)", () => {
+  const r = computeLeaveAccrual(hire, parseYmd("2027-02-15")!);
   assert.equal(r.forfeitedDays, 8);
+  assert.equal(r.annualEntitlementDays, 21);
+  assert.equal(r.monthlyRate, 1.75);
+  assert.equal(r.currentYearAccruedDays, 1.75);
+  assert.equal(r.legalCarryOverDays, 7);
+  assert.equal(r.totalCarryOverDays, 7);
   assert.equal(r.balance, 8.75);
 });
-test("29 months → 7 + 11 × 1.75 = 26.25; at 30 the leave-year rolls → capped to 7", () => {
-  assert.equal(computeLeaveAccrual(hire, parseYmd("2028-07-14")!).balance, 26.25);
-  const r = computeLeaveAccrual(hire, parseYmd("2028-07-15")!);
-  assert.equal(r.accruedDays, 15 + 12 * 1.75);
-  assert.equal(r.balance, 7);
-  assert.equal(r.forfeitedDays, 8 + 21);
+test("13 months with management-approved carry-over adds on top of legal carry-over + 1.75/mo", () => {
+  const r = computeLeaveAccrual(hire, parseYmd("2027-02-15")!, { carriedOverApproved: 3 });
+  assert.equal(r.annualEntitlementDays, 21);
+  assert.equal(r.monthlyRate, 1.75);
+  assert.equal(r.legalCarryOverDays, 7);
+  assert.equal(r.carriedOverApproved, 3);
+  assert.equal(r.totalCarryOverDays, 10);
+  assert.equal(r.balance, 11.75);
+});
+test("24 months (end of Year 2) → 7 + 12 × 1.75 = 28; at month 25 rolls → capped to 7 + 1.75 = 8.75", () => {
+  const y2End = computeLeaveAccrual(hire, parseYmd("2028-01-15")!);
+  assert.equal(y2End.accruedDays, 15 + 12 * 1.75);
+  assert.equal(y2End.currentYearAccruedDays, 21);
+  assert.equal(y2End.balance, 28);
+  const m25 = computeLeaveAccrual(hire, parseYmd("2028-02-15")!);
+  assert.equal(m25.balance, 8.75);
+  assert.equal(m25.forfeitedDays, 8 + 21);
 });
 test("used leave and approved carry-over are applied", () => {
   const r = computeLeaveAccrual(hire, parseYmd("2027-01-15")!, {
     usedLeave: [{ date: "2026-12-01", days: 2.5 }],
     carriedOverApproved: 1,
   });
-  // 12 months → 6 × 1.25 = 7.5 accrued, −2.5 used, +1 carry
-  assert.equal(r.accruedDays, 7.5);
-  assert.equal(r.balance, 6);
+  // 12 months → 12 × 1.25 = 15 accrued, −2.5 used, +1 carry = 13.5
+  assert.equal(r.accruedDays, 15);
+  assert.equal(r.balance, 13.5);
 });
 test("excluded (unpaid) months do not accrue", () => {
   const r = computeLeaveAccrual(hire, parseYmd("2026-09-15")!, { excludedMonths: ["2026-07"] });
-  assert.equal(r.accruedDays, 1.25);
+  // 8 completed months (6 in probation = 7.5, month 7 excluded = 0, month 8 = 1.25) → 8.75
+  assert.equal(r.accruedDays, 8.75);
 });
 test("hire on Jan 31 → month-end clamping (Feb 28)", () => {
   assert.equal(completedMonthsBetween(parseYmd("2026-01-31")!, parseYmd("2026-02-28")!), 1);
@@ -182,11 +202,28 @@ test("hire on Jan 31 → month-end clamping (Feb 28)", () => {
 test("leave request blocked in probation / over balance / not half-day step", () => {
   const prob = computeLeaveAccrual(hire, parseYmd("2026-03-01")!);
   assert.equal(validateLeaveRequest(prob, 1).ok, false);
-  const y1 = computeLeaveAccrual(hire, parseYmd("2026-10-15")!); // 9 months → 3.75
-  assert.equal(y1.requestableDays, 3.5);
-  assert.equal(validateLeaveRequest(y1, 3.5).ok, true);
-  assert.equal(validateLeaveRequest(y1, 4).ok, false);
+  const y1 = computeLeaveAccrual(hire, parseYmd("2026-08-15")!); // 7 months → 8.75 (requestable 8.5)
+  assert.equal(y1.requestableDays, 8.5);
+  assert.equal(validateLeaveRequest(y1, 8.5).ok, true);
+  assert.equal(validateLeaveRequest(y1, 9).ok, false);
   assert.equal(validateLeaveRequest(y1, 1.25).ok, false);
+});
+test("Old Labor Law (legacy_21): 6 months → 10.5d (6 × 1.75), 12 months → 21d in Year 1", () => {
+  const m5 = computeLeaveAccrual(hire, parseYmd("2026-06-15")!, { leaveLawType: "legacy_21" });
+  assert.equal(m5.phase, "probation");
+  assert.equal(m5.balance, 0);
+
+  const m6 = computeLeaveAccrual(hire, parseYmd("2026-07-15")!, { leaveLawType: "legacy_21" });
+  assert.equal(m6.phase, "year1");
+  assert.equal(m6.leaveLawType, "legacy_21");
+  assert.equal(m6.annualEntitlementDays, 21);
+  assert.equal(m6.monthlyRate, 1.75);
+  assert.equal(m6.accruedDays, 10.5);
+  assert.equal(m6.balance, 10.5);
+
+  const m12 = computeLeaveAccrual(hire, parseYmd("2027-01-15")!, { leaveLawType: "legacy_21" });
+  assert.equal(m12.accruedDays, 21);
+  assert.equal(m12.balance, 21);
 });
 
 console.log("\n[6] Overtime day/night split");
@@ -290,6 +327,39 @@ test("auditAttendanceLog end-to-end", () => {
   assert.equal(rep.totals.otNightMinutes, 60);
   assert.equal(rep.totals.otPay, 170);
   assert.deepEqual(rep.totals.remaining, { count: 0, minutes: 105 });
+});
+
+console.log("\n[9] Monthly permission request validation & explicit reasons");
+test("validatePermissionRequest: 1 min rounds up to 30 min (First-Minute Rule)", () => {
+  const v = validatePermissionRequest(1, { count: 0, minutes: 0 });
+  assert.equal(v.ok, true);
+  assert.equal(v.chargedMinutes, 30);
+  assert.deepEqual(v.allowedDurations, [30, 45, 60, 75, 90, 105, 120]);
+});
+test("validatePermissionRequest: blocked with count_exhausted when 4 permissions used", () => {
+  const v = validatePermissionRequest(30, { count: 4, minutes: 120 });
+  assert.equal(v.ok, false);
+  assert.equal(v.reasonCode, "count_exhausted");
+  assert.match(v.reasonAr, /استهلكت الحد الأقصى الشهري لعدد الأذونات/);
+});
+test("validatePermissionRequest: blocked with minutes_exhausted when < 30m left", () => {
+  const v = validatePermissionRequest(30, { count: 2, minutes: 225 });
+  assert.equal(v.ok, false);
+  assert.equal(v.reasonCode, "minutes_exhausted");
+  assert.match(v.reasonAr, /أقل من الحد الأدنى للإذن الواحد/);
+});
+test("validatePermissionRequest: blocked with over_single_cap when > 120m requested", () => {
+  const v = validatePermissionRequest(150, { count: 0, minutes: 0 });
+  assert.equal(v.ok, false);
+  assert.equal(v.reasonCode, "over_single_cap");
+  assert.match(v.reasonAr, /تتجاوز الحد الأقصى المسموح به للإذن الواحد وهو ساعتان/);
+});
+test("validatePermissionRequest: blocked with minutes_exhausted when 90m requested but only 60m left", () => {
+  const v = validatePermissionRequest(90, { count: 2, minutes: 180 });
+  assert.equal(v.ok, false);
+  assert.equal(v.reasonCode, "minutes_exhausted");
+  assert.deepEqual(v.allowedDurations, [30, 45, 60]);
+  assert.match(v.reasonAr, /المتبقي في رصيد ساعاتك الشهري هو ٦٠ دقيقة فقط/);
 });
 
 console.log(`\n${passed} passed, ${failures.length} failed`);

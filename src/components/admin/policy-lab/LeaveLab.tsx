@@ -31,14 +31,14 @@ export default function LeaveLab({ cfg }: { cfg: Policy2026Config }) {
 
   const verdict = validateLeaveRequest(acc, req);
   const prob = cfg.probationMonths;
-  const y1End = prob + cfg.year1AccrualMonths;
+  const y1End = Math.max(prob, cfg.year1AccrualMonths);
   const span = Math.max(36, acc.serviceMonths + 6);
   const pct = (m: number) => `${Math.min(100, (m / span) * 100)}%`;
   const phaseTone = acc.phase === "probation" ? s.pWarn : acc.phase === "year1" ? s.pInfo : s.pOk;
 
   return (
     <div className={s.grid}>
-      <Panel id="lab-leave" title="حاسبة الإجازات السنوية" hint={`فترة الاختبار ${ar(prob)} أشهر بدون إجازة سنوية · ثم ${ar(cfg.leaveRateYear1)} يوم/شهر حتى ١٥ يومًا · ثم ${ar(cfg.leaveRateYear2)} يوم/شهر (٢١ يومًا) · الحد الأقصى للترحيل ${ar(cfg.maxCarryOverDays)} أيام إلا بموافقة الإدارة.`} tag={<span className={cx(s.pill, phaseTone)}>{LEAVE_PHASE_AR[acc.phase]}</span>}>
+      <Panel id="lab-leave" title="حاسبة الإجازات السنوية" hint={`أول ${ar(prob)} أشهر اختبار · بعد إتمام ${ar(prob)} أشهر ينزل ٧٫٥ يوم ثم ${ar(cfg.leaveRateYear1)} يوم/شهر ليكتمل ١٥ يوماً بنهاية السنة الأولى · ما بعد السنة الأولى: ٢١ يوماً في السنة (بواقع ${ar(cfg.leaveRateYear2)} يوم شهرياً) + الرصيد المُرحّل قانونياً والمُعتمد من الإدارة.`} tag={<span className={cx(s.pill, phaseTone)}>{LEAVE_PHASE_AR[acc.phase]}</span>}>
         <div className={s.grid3}>
           <div>
             <label className={s.label} htmlFor="lab-leave-hire">تاريخ التعيين</label>
@@ -53,14 +53,14 @@ export default function LeaveLab({ cfg }: { cfg: Policy2026Config }) {
             <input id="lab-leave-used" type="number" min={0} step={0.5} className={cx(s.input, s.mono)} value={used} onChange={(e) => setUsed(Math.max(0, Number(e.target.value) || 0))} />
           </div>
           <div>
-            <label className={s.label} htmlFor="lab-leave-carried">ترحيل معتمد إضافي</label>
+            <label className={s.label} htmlFor="lab-leave-carried">الرصيد المُرحّل والمُعتمد من الإدارة</label>
             <input id="lab-leave-carried" type="number" min={0} step={0.5} className={cx(s.input, s.mono)} value={carried} onChange={(e) => setCarried(Math.max(0, Number(e.target.value) || 0))} />
           </div>
         </div>
 
         <div style={{ marginTop: 18 }}>
           <div className={s.timeline} dir="ltr">
-            <div className={s.tlSeg} style={{ insetInlineStart: 0, width: pct(prob), background: "linear-gradient(135deg, rgba(245,185,66,.55), rgba(245,158,11,.35))" }}>اختبار · ٠</div>
+            <div className={s.tlSeg} style={{ insetInlineStart: 0, width: pct(prob), background: "linear-gradient(135deg, rgba(245,185,66,.55), rgba(245,158,11,.35))" }}>اختبار → +٧٫٥</div>
             <div className={s.tlSeg} style={{ insetInlineStart: pct(prob), width: `calc(${pct(y1End)} - ${pct(prob)})`, background: "linear-gradient(135deg, rgba(56,189,248,.5), rgba(14,165,233,.3))" }}>١٫٢٥ / شهر → ١٥</div>
             <div className={s.tlSeg} style={{ insetInlineStart: pct(y1End), width: `calc(100% - ${pct(y1End)})`, background: "linear-gradient(135deg, rgba(52,211,153,.45), rgba(16,185,129,.25))" }}>١٫٧٥ / شهر → ٢١</div>
             <div className={s.tlNow} style={{ insetInlineStart: pct(acc.serviceMonths) }} title={`${acc.serviceMonths} months`} />
@@ -76,10 +76,10 @@ export default function LeaveLab({ cfg }: { cfg: Policy2026Config }) {
         <div className={s.grid3} style={{ marginTop: 16 }}>
           <Stat label="أشهر الخدمة" value={ar(acc.serviceMonths)} />
           <Stat label="المستحق" value={ar(acc.accruedDays)} tone="#7dd3fc" />
+          <Stat label="المُرحّل والمعتمد" value={`+${ar(acc.totalCarryOverDays)}`} tone="#6ee7b7" />
           <Stat label="المستخدم" value={ar(acc.usedDays)} />
-          <Stat label="المسقط بالترحيل" value={ar(acc.forfeitedDays)} tone={acc.forfeitedDays > 0 ? "#fca5a5" : undefined} />
-          <Stat label="الرصيد" value={ar(acc.balance)} tone="#6ee7b7" />
-          <Stat label="المعدل الحالي" value={`${ar(acc.monthlyRate)}/ش`} />
+          <Stat label="الرصيد الصافي" value={ar(acc.balance)} tone="#6ee7b7" />
+          <Stat label="المعدل الحالي" value={`${ar(acc.monthlyRate)}/ش (${ar(acc.annualEntitlementDays)}/س)`} />
         </div>
 
         <div className={s.divider} />

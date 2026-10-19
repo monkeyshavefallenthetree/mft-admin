@@ -83,6 +83,7 @@ interface Worker {
   lastLogin?: { toDate: () => Date };
   hireDate?: string;
   attendanceStartDate?: string;
+  leaveLawType?: "new_15" | "legacy_21";
   priorUsedLeaveDays?: number;
   carriedOverLeaveDays?: number;
   carryOverApprovedBy?: string;
