@@ -264,6 +264,8 @@ export default function AdminHRPage() {
     recipient: "all",
     department: "",
     workerId: "",
+    workerIds: [] as string[],
+    workerSearch: "",
     priority: "high",
   });
 
@@ -775,7 +777,18 @@ export default function AdminHRPage() {
     if (alertForm.recipient === "all") recipients = approved.map((w) => w.id);
     else if (alertForm.recipient === "department")
       recipients = approved.filter((w) => w.department === alertForm.department).map((w) => w.id);
-    else if (alertForm.recipient === "individual") recipients = alertForm.workerId ? [alertForm.workerId] : [];
+    else if (alertForm.recipient === "individual")
+      recipients =
+        alertForm.workerIds.length > 0
+          ? alertForm.workerIds
+          : alertForm.workerId
+            ? [alertForm.workerId]
+            : [];
+
+    if (recipients.length === 0) {
+      toast.warning(t("يرجى اختيار موظف واحد على الأقل لإرسال التنبيه", "Please select at least one recipient"));
+      return;
+    }
 
     try {
       await addDoc(collection(db, "alerts"), {
@@ -784,7 +797,7 @@ export default function AdminHRPage() {
         message: alertForm.message,
         recipient: alertForm.recipient,
         department: alertForm.department || "",
-        workerId: alertForm.workerId || "",
+        workerId: recipients.length === 1 ? recipients[0] : "",
         priority: alertForm.priority,
         recipients,
         sentBy: adminEmail,
@@ -823,9 +836,24 @@ export default function AdminHRPage() {
         label: `Sent alert: ${alertForm.title} to ${recipients.length} workers`,
       });
 
-      toast.success(t("تم إرسال التنبيه للموظفين بنجاح", "Broadcast alert sent"));
+      toast.success(
+        t(
+          `تم إرسال التنبيه بنجاح إلى ${recipients.length} موظف`,
+          `Alert sent to ${recipients.length} worker(s)`,
+        ),
+      );
       setSendOpen(false);
-      setAlertForm({ type: "system_announcement", title: "", message: "", recipient: "all", department: "", workerId: "", priority: "high" });
+      setAlertForm({
+        type: "system_announcement",
+        title: "",
+        message: "",
+        recipient: "all",
+        department: "",
+        workerId: "",
+        workerIds: [],
+        workerSearch: "",
+        priority: "high",
+      });
     } catch (err) {
       toast.error(t("فشل إرسال التنبيه", "Failed to send alert"), {
         description: err instanceof Error ? err.message : String(err),
@@ -1816,7 +1844,9 @@ export default function AdminHRPage() {
                         ? t("🌐 تعميم للكل", "🌐 Broadcast All")
                         : a.recipient === "department"
                           ? t(`🏢 قسم ${a.department}`, `🏢 Dept: ${a.department}`)
-                          : t("👤 تنبيه فردي", "👤 Individual")}
+                          : (a.recipientCount ?? a.recipients?.length ?? 1) > 1
+                            ? t(`👥 ${a.recipientCount ?? a.recipients?.length} موظفين محددين`, `👥 ${a.recipientCount ?? a.recipients?.length} Selected Workers`)
+                            : t("👤 تنبيه فردي", "👤 Individual")}
                     </span>
                     <span className="px-1.5 py-0.5 bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 text-[10px] uppercase font-bold">
                       {a.type || "Notice"}
@@ -2044,7 +2074,9 @@ export default function AdminHRPage() {
                       )}
                     </option>
                     <option value="department">{t("🏢 قسم محدد", "🏢 Specific department")}</option>
-                    <option value="individual">{t("👤 موظف محدد", "👤 Individual worker")}</option>
+                    <option value="individual">
+                      {t("👥 اختيار موظفين محددين (موظف أو أكثر)", "👥 Select specific worker(s) (1 or more)")}
+                    </option>
                   </select>
                 </div>
 
@@ -2083,22 +2115,101 @@ export default function AdminHRPage() {
                 )}
 
                 {alertForm.recipient === "individual" && (
-                  <div>
-                    <label className="block text-zinc-700 dark:text-zinc-300 font-bold uppercase mb-1">
-                      {t("الموظف *", "Worker *")}
-                    </label>
-                    <select
-                      value={alertForm.workerId}
-                      onChange={(e) => setAlertForm({ ...alertForm, workerId: e.target.value })}
-                      className="w-full bg-white dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 px-3 py-2 text-zinc-950 dark:text-zinc-100 font-bold rounded focus:outline-none focus:ring-2 focus:ring-red-600"
-                    >
-                      <option value="">{t("اختر الموظف…", "Select worker…")}</option>
-                      {approved.map((w) => (
-                        <option key={w.id} value={w.id}>
-                          {workerName(w)} ({w.department || "General"})
-                        </option>
-                      ))}
-                    </select>
+                  <div className="space-y-2 border-2 border-zinc-900 dark:border-zinc-700 rounded p-3 bg-zinc-50 dark:bg-zinc-800/50">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <label className="block text-zinc-800 dark:text-zinc-200 font-bold uppercase">
+                        {t("اختر الموظفين المستلمين *", "Select Recipient Workers *")}
+                        <span className="ms-2 inline-flex items-center px-2 py-0.5 rounded bg-red-600 text-white text-[10px] font-black">
+                          {t(`تم اختيار ${alertForm.workerIds.length} موظف`, `${alertForm.workerIds.length} selected`)}
+                        </span>
+                      </label>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setAlertForm((prev) => ({
+                              ...prev,
+                              workerIds: approved.map((w) => w.id),
+                            }))
+                          }
+                          className="px-2 py-1 text-[10px] font-bold bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900 rounded cursor-pointer hover:opacity-90"
+                        >
+                          {t("✓ تحديد الكل", "✓ Select All")}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setAlertForm((prev) => ({
+                              ...prev,
+                              workerIds: [],
+                              workerId: "",
+                            }))
+                          }
+                          className="px-2 py-1 text-[10px] font-bold border border-zinc-400 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 rounded cursor-pointer hover:bg-zinc-100"
+                        >
+                          {t("✕ إلغاء الكل", "✕ Clear")}
+                        </button>
+                      </div>
+                    </div>
+
+                    <input
+                      type="text"
+                      value={alertForm.workerSearch}
+                      onChange={(e) => setAlertForm({ ...alertForm, workerSearch: e.target.value })}
+                      placeholder={t("🔍 ابحث باسم الموظف أو القسم...", "🔍 Search worker by name or department...")}
+                      className="w-full bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2.5 py-1.5 text-xs rounded focus:outline-none focus:ring-2 focus:ring-red-600"
+                    />
+
+                    <div className="max-h-44 overflow-y-auto divide-y divide-zinc-200 dark:divide-zinc-700 border border-zinc-200 dark:border-zinc-700 rounded bg-white dark:bg-zinc-900">
+                      {approved
+                        .filter((w) => {
+                          const q = alertForm.workerSearch.trim().toLowerCase();
+                          if (!q) return true;
+                          return (
+                            workerName(w).toLowerCase().includes(q) ||
+                            (w.department || "").toLowerCase().includes(q) ||
+                            (w.email || "").toLowerCase().includes(q)
+                          );
+                        })
+                        .map((w) => {
+                          const checked = alertForm.workerIds.includes(w.id);
+                          return (
+                            <label
+                              key={w.id}
+                              className={`flex items-center justify-between gap-2 px-3 py-2 cursor-pointer transition-colors ${
+                                checked
+                                  ? "bg-red-50/80 dark:bg-red-950/30 font-bold text-red-900 dark:text-red-200"
+                                  : "hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
+                              }`}
+                            >
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => {
+                                    setAlertForm((prev) => {
+                                      const exists = prev.workerIds.includes(w.id);
+                                      const nextIds = exists
+                                        ? prev.workerIds.filter((id) => id !== w.id)
+                                        : [...prev.workerIds, w.id];
+                                      return {
+                                        ...prev,
+                                        workerIds: nextIds,
+                                        workerId: nextIds[0] || "",
+                                      };
+                                    });
+                                  }}
+                                  className="h-4 w-4 accent-red-600 rounded cursor-pointer"
+                                />
+                                <span className="truncate">{workerName(w)}</span>
+                              </div>
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 shrink-0">
+                                {w.department || "General"}
+                              </span>
+                            </label>
+                          );
+                        })}
+                    </div>
                   </div>
                 )}
 

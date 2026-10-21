@@ -39,7 +39,11 @@ export default function HrAdjustmentModal({
   onClose,
 }: Props) {
   const { dir, t } = useHrLang();
-  const [workerId, setWorkerId] = useState(preselectedWorkerId || (workers[0]?.id ?? ""));
+  const initialWorkerId = preselectedWorkerId || (workers[0]?.id ?? "");
+  const [selectedWorkerIds, setSelectedWorkerIds] = useState<string[]>(
+    initialWorkerId ? [initialWorkerId] : [],
+  );
+  const [workerSearch, setWorkerSearch] = useState("");
   const [type, setType] = useState<AdjustmentKind>(initialType);
   const [amount, setAmount] = useState<number | "">("");
   const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
@@ -47,13 +51,16 @@ export default function HrAdjustmentModal({
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const selectedWorker = workers.find((w) => w.id === workerId);
-  const workerFullName = selectedWorker
-    ? `${selectedWorker.firstName || ""} ${selectedWorker.lastName || ""}`.trim()
-    : "";
+  const selectedWorkers = workers.filter((w) => selectedWorkerIds.includes(w.id));
+  const workerFullName =
+    selectedWorkers.length === 1
+      ? `${selectedWorkers[0].firstName || ""} ${selectedWorkers[0].lastName || ""}`.trim()
+      : selectedWorkers.length > 1
+        ? t(`${selectedWorkers.length} موظفين مختارين`, `${selectedWorkers.length} selected workers`)
+        : "";
 
   const workerAdjustments = existingAdjustments.filter(
-    (a) => a.workerId === workerId && a.status !== "cancelled",
+    (a) => selectedWorkerIds.includes(a.workerId) && a.status !== "cancelled",
   );
 
   const labels: Record<AdjustmentKind, { ar: string; en: string }> = {
@@ -65,28 +72,37 @@ export default function HrAdjustmentModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!workerId || !amount || Number(amount) <= 0 || !reason.trim()) {
-      toast.warning(t("يرجى إدخال المبلغ والسبب بشكل صحيح", "Please fill in all required fields with a valid amount"));
+    if (selectedWorkerIds.length === 0 || !amount || Number(amount) <= 0 || !reason.trim()) {
+      toast.warning(
+        t(
+          "يرجى اختيار موظف واحد على الأقل وإدخال المبلغ والسبب بشكل صحيح",
+          "Please select at least one worker and fill in all required fields",
+        ),
+      );
       return;
     }
 
     setSaving(true);
     try {
-      await addPayrollAdjustment(
-        {
-          workerId,
-          workerName: workerFullName,
-          type,
-          amount: Number(amount),
-          date,
-          reason: reason.trim(),
-          status: "applied",
-        },
-        adminEmail,
-      );
+      for (const wId of selectedWorkerIds) {
+        const wObj = workers.find((w) => w.id === wId);
+        const wName = wObj ? `${wObj.firstName || ""} ${wObj.lastName || ""}`.trim() : wId;
+        await addPayrollAdjustment(
+          {
+            workerId: wId,
+            workerName: wName,
+            type,
+            amount: Number(amount),
+            date,
+            reason: reason.trim(),
+            status: "applied",
+          },
+          adminEmail,
+        );
+      }
 
       void sendExpoPushToWorkers(db, {
-        recipientUids: [workerId],
+        recipientUids: selectedWorkerIds,
         title: type === "deduction" ? `⛔ تم تسجيل ${labels[type].ar}` : `💰 تم تسجيل ${labels[type].ar}`,
         body: `${amount} ج.م (${date}): ${reason.trim()}`,
         tab: "profile",
@@ -107,7 +123,7 @@ export default function HrAdjustmentModal({
       void logActivity({
         action: "created",
         entity: "hr",
-        entityId: workerId,
+        entityId: selectedWorkerIds[0] || "",
         label: `${labels[type].en}: EGP ${amount} for ${workerFullName}`,
         detail: reason,
       });
@@ -115,7 +131,7 @@ export default function HrAdjustmentModal({
       toast.success(
         t(
           `تم تسجيل ${labels[type].ar} (${amount} ج.م) لـ ${workerFullName} وتحديث شيت الرواتب`,
-          `${labels[type].en} (EGP ${amount}) recorded & added to Payroll Sheet`,
+          `${labels[type].en} (EGP ${amount}) recorded for ${workerFullName} & added to Payroll Sheet`,
         ),
       );
       setAmount("");
@@ -133,11 +149,12 @@ export default function HrAdjustmentModal({
   const handleRemoveAdjustment = async (adj: PayrollAdjustment) => {
     if (!adj.id) return;
     const kindLabel = labels[adj.type as AdjustmentKind]?.ar || adj.type;
+    const adjWorkerName = adj.workerName || workerFullName;
     const ok = await confirmDialog({
       title: t(`إلغاء وحذف ${kindLabel}؟`, `Remove ${adj.type} (EGP ${adj.amount})?`),
       message: t(
-        `هل تريد إزالة ${kindLabel} بقيمة ${adj.amount} ج.م (${adj.reason || "—"}) من شيت راتب ${workerFullName} فوراً؟`,
-        `Remove this ${adj.type} of EGP ${adj.amount} ("${adj.reason || "—"}") from ${workerFullName}'s payroll sheet immediately?`,
+        `هل تريد إزالة ${kindLabel} بقيمة ${adj.amount} ج.م (${adj.reason || "—"}) من شيت راتب ${adjWorkerName} فوراً؟`,
+        `Remove this ${adj.type} of EGP ${adj.amount} ("${adj.reason || "—"}") from ${adjWorkerName}'s payroll sheet immediately?`,
       ),
       confirmLabel: t("شيل من شيت الرواتب 🗑️", "Remove from Payroll 🗑️"),
       tone: "danger",
@@ -146,17 +163,19 @@ export default function HrAdjustmentModal({
     setDeletingId(adj.id);
     try {
       await deletePayrollAdjustment(adj.id);
-      void sendExpoPushToWorkers(db, {
-        recipientUids: [workerId],
-        title: `↩ تم إلغاء ${kindLabel}`,
-        body: `تم إزالة ${kindLabel} بقيمة ${adj.amount} ج.م من كشف راتبك.`,
-        tab: "profile",
-      }).catch(() => {});
+      if (adj.workerId) {
+        void sendExpoPushToWorkers(db, {
+          recipientUids: [adj.workerId],
+          title: `↩ تم إلغاء ${kindLabel}`,
+          body: `تم إزالة ${kindLabel} بقيمة ${adj.amount} ج.م من كشف راتبك.`,
+          tab: "profile",
+        }).catch(() => {});
+      }
       void logActivity({
         action: "deleted",
         entity: "hr",
         entityId: adj.id,
-        label: `Removed ${adj.type} (EGP ${adj.amount}) for ${workerFullName}`,
+        label: `Removed ${adj.type} (EGP ${adj.amount}) for ${adjWorkerName}`,
         detail: adj.reason,
       });
       toast.success(t(`تم حذف ${kindLabel} (${adj.amount} ج.م) وتحديث شيت الرواتب`, `Removed EGP ${adj.amount} from payroll sheet`));
@@ -206,23 +225,82 @@ export default function HrAdjustmentModal({
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4 text-xs">
-            {/* Target Worker */}
-            <div>
-              <label className="block font-bold uppercase text-zinc-700 dark:text-zinc-300 mb-1">
-                {t("اختر الموظف *", "Select Worker *")}
-              </label>
-              <select
-                required
-                value={workerId}
-                onChange={(e) => setWorkerId(e.target.value)}
-                className="w-full bg-white dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 px-3 py-2 text-zinc-950 dark:text-zinc-100 font-bold rounded focus:outline-none focus:ring-2 focus:ring-red-600"
-              >
-                {workers.map((w) => (
-                  <option key={w.id} value={w.id}>
-                    {w.firstName} {w.lastName} ({w.department || "General"})
-                  </option>
-                ))}
-              </select>
+            {/* Target Worker(s) Multi-Select */}
+            <div className="space-y-2 border-2 border-zinc-900 dark:border-zinc-700 rounded p-3 bg-zinc-50 dark:bg-zinc-800/40">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label className="block font-bold uppercase text-zinc-700 dark:text-zinc-300">
+                  {t("اختر الموظف أو مجموعة موظفين *", "Select Worker(s) *")}
+                  <span className="ms-2 inline-flex items-center px-2 py-0.5 rounded bg-red-600 text-white text-[10px] font-black">
+                    {t(`تم اختيار ${selectedWorkerIds.length} موظف`, `${selectedWorkerIds.length} selected`)}
+                  </span>
+                </label>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedWorkerIds(workers.map((w) => w.id))}
+                    className="px-2 py-1 text-[10px] font-bold bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900 rounded cursor-pointer hover:opacity-90"
+                  >
+                    {t("✓ تحديد الكل", "✓ Select All")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedWorkerIds([])}
+                    className="px-2 py-1 text-[10px] font-bold border border-zinc-400 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 rounded cursor-pointer hover:bg-zinc-100"
+                  >
+                    {t("✕ إلغاء الكل", "✕ Clear")}
+                  </button>
+                </div>
+              </div>
+
+              <input
+                type="text"
+                value={workerSearch}
+                onChange={(e) => setWorkerSearch(e.target.value)}
+                placeholder={t("🔍 ابحث باسم الموظف أو القسم...", "🔍 Search worker by name or department...")}
+                className="w-full bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2.5 py-1.5 text-xs rounded focus:outline-none focus:ring-2 focus:ring-red-600"
+              />
+
+              <div className="max-h-40 overflow-y-auto divide-y divide-zinc-200 dark:divide-zinc-700 border border-zinc-200 dark:border-zinc-700 rounded bg-white dark:bg-zinc-900">
+                {workers
+                  .filter((w) => {
+                    const q = workerSearch.trim().toLowerCase();
+                    if (!q) return true;
+                    const full = `${w.firstName || ""} ${w.lastName || ""}`.toLowerCase();
+                    return full.includes(q) || (w.department || "").toLowerCase().includes(q);
+                  })
+                  .map((w) => {
+                    const checked = selectedWorkerIds.includes(w.id);
+                    return (
+                      <label
+                        key={w.id}
+                        className={`flex items-center justify-between gap-2 px-3 py-1.5 cursor-pointer transition-colors ${
+                          checked
+                            ? "bg-red-50/80 dark:bg-red-950/30 font-bold text-red-900 dark:text-red-200"
+                            : "hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => {
+                              setSelectedWorkerIds((prev) =>
+                                prev.includes(w.id) ? prev.filter((id) => id !== w.id) : [...prev, w.id],
+                              );
+                            }}
+                            className="h-4 w-4 accent-red-600 rounded cursor-pointer"
+                          />
+                          <span className="truncate">
+                            {w.firstName} {w.lastName}
+                          </span>
+                        </div>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 shrink-0">
+                          {w.department || "General"}
+                        </span>
+                      </label>
+                    );
+                  })}
+              </div>
             </div>
 
             {/* Adjustment Type Selection */}
@@ -406,7 +484,12 @@ export default function HrAdjustmentModal({
                       }`}
                     >
                       <div className="min-w-0">
-                        <div className="flex items-center gap-1.5 font-bold">
+                        <div className="flex flex-wrap items-center gap-1.5 font-bold">
+                          {selectedWorkerIds.length > 1 && adj.workerName && (
+                            <span className="px-1.5 py-0.5 rounded bg-zinc-900 text-white text-[10px]">
+                              {adj.workerName}
+                            </span>
+                          )}
                           <span className={isPos ? "text-emerald-800 dark:text-emerald-300" : "text-red-700 dark:text-red-300"}>
                             {isPos ? "🎁" : "⛔"} {kLabel}: {isPos ? "+" : "-"}EGP {adj.amount}
                           </span>
