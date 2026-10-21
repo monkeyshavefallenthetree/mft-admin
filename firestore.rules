@@ -163,7 +163,7 @@ service cloud.firestore {
           || 'reappliedBy' in resource.data;
       }
 
-      allow read: if isHrAdmin() || ownsExisting();
+      allow read: if isHrAdmin() || ownsExisting() || (isSignedIn() && resource == null);
 
       allow create: if isHrAdmin() || (isSignedIn() && validWorkerEntry(request.resource.data));
 
@@ -204,13 +204,13 @@ service cloud.firestore {
 
     // ── Requests, leave & payroll (People & HR) ─────────────────────────────
     match /exceptionRequests/{id} {
-      allow read: if isHrAdmin() || ownsExisting();
+      allow read: if isHrAdmin() || ownsExisting() || (isSignedIn() && resource == null);
       allow create: if isHrAdmin() || (ownsIncoming() && request.resource.data.status == 'pending');
       allow update, delete: if isHrAdmin();
     }
 
     match /payrollAdjustments/{id} {
-      allow read: if isHrAdmin() || ownsExisting();
+      allow read: if isHrAdmin() || ownsExisting() || (isSignedIn() && resource == null);
       allow write: if isHrAdmin();
     }
 
@@ -229,7 +229,7 @@ service cloud.firestore {
     }
 
     match /penalties/{id} {
-      allow read: if isHrAdmin() || ownsExisting();
+      allow read: if isHrAdmin() || ownsExisting() || (isSignedIn() && resource == null);
       allow write: if isHrAdmin();
     }
 
@@ -238,7 +238,7 @@ service cloud.firestore {
     // (a) attach image ids right after creating, and (b) upload the stage-2 invoice
     // while the claim is "pending_invoice".
     match /reimbursements/{id} {
-      allow read: if isHrAdmin() || ownsExisting();
+      allow read: if isHrAdmin() || ownsExisting() || (isSignedIn() && resource == null);
       allow create: if isHrAdmin() || (
         ownsIncoming()
         && request.resource.data.stage in ['pre_approval', 'review']
@@ -266,7 +266,7 @@ service cloud.firestore {
 
     // Compressed image data URLs (≤ ~300 KB each, Firestore doc limit is 1 MiB).
     match /reimbursementAttachments/{id} {
-      allow read: if isHrAdmin() || ownsExisting();
+      allow read: if isHrAdmin() || ownsExisting() || (isSignedIn() && resource == null);
       allow create: if isHrAdmin() || (
         ownsIncoming()
         && request.resource.data.dataUrl is string
