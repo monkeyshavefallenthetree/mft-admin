@@ -258,13 +258,13 @@ export default function AdminHRPage() {
 
   // Alert Form
   const [alertForm, setAlertForm] = useState({
-    type: "",
+    type: "system_announcement",
     title: "",
     message: "",
     recipient: "all",
     department: "",
     workerId: "",
-    priority: "medium",
+    priority: "high",
   });
 
   // Auth
@@ -825,7 +825,7 @@ export default function AdminHRPage() {
 
       toast.success(t("تم إرسال التنبيه للموظفين بنجاح", "Broadcast alert sent"));
       setSendOpen(false);
-      setAlertForm({ type: "", title: "", message: "", recipient: "all", department: "", workerId: "", priority: "medium" });
+      setAlertForm({ type: "system_announcement", title: "", message: "", recipient: "all", department: "", workerId: "", priority: "high" });
     } catch (err) {
       toast.error(t("فشل إرسال التنبيه", "Failed to send alert"), {
         description: err instanceof Error ? err.message : String(err),
@@ -885,6 +885,22 @@ export default function AdminHRPage() {
                 `📍 Work Locations (${(settings.workLocations ?? []).filter((l) => l.active !== false).length})`,
               )}
             </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setAlertForm((prev) => ({
+                ...prev,
+                type: prev.type || "system_announcement",
+                recipient: "all",
+                priority: "high",
+              }));
+              setSendOpen(true);
+            }}
+            className="px-3 py-2 border-2 border-zinc-900 dark:border-zinc-700 bg-amber-400 hover:bg-amber-300 text-zinc-950 text-xs font-black cursor-pointer flex items-center gap-1.5 rounded shadow-[2px_2px_0px_0px_#09090b]"
+          >
+            <span>{t("📢 إرسال رسالة / تنبيه للكل", "📢 Broadcast Alert to All")}</span>
           </button>
 
           <button
@@ -1793,17 +1809,34 @@ export default function AdminHRPage() {
                 className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-zinc-50 dark:hover:bg-zinc-800/40"
               >
                 <div className="space-y-1">
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <strong className="text-sm text-zinc-950 dark:text-white">{a.title}</strong>
+                    <span className="px-1.5 py-0.5 bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-300 border border-red-300 dark:border-red-800 text-[10px] uppercase font-bold">
+                      {a.recipient === "all"
+                        ? t("🌐 تعميم للكل", "🌐 Broadcast All")
+                        : a.recipient === "department"
+                          ? t(`🏢 قسم ${a.department}`, `🏢 Dept: ${a.department}`)
+                          : t("👤 تنبيه فردي", "👤 Individual")}
+                    </span>
                     <span className="px-1.5 py-0.5 bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 text-[10px] uppercase font-bold">
                       {a.type || "Notice"}
                     </span>
                     <span className="text-[10px] text-zinc-400">{formatTs(a.sentAt || a.createdAt)}</span>
                   </div>
-                  <p className="text-zinc-600 dark:text-zinc-400 max-w-2xl">{a.message}</p>
-                  <p className="text-[10px] text-zinc-400">
-                    {t("المستلمون:", "Recipients:")} {a.recipientCount ?? a.recipients?.length ?? 0} ·{" "}
-                    {t("بواسطة:", "Sent by:")} {a.sentBy || "Admin"}
+                  <p className="text-zinc-600 dark:text-zinc-400 max-w-2xl whitespace-pre-line">{a.message}</p>
+                  <p className="text-[10px] text-zinc-400 flex flex-wrap items-center gap-2">
+                    <span>
+                      {t("المستلمون:", "Recipients:")} {a.recipientCount ?? a.recipients?.length ?? approved.length}
+                    </span>
+                    <span>·</span>
+                    <span className="text-emerald-700 dark:text-emerald-400 font-bold">
+                      👁️ {t("قرأ الرسالة:", "Read by:")} {Array.isArray(a.readBy) ? a.readBy.length : 0} /{" "}
+                      {a.recipientCount ?? a.recipients?.length ?? approved.length}
+                    </span>
+                    <span>·</span>
+                    <span>
+                      {t("بواسطة:", "Sent by:")} {a.sentBy || "Admin"}
+                    </span>
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -2004,9 +2037,28 @@ export default function AdminHRPage() {
                     onChange={(e) => setAlertForm({ ...alertForm, recipient: e.target.value })}
                     className="w-full bg-white dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 px-3 py-2 text-zinc-950 dark:text-zinc-100 font-bold rounded focus:outline-none focus:ring-2 focus:ring-red-600"
                   >
-                    <option value="all">{t("جميع الموظفين المعتمدين", "Broadcast to all approved workers")}</option>
-                    <option value="department">{t("قسم محدد", "Specific department")}</option>
-                    <option value="individual">{t("موظف محدد", "Individual worker")}</option>
+                    <option value="all">
+                      {t(
+                        `🌐 جميع الموظفين (${approved.length} موظف) — تظهر في أعلى شاشة الكل`,
+                        `🌐 Broadcast to ALL workers (${approved.length})`,
+                      )}
+                    </option>
+                    <option value="department">{t("🏢 قسم محدد", "🏢 Specific department")}</option>
+                    <option value="individual">{t("👤 موظف محدد", "👤 Individual worker")}</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-zinc-700 dark:text-zinc-300 font-bold uppercase mb-1">
+                    {t("درجة الأهمية *", "Priority *")}
+                  </label>
+                  <select
+                    value={alertForm.priority}
+                    onChange={(e) => setAlertForm({ ...alertForm, priority: e.target.value })}
+                    className="w-full bg-white dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 px-3 py-2 text-zinc-950 dark:text-zinc-100 font-bold rounded focus:outline-none focus:ring-2 focus:ring-red-600"
+                  >
+                    <option value="high">{t("⚡ هام وعاجل (يظهر كبانر بارز للجميع)", "⚡ High Priority Banner")}</option>
+                    <option value="medium">{t("📢 تنبيه اعتيادي", "📢 Standard Notice")}</option>
                   </select>
                 </div>
 
