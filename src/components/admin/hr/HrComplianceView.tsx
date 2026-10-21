@@ -4,6 +4,7 @@ import { Fragment, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   computeLeaveAccrual,
+  effectiveLeaveDaysForRequest,
   leavePhaseLabelAr,
   leavePhaseLabelEn,
   policyConfigFromSettings,
@@ -217,7 +218,8 @@ export default function HrComplianceView({
           (draft ? draft.leaveLawType : w.leaveLawType) === "legacy_21" ? "legacy_21" : "new_15";
         const usedLeave = approvedRequests
           .filter((r) => r.workerId === w.id && (r.type === "annual_leave" || r.type === "emergency_leave") && r.exceptionDate)
-          .map((r) => ({ date: r.exceptionDate, days: Number(r.leaveDays) > 0 ? Number(r.leaveDays) : 1 }));
+          .map((r) => ({ date: r.exceptionDate, days: effectiveLeaveDaysForRequest(r, settings.weekendDays || [5, 6]) }))
+          .filter((u) => u.days > 0);
         const accrual = hire
           ? computeLeaveAccrual(
               hire,

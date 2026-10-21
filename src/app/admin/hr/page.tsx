@@ -47,7 +47,7 @@ import {
   type ApprovedRequestRow,
   type ReimbursementDoc,
 } from "@/lib/admin/hrSettings";
-import { ymd as localYmd } from "@/lib/admin/hrPolicy2026";
+import { effectiveLeaveDaysForRequest, ymd as localYmd } from "@/lib/admin/hrPolicy2026";
 import { useHrLang } from "@/lib/admin/hrI18n";
 import Link from "next/link";
 import { toast, confirmDialog } from "@/lib/admin/feedback";
@@ -468,12 +468,13 @@ export default function AdminHRPage() {
           r.exceptionDate >= s &&
           r.exceptionDate <= e,
       );
+      const wknd = settings.weekendDays || [5, 6];
       const unpaidLeaveDays = leaveReqs
         .filter((r) => r.type === "unpaid_leave" || r.leaveType === "unpaid")
-        .reduce((sum, r) => sum + (Number(r.leaveDays) > 0 ? Number(r.leaveDays) : 1), 0);
+        .reduce((sum, r) => sum + effectiveLeaveDaysForRequest(r, wknd, holidays), 0);
       const paidLeaveDays = leaveReqs
         .filter((r) => r.type !== "unpaid_leave" && r.leaveType !== "unpaid")
-        .reduce((sum, r) => sum + (Number(r.leaveDays) > 0 ? Number(r.leaveDays) : 1), 0);
+        .reduce((sum, r) => sum + effectiveLeaveDaysForRequest(r, wknd, holidays), 0);
       const approvedLeaveDays = paidLeaveDays + unpaidLeaveDays;
       const fallbackStart = w.createdAt?.toDate ? localYmd(w.createdAt.toDate()) : null;
       return {
@@ -494,7 +495,7 @@ export default function AdminHRPage() {
         capAtToday: true,
       };
     },
-    [effectiveLedger, approvedRequests],
+    [effectiveLedger, approvedRequests, settings.weekendDays, holidays],
   );
 
   // Comprehensive Payroll Calculations for Active Period

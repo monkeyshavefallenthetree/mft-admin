@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   computeLeaveAccrual,
+  effectiveLeaveDaysForRequest,
   leavePhaseLabelAr,
   leavePhaseLabelEn,
   policyConfigFromSettings,
@@ -103,8 +104,9 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
     () =>
       approvedRequests
         .filter((r) => r.workerId === worker.id && (r.type === "annual_leave" || r.type === "emergency_leave") && r.exceptionDate)
-        .map((r) => ({ date: r.exceptionDate, days: Number(r.leaveDays) > 0 ? Number(r.leaveDays) : 1 })),
-    [approvedRequests, worker.id],
+        .map((r) => ({ date: r.exceptionDate, days: effectiveLeaveDaysForRequest(r, settings.weekendDays || [5, 6]) }))
+        .filter((u) => u.days > 0),
+    [approvedRequests, worker.id, settings.weekendDays],
   );
   const preview = useMemo(() => {
     if (!effectiveHire) return null;

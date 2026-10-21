@@ -3,6 +3,7 @@
 import {
   chargeableMinutes,
   computeLeaveAccrual,
+  effectiveLeaveDaysForRequest,
   leavePhaseLabelAr,
   parseHm,
   formatHm,
@@ -39,9 +40,9 @@ export interface InsightRequest {
   leaveDays?: number;
 }
 
-/** Days requested by an annual-leave request (defaults to 1 for legacy requests). */
+/** Days requested by a leave request (excludes weekly rest days Friday/Saturday, defaults to 1 for legacy requests). */
 export function leaveDaysOf(r: InsightRequest): number {
-  return Number(r.leaveDays) > 0 ? Number(r.leaveDays) : 1;
+  return effectiveLeaveDaysForRequest(r);
 }
 
 /**
