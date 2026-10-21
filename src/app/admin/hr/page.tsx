@@ -876,6 +876,19 @@ export default function AdminHRPage() {
 
           <button
             type="button"
+            onClick={() => setPolicyModalOpen(true)}
+            className="px-3 py-2 border-2 border-zinc-900 dark:border-zinc-700 bg-sky-50 dark:bg-sky-950/40 hover:bg-sky-100 text-sky-900 dark:text-sky-300 text-xs font-bold cursor-pointer flex items-center gap-1.5 rounded shadow-[2px_2px_0px_0px_#0284c7]"
+          >
+            <span>
+              {t(
+                `📍 مواقع العمل (${(settings.workLocations ?? []).filter((l) => l.active !== false).length})`,
+                `📍 Work Locations (${(settings.workLocations ?? []).filter((l) => l.active !== false).length})`,
+              )}
+            </span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => openAdjustmentFor(undefined, "bonus")}
             className="px-3 py-2 border-2 border-zinc-900 dark:border-zinc-700 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 text-emerald-800 dark:text-emerald-300 text-xs font-bold cursor-pointer flex items-center gap-1 rounded shadow-[2px_2px_0px_0px_#059669]"
           >

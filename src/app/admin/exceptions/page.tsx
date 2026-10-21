@@ -25,6 +25,12 @@ interface ExceptionRequest {
   type?: string;
   lateMinutes?: number;
   leaveDays?: number;
+  missionHours?: number;
+  screenshotUrl?: string;
+  workerLat?: number;
+  workerLng?: number;
+  nearestLocationName?: string;
+  distanceMeters?: number;
   requestedAmount?: number;
   exceptionDate?: string;
   endDate?: string;
@@ -43,6 +49,7 @@ interface ExceptionRequest {
 }
 
 function formatExceptionType(type: string | undefined) {
+  if (type === "external_mission") return "🚗 External Mission (مأمورية خارجية)";
   if (type === "late") return "Late Excuse (استثناء تأخير)";
   if (type === "advance_late") return "Late Permission (إذن تأخير شهري)";
   if (type === "early_permission") return "Early Leave Permission (إذن انصراف مبكر)";
@@ -108,6 +115,7 @@ export default function AdminExceptionsPage() {
 
   const [responseModal, setResponseModal] = useState<{ ids: string[]; workerName: string; mode: "reject" | "response" } | null>(null);
   const [modalText, setModalText] = useState("");
+  const [previewScreenshot, setPreviewScreenshot] = useState<string | null>(null);
   const [workersById, setWorkersById] = useState<Map<string, InsightWorker>>(new Map());
   const [hrSettings, setHrSettings] = useState<HrSettings>(DEFAULT_HR_SETTINGS);
   const policyCfg = useMemo(() => policyConfigFromSettings(hrSettings), [hrSettings]);
@@ -266,6 +274,37 @@ export default function AdminExceptionsPage() {
               note: `[Approved ${e.type}] ${e.reason || ""}`.trim(),
               createdAt: serverTimestamp(),
               updatedAt: serverTimestamp(),
+            },
+            { merge: true },
+          );
+        }
+        // When an external mission is approved, credit its hours in workSessions for that date & unlock shift
+        if (e?.type === "external_mission" && e.workerId) {
+          const missionDate = e.exceptionDate || new Date().toISOString().split("T")[0];
+          const hrs = Math.max(0.5, Number(e.missionHours) || Math.round(((Number(e.lateMinutes) || 60) / 60) * 10) / 10);
+          const missionMs = Math.round(hrs * 3600 * 1000);
+          const startAt = new Date(`${missionDate}T10:00:00`);
+          const endAt = new Date(startAt.getTime() + missionMs);
+          batch.set(
+            doc(db, "workSessions", `mission_${e.id}`),
+            {
+              workerId: e.workerId,
+              workerName: e.workerName || "Worker",
+              workerEmail: e.workerEmail || "",
+              date: missionDate,
+              loginTime: startAt,
+              startTime: startAt,
+              logoutTime: endAt,
+              endTime: endAt,
+              isActive: false,
+              presenceStatus: "offline",
+              totalWorkTime: missionMs,
+              isExternalMission: true,
+              missionRequestId: e.id,
+              missionHoursApproved: hrs,
+              currentTaskTitle: `[مأمورية خارجية معتمدة — ${hrs} ساعة] ${e.reason || ""}`.trim(),
+              createdAt: serverTimestamp(),
+              lastUpdated: serverTimestamp(),
             },
             { merge: true },
           );
@@ -459,6 +498,9 @@ export default function AdminExceptionsPage() {
             { merge: true },
           );
         }
+        if (x?.type === "external_mission") {
+          batch.delete(doc(db, "workSessions", `mission_${id}`));
+        }
       });
       await batch.commit();
       ids.forEach((id) => {
@@ -517,6 +559,9 @@ export default function AdminExceptionsPage() {
             },
             { merge: true },
           );
+        }
+        if (x?.type === "external_mission") {
+          batch.delete(doc(db, "workSessions", `mission_${id}`));
         }
       });
       await batch.commit();
@@ -621,6 +666,7 @@ export default function AdminExceptionsPage() {
           </div>
           <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="brutal-input md:w-52">
             <option value="">All request types</option>
+            <option value="external_mission">🚗 External Mission (مأمورية خارجية)</option>
             <option value="late">Late Excuse (استثناء تأخير)</option>
             <option value="advance_late">Late Permission (إذن تأخير شهري)</option>
             <option value="early_permission">Early Permission (إذن انصراف مبكر)</option>
@@ -706,19 +752,24 @@ export default function AdminExceptionsPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="text-sm font-semibold text-zinc-900">{e.workerName || "Unknown worker"}</h3>
                       <span className={`rounded-md border px-2 py-0.5 text-[11px] font-medium ${
-                        e.type === "absent"
-                          ? "border-violet-200 bg-violet-50 text-violet-700"
-                          : e.type === "overtime"
-                            ? "border-blue-200 bg-blue-50 text-blue-700"
-                            : e.type === "advance_request"
-                              ? "border-amber-300 bg-amber-50 text-amber-900 font-bold"
-                              : e.type === "advance_late" || e.type === "early_permission"
-                                ? "border-sky-300 bg-sky-50 text-sky-900 font-semibold"
-                                : isLeaveReq
-                                  ? "border-emerald-200 bg-emerald-50 text-emerald-800 font-semibold"
-                                  : "border-orange-200 bg-orange-50 text-orange-700"
+                        e.type === "external_mission"
+                          ? "border-purple-300 bg-purple-50 text-purple-900 font-bold"
+                          : e.type === "absent"
+                            ? "border-violet-200 bg-violet-50 text-violet-700"
+                            : e.type === "overtime"
+                              ? "border-blue-200 bg-blue-50 text-blue-700"
+                              : e.type === "advance_request"
+                                ? "border-amber-300 bg-amber-50 text-amber-900 font-bold"
+                                : e.type === "advance_late" || e.type === "early_permission"
+                                  ? "border-sky-300 bg-sky-50 text-sky-900 font-semibold"
+                                  : isLeaveReq
+                                    ? "border-emerald-200 bg-emerald-50 text-emerald-800 font-semibold"
+                                    : "border-orange-200 bg-orange-50 text-orange-700"
                       }`}>
                         {formatExceptionType(e.type)}
+                        {e.type === "external_mission"
+                          ? ` · ${e.missionHours || Math.round(((e.lateMinutes || 60) / 60) * 10) / 10} ساعة (Hours)`
+                          : ""}
                         {(e.type === "late" || e.type === "advance_late" || e.type === "early_permission") && e.lateMinutes != null ? ` · ${e.lateMinutes} min` : ""}
                         {e.type === "overtime" && e.lateMinutes != null ? ` · +${e.lateMinutes} min` : ""}
                         {isLeaveReq ? ` · ${Number(e.leaveDays) > 0 ? e.leaveDays : 1}d` : ""}
@@ -731,12 +782,28 @@ export default function AdminExceptionsPage() {
                       <span className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-0.5 font-semibold text-zinc-800" dir="rtl">
                         {isLeaveReq
                           ? `📅 فترة الإجازة: من ${startStr} إلى ${endStr} (${Number(e.leaveDays) > 0 ? e.leaveDays : 1} يوم)`
-                          : `📅 تاريخ الطلب: ${startStr}`}
+                          : e.type === "external_mission"
+                            ? `🚗 مأمورية ليوم: ${startStr} — المدة المطلوبة: ${e.missionHours || Math.round(((e.lateMinutes || 60) / 60) * 10) / 10} ساعة`
+                            : `📅 تاريخ الطلب: ${startStr}`}
                       </span>
                       <span className="inline-flex items-center gap-1 rounded-md border border-sky-200 bg-sky-50 px-2 py-0.5 font-semibold text-sky-800" dir="rtl">
                         📩 تاريخ تقديم الطلب: <span dir="ltr">{formatSubmittedYmd(e.createdAt || e.submittedAt)}</span>
                         {timeAgo(e.createdAt || e.submittedAt) ? ` (${timeAgo(e.createdAt || e.submittedAt)})` : ""}
                       </span>
+                      {e.workerLat != null && e.workerLng != null && (
+                        <a
+                          href={`https://www.google.com/maps?q=${e.workerLat},${e.workerLng}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 rounded-md border border-purple-200 bg-purple-50 px-2 py-0.5 font-bold text-purple-800 hover:bg-purple-100"
+                          dir="rtl"
+                        >
+                          📍 موقع الموظف وقت الطلب
+                          {e.distanceMeters != null && e.nearestLocationName
+                            ? ` (يبعد ${e.distanceMeters}م عن ${e.nearestLocationName})`
+                            : " (فتح على الخريطة)"}
+                        </a>
+                      )}
                     </div>
 
                     <p className="mt-3 whitespace-pre-wrap rounded-lg bg-zinc-50 px-3 py-2.5 text-[13px] leading-relaxed text-zinc-800">{e.reason || <span className="italic text-zinc-400">No written reason provided</span>}</p>
@@ -750,20 +817,55 @@ export default function AdminExceptionsPage() {
                       policyEffectiveFrom={hrSettings.policy2026EffectiveFrom}
                     />
 
-                    {e.supportingEvidence && (
-                      <div className="mt-2 text-xs">
-                        {e.supportingEvidence.startsWith("http") ? (
-                          <a href={e.supportingEvidence} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 font-medium text-red-600 hover:underline">
-                            <Svg d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" className="h-3.5 w-3.5" />
-                            View attached evidence
-                          </a>
-                        ) : (
-                          <p className="break-all text-zinc-600">
-                            <span className="font-medium">Evidence:</span> {e.supportingEvidence}
-                          </p>
-                        )}
-                      </div>
-                    )}
+                    {(e.screenshotUrl || e.supportingEvidence) && (() => {
+                      const imgSrc =
+                        e.screenshotUrl ||
+                        (e.supportingEvidence?.startsWith("data:image/") ? e.supportingEvidence : null);
+                      if (imgSrc) {
+                        return (
+                          <div className="mt-3 rounded-xl border-2 border-purple-200 bg-purple-50/40 p-3" dir="rtl">
+                            <div className="flex items-center justify-between gap-2 mb-2">
+                              <span className="text-xs font-bold text-purple-900">
+                                📸 سكرين شوت المأمورية المرفق (اضغط للتكبير):
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setPreviewScreenshot(imgSrc)}
+                                className="rounded bg-purple-600 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-purple-700 cursor-pointer"
+                              >
+                                🔍 عرض بالحجم الكامل
+                              </button>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setPreviewScreenshot(imgSrc)}
+                              className="block overflow-hidden rounded-lg border border-purple-300 bg-white shadow-xs hover:opacity-95 cursor-pointer"
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={imgSrc}
+                                alt="Mission screenshot"
+                                className="max-h-56 w-auto object-contain"
+                              />
+                            </button>
+                          </div>
+                        );
+                      }
+                      return (
+                        <div className="mt-2 text-xs">
+                          {e.supportingEvidence!.startsWith("http") ? (
+                            <a href={e.supportingEvidence} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 font-medium text-red-600 hover:underline">
+                              <Svg d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" className="h-3.5 w-3.5" />
+                              View attached evidence
+                            </a>
+                          ) : (
+                            <p className="break-all text-zinc-600">
+                              <span className="font-medium">Evidence:</span> {e.supportingEvidence}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })()}
 
                     {e.adminResponse && (
                       <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
@@ -893,6 +995,38 @@ export default function AdminExceptionsPage() {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        </ModalPortal>
+      )}
+
+      {/* Full-Size Mission Screenshot Lightbox */}
+      {previewScreenshot && (
+        <ModalPortal onClose={() => setPreviewScreenshot(null)}>
+          <div
+            className="fixed inset-0 z-[130] flex items-center justify-center bg-black/85 p-4 backdrop-blur-xs animate-fade-in"
+            onClick={() => setPreviewScreenshot(null)}
+          >
+            <div
+              className="relative max-h-[92vh] max-w-4xl overflow-auto rounded-2xl bg-zinc-900 p-3 shadow-2xl"
+              onClick={(ev) => ev.stopPropagation()}
+            >
+              <div className="mb-2 flex items-center justify-between px-2 text-white">
+                <span className="text-xs font-bold">📸 سكرين شوت المأمورية الخارجية · External Mission Proof</span>
+                <button
+                  type="button"
+                  onClick={() => setPreviewScreenshot(null)}
+                  className="rounded-lg bg-red-600 px-3 py-1 text-xs font-bold text-white hover:bg-red-700 cursor-pointer"
+                >
+                  ✕ إغلاق
+                </button>
+              </div>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={previewScreenshot}
+                alt="Mission Screenshot Full"
+                className="mx-auto max-h-[82vh] w-auto rounded-lg object-contain"
+              />
             </div>
           </div>
         </ModalPortal>

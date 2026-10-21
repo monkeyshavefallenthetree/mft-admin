@@ -2,7 +2,12 @@
 
 import { useState } from "react";
 import ModalPortal from "@/components/admin/ui/ModalPortal";
-import { type HrSettings, DEFAULT_HR_SETTINGS } from "@/lib/admin/hrReports";
+import {
+  type HrSettings,
+  type WorkLocationItem,
+  DEFAULT_HR_SETTINGS,
+  parseLocationCoordinates,
+} from "@/lib/admin/hrReports";
 import { saveHrSettings } from "@/lib/admin/hrSettings";
 import { toast } from "@/lib/admin/feedback";
 import { useHrLang } from "@/lib/admin/hrI18n";
@@ -66,9 +71,115 @@ function NumField({
 }
 
 export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: Props) {
-  const [settings, setSettings] = useState<HrSettings>({ ...initialSettings });
+  const [settings, setSettings] = useState<HrSettings>({
+    ...initialSettings,
+    workLocations: initialSettings.workLocations ?? [],
+    enforceGeofence: initialSettings.enforceGeofence ?? true,
+  });
   const [saving, setSaving] = useState(false);
   const { isAr, dir, toggleLang, t } = useHrLang();
+
+  // New Work Location builder state
+  const [locName, setLocName] = useState("");
+  const [locLat, setLocLat] = useState("");
+  const [locLng, setLocLng] = useState("");
+  const [locRadius, setLocRadius] = useState(200);
+  const [locPasteUrl, setLocPasteUrl] = useState("");
+  const [locGettingGps, setLocGettingGps] = useState(false);
+
+  const handleCaptureCurrentGps = () => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      toast.warning(t("المتصفح لا يدعم تحديد الموقع الجغرافي", "Browser does not support Geolocation"));
+      return;
+    }
+    setLocGettingGps(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLocLat(pos.coords.latitude.toFixed(6));
+        setLocLng(pos.coords.longitude.toFixed(6));
+        if (!locName.trim()) {
+          setLocName(t("المكتب الرئيسي", "Main Office"));
+        }
+        setLocGettingGps(false);
+        toast.success(t("تم التقاط إحداثيات موقعك الحالي بنجاح ✓", "Current GPS coordinates captured ✓"));
+      },
+      (err) => {
+        setLocGettingGps(false);
+        toast.error(t("تعذر التقاط الموقع الحالي", "Failed to get current GPS"), {
+          description: err.message,
+        });
+      },
+      { enableHighAccuracy: true, timeout: 10000 },
+    );
+  };
+
+  const handlePasteCoordinates = (val: string) => {
+    setLocPasteUrl(val);
+    const parsed = parseLocationCoordinates(val);
+    if (parsed) {
+      setLocLat(String(parsed.lat));
+      setLocLng(String(parsed.lng));
+      toast.success(
+        t(
+          `تم استخراج الإحداثيات: ${parsed.lat.toFixed(5)}, ${parsed.lng.toFixed(5)}`,
+          `Extracted coordinates: ${parsed.lat.toFixed(5)}, ${parsed.lng.toFixed(5)}`,
+        ),
+      );
+    }
+  };
+
+  const handleAddLocation = () => {
+    const lat = parseFloat(locLat);
+    const lng = parseFloat(locLng);
+    if (!locName.trim()) {
+      toast.warning(t("يرجى إدخال اسم الموقع (مثال: المكتب الرئيسي)", "Please enter a location name"));
+      return;
+    }
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+      toast.warning(
+        t(
+          "يرجى إدخال خط العرض (Latitude) وخط الطول (Longitude) بشكل صحيح أو الضغط على «التقط موقعي الحالي».",
+          "Please enter valid Latitude & Longitude or click 'Use Current GPS'.",
+        ),
+      );
+      return;
+    }
+    const newLoc: WorkLocationItem = {
+      id: `loc_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      name: locName.trim(),
+      lat,
+      lng,
+      radiusMeters: Math.max(30, Number(locRadius) || 200),
+      active: true,
+    };
+    setSettings((prev) => ({
+      ...prev,
+      workLocations: [...(prev.workLocations ?? []), newLoc],
+      enforceGeofence: true,
+    }));
+    setLocName("");
+    setLocLat("");
+    setLocLng("");
+    setLocPasteUrl("");
+    setLocRadius(200);
+    toast.success(t(`تمت إضافة موقع «${newLoc.name}» — اضغط حفظ السياسات لتأكيد التفعيل`, `Added "${newLoc.name}"`));
+  };
+
+  const handleToggleLocationActive = (id: string) => {
+    setSettings((prev) => ({
+      ...prev,
+      workLocations: (prev.workLocations ?? []).map((l) =>
+        l.id === id ? { ...l, active: l.active === false ? true : false } : l,
+      ),
+    }));
+  };
+
+  const handleRemoveLocation = (id: string) => {
+    setSettings((prev) => ({
+      ...prev,
+      workLocations: (prev.workLocations ?? []).filter((l) => l.id !== id),
+    }));
+  };
 
   const toggleWeekend = (day: number) => {
     setSettings((prev) => {
@@ -583,6 +694,205 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
                 </div>
               </div>
             )}
+
+            {/* 5. Allowed Work Locations (Geofencing & External Mission Gate) */}
+            <div className="p-4 bg-zinc-50 dark:bg-zinc-800/60 border-2 border-zinc-900 dark:border-zinc-700 rounded-lg space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h4 className="font-bold text-sm text-zinc-900 dark:text-white flex items-center gap-2">
+                    <span className="text-red-600">٥.</span>
+                    <span>
+                      {t(
+                        "📍 مواقع العمل المعتمدة وبوابة المأموريات الخارجية (Geofence)",
+                        "5. 📍 Allowed Work Locations & External Mission Gate",
+                      )}
+                    </span>
+                  </h4>
+                  <p className="text-zinc-500 dark:text-zinc-400 text-[11px] mt-0.5">
+                    {t(
+                      "إذا كان الموظف خارج جميع المواقع المفعّلة، لن يقبل النظام بدء الشيفت العادي، وسيُطلب منه إرسال طلب مأمورية خارجية بعدد الساعات وسكرين شوت للموافقة عليها.",
+                      "If a worker is outside all active locations, regular shift clock-in is blocked and they must submit an External Mission request (with hours & screenshot) for Admin approval.",
+                    )}
+                  </p>
+                </div>
+
+                <label className="flex items-center gap-2 px-3 py-1.5 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.enforceGeofence !== false}
+                    onChange={(e) => setSettings({ ...settings, enforceGeofence: e.target.checked })}
+                    className="h-4 w-4 accent-emerald-600 cursor-pointer"
+                  />
+                  <span className="text-[11px] font-bold">
+                    {t("إلزام التواجد في اللوكيشن لبدء الشيفت", "Enforce Location Gate")}
+                  </span>
+                </label>
+              </div>
+
+              {/* Add Location Form Box */}
+              <div className="p-3 bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[11px] font-bold text-zinc-800 dark:text-zinc-200">
+                    {t("➕ إضافة موقع عمل / فرع جديد:", "➕ Add New Office / Work Location:")}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleCaptureCurrentGps}
+                    disabled={locGettingGps}
+                    className="px-2.5 py-1 bg-sky-600 hover:bg-sky-700 text-white rounded text-[11px] font-bold cursor-pointer disabled:opacity-50"
+                  >
+                    {locGettingGps
+                      ? t("⏳ جاري التقاط موقعك...", "⏳ Getting GPS...")
+                      : t("📍 التقط موقعي الحالي الآن (GPS)", "📍 Use My Current Location")}
+                  </button>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-zinc-500 mb-0.5">
+                    {t(
+                      "أو الصق رابط Google Maps أو الإحداثيات (مثال: 30.0444, 31.2357):",
+                      "Or paste a Google Maps link or 'lat, lng' coordinates:",
+                    )}
+                  </label>
+                  <input
+                    type="text"
+                    dir="ltr"
+                    value={locPasteUrl}
+                    onChange={(e) => handlePasteCoordinates(e.target.value)}
+                    placeholder="https://maps.google.com/?q=30.0444,31.2357  أو  30.0444, 31.2357"
+                    className={INPUT_CLS}
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                  <PolicyField label={t("اسم الموقع / الفرع *", "Location Name *")}>
+                    <input
+                      type="text"
+                      value={locName}
+                      onChange={(e) => setLocName(e.target.value)}
+                      placeholder={t("مثال: المكتب الرئيسي", "e.g. Main Office")}
+                      className={INPUT_CLS}
+                    />
+                  </PolicyField>
+                  <PolicyField label={t("خط العرض (Latitude) *", "Latitude *")}>
+                    <input
+                      type="number"
+                      step="any"
+                      dir="ltr"
+                      value={locLat}
+                      onChange={(e) => setLocLat(e.target.value)}
+                      placeholder="30.044420"
+                      className={INPUT_CLS}
+                    />
+                  </PolicyField>
+                  <PolicyField label={t("خط الطول (Longitude) *", "Longitude *")}>
+                    <input
+                      type="number"
+                      step="any"
+                      dir="ltr"
+                      value={locLng}
+                      onChange={(e) => setLocLng(e.target.value)}
+                      placeholder="31.235712"
+                      className={INPUT_CLS}
+                    />
+                  </PolicyField>
+                  <PolicyField label={t("النطاق المسموح (متر)", "Allowed Radius (m)")}>
+                    <select
+                      value={locRadius}
+                      onChange={(e) => setLocRadius(parseInt(e.target.value, 10) || 200)}
+                      className={INPUT_CLS}
+                    >
+                      <option value={100}>{t("100 متر (دقيق)", "100 meters")}</option>
+                      <option value={150}>{t("150 متر", "150 meters")}</option>
+                      <option value={200}>{t("200 متر (موصى به)", "200m (Recommended)")}</option>
+                      <option value={300}>{t("300 متر", "300 meters")}</option>
+                      <option value={500}>{t("500 متر", "500 meters")}</option>
+                      <option value={1000}>{t("1000 متر (1 كم)", "1000m (1 km)")}</option>
+                    </select>
+                  </PolicyField>
+                </div>
+
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={handleAddLocation}
+                    className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded text-xs cursor-pointer shadow-[2px_2px_0px_0px_#09090b]"
+                  >
+                    {t("+ أضف هذا اللوكيشن لقائمة المواقع المعتمدة", "+ Add Location to List")}
+                  </button>
+                </div>
+              </div>
+
+              {/* Configured Locations List */}
+              {(settings.workLocations ?? []).length === 0 ? (
+                <div className="p-3 rounded border border-dashed border-zinc-400 text-center text-[11px] text-zinc-500">
+                  {t(
+                    "لا توجد مواقع عمل مضافة حالياً (يمكن للموظفين بدء الشيفت من أي مكان حتى تضيف موقعاً واحداً على الأقل).",
+                    "No work locations configured yet (workers can clock in from anywhere until at least one active location is added).",
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <div className="text-[11px] font-bold text-zinc-700 dark:text-zinc-300">
+                    {t(
+                      `المواقع المضافة (${(settings.workLocations ?? []).length} موقع):`,
+                      `Configured Locations (${(settings.workLocations ?? []).length}):`,
+                    )}
+                  </div>
+                  {(settings.workLocations ?? []).map((loc) => (
+                    <div
+                      key={loc.id}
+                      className={`p-2.5 rounded border flex flex-wrap items-center justify-between gap-2 ${
+                        loc.active !== false
+                          ? "bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-400 dark:border-emerald-800"
+                          : "bg-zinc-100 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 opacity-60"
+                      }`}
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-bold text-xs text-zinc-950 dark:text-white">
+                          📍 {loc.name}
+                        </span>
+                        <span className="px-1.5 py-0.5 rounded bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 text-[10px] font-mono" dir="ltr">
+                          {Number(loc.lat).toFixed(5)}, {Number(loc.lng).toFixed(5)}
+                        </span>
+                        <span className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-200 text-[10px] font-bold">
+                          {t(`النطاق: ${loc.radiusMeters || 200} متر`, `Radius: ${loc.radiusMeters || 200}m`)}
+                        </span>
+                        <a
+                          href={`https://www.google.com/maps?q=${loc.lat},${loc.lng}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[10px] font-bold text-blue-600 hover:underline"
+                        >
+                          {t("🗺️ عرض على الخريطة", "🗺️ View Map")}
+                        </a>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => handleToggleLocationActive(loc.id)}
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer border ${
+                            loc.active !== false
+                              ? "bg-emerald-600 text-white border-emerald-700"
+                              : "bg-zinc-200 text-zinc-700 border-zinc-400"
+                          }`}
+                        >
+                          {loc.active !== false ? t("✓ مفعّل", "✓ Active") : t("متوقف", "Paused")}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveLocation(loc.id)}
+                          className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white rounded text-[10px] font-bold cursor-pointer"
+                        >
+                          {t("🗑️ حذف", "🗑️ Remove")}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
 
             {/* Actions */}
             <div className="flex items-center justify-between pt-3 border-t-2 border-zinc-900 dark:border-zinc-700">

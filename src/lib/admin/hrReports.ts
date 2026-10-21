@@ -14,6 +14,15 @@ import {
 
 export type HrDateRangeKey = "today" | "week" | "month" | "quarter" | "year" | "cycle" | "custom";
 
+export interface WorkLocationItem {
+  id: string;
+  name: string;
+  lat: number;
+  lng: number;
+  radiusMeters: number; // e.g. 200
+  active?: boolean;
+}
+
 export interface HrSettings extends Policy2026SettingsFields {
   monthStartDay: number; // 1-28 (e.g. 21 for 21st to 20th cycle, 1 for calendar month)
   weekendDays: number[]; // [5, 6] (default: Friday, Saturday in Egypt)
@@ -24,6 +33,8 @@ export interface HrSettings extends Policy2026SettingsFields {
   defaultHourlyRate: number; // 31.25 EGP
   overtimeMultiplier: number; // 1.5
   absencePenaltyMultiplier: number; // 2 (2x daily pay)
+  workLocations?: WorkLocationItem[];
+  enforceGeofence?: boolean;
 }
 
 export const DEFAULT_HR_SETTINGS: HrSettings = {
@@ -36,9 +47,36 @@ export const DEFAULT_HR_SETTINGS: HrSettings = {
   defaultHourlyRate: 31.25,
   overtimeMultiplier: 1.5,
   absencePenaltyMultiplier: 2,
+  workLocations: [],
+  enforceGeofence: true,
   // HR-POL-2026 (off until enabled from the Policies modal)
   ...POLICY_2026_SETTINGS_DEFAULTS,
 };
+
+/**
+ * Parses a Google Maps URL or raw "lat, lng" string into { lat, lng }.
+ */
+export function parseLocationCoordinates(input: string): { lat: number; lng: number } | null {
+  const s = (input || "").trim();
+  if (!s) return null;
+  const patterns = [
+    /@(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)/,
+    /[?&](?:q|ll|query|center)=(-?\d+\.\d+)\s*(?:,|%2C)\s*(-?\d+\.\d+)/i,
+    /!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/,
+    /(-?\d{1,2}\.\d{3,})\s*[,،\s]\s*(-?\d{1,3}\.\d{3,})/,
+  ];
+  for (const re of patterns) {
+    const m = s.match(re);
+    if (m && m[1] && m[2]) {
+      const lat = parseFloat(m[1]);
+      const lng = parseFloat(m[2]);
+      if (Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+        return { lat, lng };
+      }
+    }
+  }
+  return null;
+}
 
 export const WORK_POLICY = {
   WORK_START_TIME: 10,
