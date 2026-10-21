@@ -1,7 +1,7 @@
 "use client";
 
 import ModalPortal from "@/components/admin/ui/ModalPortal";
-import { type PayrollComputed, formatDepartment, formatEmploymentType } from "@/lib/admin/hrReports";
+import { type PayrollAdjustment, type PayrollComputed, formatDepartment, formatEmploymentType } from "@/lib/admin/hrReports";
 import { toast } from "@/lib/admin/feedback";
 import { useHrLang } from "@/lib/admin/hrI18n";
 
@@ -19,18 +19,24 @@ interface WorkerLike {
 interface Props {
   worker: WorkerLike;
   payroll: PayrollComputed;
+  adjustments?: PayrollAdjustment[];
   cycleLabel: string;
   periodStart: Date;
   periodEnd: Date;
+  onRemoveAdjustment?: (adj: PayrollAdjustment) => void;
+  onOpenAddAdjustment?: (type: "bonus" | "deduction") => void;
   onClose: () => void;
 }
 
 export default function HrPayslipModal({
   worker,
   payroll,
+  adjustments = [],
   cycleLabel,
   periodStart,
   periodEnd,
+  onRemoveAdjustment,
+  onOpenAddAdjustment,
   onClose,
 }: Props) {
   const { isAr, dir, toggleLang, t } = useHrLang();
@@ -281,22 +287,58 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
                   </div>
                 )}
                 {payroll.allowances > 0 && (
-                  <div className="flex justify-between py-1.5 px-2 bg-emerald-50/50 dark:bg-emerald-950/20">
-                    <span>
-                      {t("البدلات والمصروفات المعتمدة (مأموريات / مشتريات)", "Allowances & Approved Reimbursements")}
-                      {payroll.reimbursements > 0 && ` (${t("منها مصروفات:", "reimb:")} EGP ${payroll.reimbursements})`}
-                    </span>
-                    <span className="font-bold text-emerald-700 dark:text-emerald-400">
-                      +EGP {payroll.allowances}
-                    </span>
+                  <div className="py-1.5 px-2 bg-emerald-50/50 dark:bg-emerald-950/20 space-y-1">
+                    <div className="flex justify-between">
+                      <span>
+                        {t("البدلات والمصروفات المعتمدة (مأموريات / مشتريات)", "Allowances & Approved Reimbursements")}
+                        {payroll.reimbursements > 0 && ` (${t("منها مصروفات:", "reimb:")} EGP ${payroll.reimbursements})`}
+                      </span>
+                      <span className="font-bold text-emerald-700 dark:text-emerald-400">
+                        +EGP {payroll.allowances}
+                      </span>
+                    </div>
+                    {adjustments
+                      .filter((a) => a.type === "allowance" && a.status !== "cancelled")
+                      .map((a) => (
+                        <div key={a.id} className="flex items-center justify-between text-[11px] ps-3 text-zinc-600 dark:text-zinc-300">
+                          <span>• {a.reason || t("بدل", "Allowance")} ({a.date}): +EGP {a.amount}</span>
+                          {onRemoveAdjustment && (
+                            <button
+                              type="button"
+                              onClick={() => onRemoveAdjustment(a)}
+                              className="print:hidden px-1.5 py-0.5 text-[10px] font-bold text-red-600 hover:bg-red-600 hover:text-white border border-red-300 rounded cursor-pointer"
+                            >
+                              {t("🗑️ شيل", "Remove")}
+                            </button>
+                          )}
+                        </div>
+                      ))}
                   </div>
                 )}
                 {payroll.manualBonuses > 0 && (
-                  <div className="flex justify-between py-1.5 px-2 bg-emerald-50/50 dark:bg-emerald-950/20">
-                    <span>{t("مكافآت الأداء والتميز", "Performance & Exceptional Bonuses")}</span>
-                    <span className="font-bold text-emerald-700 dark:text-emerald-400">
-                      +EGP {payroll.manualBonuses}
-                    </span>
+                  <div className="py-1.5 px-2 bg-emerald-50/50 dark:bg-emerald-950/20 space-y-1">
+                    <div className="flex justify-between">
+                      <span>{t("🎁 مكافآت الأداء والتميز (Bonuses)", "🎁 Performance & Exceptional Bonuses")}</span>
+                      <span className="font-bold text-emerald-700 dark:text-emerald-400">
+                        +EGP {payroll.manualBonuses}
+                      </span>
+                    </div>
+                    {adjustments
+                      .filter((a) => a.type === "bonus" && a.status !== "cancelled")
+                      .map((a) => (
+                        <div key={a.id} className="flex items-center justify-between text-[11px] ps-3 text-zinc-600 dark:text-zinc-300">
+                          <span>• {a.reason || t("بونص", "Bonus")} ({a.date}): +EGP {a.amount}</span>
+                          {onRemoveAdjustment && (
+                            <button
+                              type="button"
+                              onClick={() => onRemoveAdjustment(a)}
+                              className="print:hidden px-1.5 py-0.5 text-[10px] font-bold text-red-600 hover:bg-red-600 hover:text-white border border-red-300 rounded cursor-pointer"
+                            >
+                              {t("🗑️ شيل البونص", "Remove")}
+                            </button>
+                          )}
+                        </div>
+                      ))}
                   </div>
                 )}
               </div>
@@ -375,16 +417,52 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
                 )}
 
                 {payroll.salaryAdvances > 0 && (
-                  <div className="flex justify-between py-1.5 px-2 bg-red-50/50 dark:bg-red-950/20 text-red-700 dark:text-red-400 font-semibold">
-                    <span>{t("سلف نقدية مستردة خلال الشهر", "Mid-month Cash Advances Recovered (سلف)")}</span>
-                    <span className="font-bold">-EGP {payroll.salaryAdvances}</span>
+                  <div className="py-1.5 px-2 bg-red-50/50 dark:bg-red-950/20 text-red-700 dark:text-red-400 font-semibold space-y-1">
+                    <div className="flex justify-between">
+                      <span>{t("سلف نقدية مستردة خلال الشهر", "Mid-month Cash Advances Recovered (سلف)")}</span>
+                      <span className="font-bold">-EGP {payroll.salaryAdvances}</span>
+                    </div>
+                    {adjustments
+                      .filter((a) => a.type === "advance" && a.status !== "cancelled")
+                      .map((a) => (
+                        <div key={a.id} className="flex items-center justify-between text-[11px] ps-3 font-normal text-zinc-700 dark:text-zinc-300">
+                          <span>• {a.reason || t("سلفة", "Advance")} ({a.date}): -EGP {a.amount}</span>
+                          {onRemoveAdjustment && (
+                            <button
+                              type="button"
+                              onClick={() => onRemoveAdjustment(a)}
+                              className="print:hidden px-1.5 py-0.5 text-[10px] font-bold text-red-600 hover:bg-red-600 hover:text-white border border-red-300 rounded cursor-pointer"
+                            >
+                              {t("🗑️ شيل السلفة", "Remove")}
+                            </button>
+                          )}
+                        </div>
+                      ))}
                   </div>
                 )}
 
                 {payroll.manualDeductions > 0 && (
-                  <div className="flex justify-between py-1.5 px-2 text-red-700 dark:text-red-400">
-                    <span>{t("خصومات وجزاءات إدارية", "Disciplinary Deductions")}</span>
-                    <span className="font-bold">-EGP {payroll.manualDeductions}</span>
+                  <div className="py-1.5 px-2 bg-red-50/50 dark:bg-red-950/20 text-red-700 dark:text-red-400 font-semibold space-y-1">
+                    <div className="flex justify-between">
+                      <span>{t("⛔ خصومات وجزاءات إدارية (Admin Deductions)", "⛔ Disciplinary & Admin Deductions")}</span>
+                      <span className="font-bold">-EGP {payroll.manualDeductions}</span>
+                    </div>
+                    {adjustments
+                      .filter((a) => a.type === "deduction" && a.status !== "cancelled")
+                      .map((a) => (
+                        <div key={a.id} className="flex items-center justify-between text-[11px] ps-3 font-normal text-zinc-700 dark:text-zinc-300">
+                          <span>• {a.reason || t("خصم إداري", "Deduction")} ({a.date}): -EGP {a.amount}</span>
+                          {onRemoveAdjustment && (
+                            <button
+                              type="button"
+                              onClick={() => onRemoveAdjustment(a)}
+                              className="print:hidden px-1.5 py-0.5 text-[10px] font-bold text-red-600 hover:bg-red-600 hover:text-white border border-red-300 rounded cursor-pointer"
+                            >
+                              {t("🗑️ شيل الخصم", "Remove Deduction")}
+                            </button>
+                          )}
+                        </div>
+                      ))}
                   </div>
                 )}
               </div>
@@ -413,7 +491,25 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
 
           {/* Footer & Actions */}
           <div className="mt-8 pt-4 border-t-2 border-zinc-900 dark:border-zinc-700 flex flex-wrap items-center justify-between gap-3 print:hidden">
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
+              {onOpenAddAdjustment && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => onOpenAddAdjustment("bonus")}
+                    className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-mono text-xs font-bold uppercase tracking-wider border-2 border-zinc-900 cursor-pointer rounded"
+                  >
+                    {t("🎁 + بونص", "🎁 + Bonus")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onOpenAddAdjustment("deduction")}
+                    className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white font-mono text-xs font-bold uppercase tracking-wider border-2 border-zinc-900 cursor-pointer rounded"
+                  >
+                    {t("⛔ + خصم", "⛔ + Deduction")}
+                  </button>
+                </>
+              )}
               <button
                 type="button"
                 onClick={handleCopySummary}

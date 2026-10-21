@@ -351,6 +351,25 @@ export async function reapplyPermission(id: string, adminEmail = "admin"): Promi
   );
 }
 
+/**
+ * Revokes an already-approved leave/exception request (`status: "rejected"`),
+ * immediately restoring the deducted leave days back to the worker's balance.
+ */
+export async function revokeApprovedLeaveRequest(
+  requestId: string,
+  adminEmail = "admin",
+  reason = "تم إلغاء الإجازة المعتمدة وإعادة الرصيد إلى حساب الموظف",
+): Promise<void> {
+  await updateDoc(doc(db, "exceptionRequests", requestId), {
+    status: "rejected",
+    adminResponse: reason,
+    rejectedAt: serverTimestamp(),
+    rejectedBy: adminEmail,
+    revokedAt: serverTimestamp(),
+    revokedBy: adminEmail,
+  });
+}
+
 export interface ApprovedRequestRow {
   id: string;
   workerId: string;

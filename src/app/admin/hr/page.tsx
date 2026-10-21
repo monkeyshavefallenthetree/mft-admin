@@ -36,6 +36,7 @@ import {
   subscribeHrSettings,
   subscribeHolidays,
   subscribePayrollAdjustments,
+  deletePayrollAdjustment,
   subscribePayrollCycles,
   setPayrollCycleStatus,
   subscribePermissionLedger,
@@ -59,7 +60,7 @@ import ModalPortal from "@/components/admin/ui/ModalPortal";
 import HrPolicyModal from "@/components/admin/hr/HrPolicyModal";
 import HrHolidaysManager from "@/components/admin/hr/HrHolidaysManager";
 import HrPayslipModal from "@/components/admin/hr/HrPayslipModal";
-import HrAdjustmentModal from "@/components/admin/hr/HrAdjustmentModal";
+import HrAdjustmentModal, { type AdjustmentKind } from "@/components/admin/hr/HrAdjustmentModal";
 import HrDateRangeSelector from "@/components/admin/hr/HrDateRangeSelector";
 import HrExcuseModal from "@/components/admin/hr/HrExcuseModal";
 import HrComplianceView from "@/components/admin/hr/HrComplianceView";
@@ -226,10 +227,18 @@ export default function AdminHRPage() {
   const [sendOpen, setSendOpen] = useState(false);
   const [policyModalOpen, setPolicyModalOpen] = useState(false);
   const [adjustmentModalOpen, setAdjustmentModalOpen] = useState(false);
+  const [adjustmentWorkerId, setAdjustmentWorkerId] = useState<string | undefined>(undefined);
+  const [adjustmentInitialType, setAdjustmentInitialType] = useState<AdjustmentKind>("bonus");
   const [excuseModalWorker, setExcuseModalWorker] = useState<Worker | null>(null);
   const [payslipModalWorker, setPayslipModalWorker] = useState<Worker | null>(null);
   const [dashboardWorker, setDashboardWorker] = useState<Worker | null>(null);
   const [onboardModalWorker, setOnboardModalWorker] = useState<Worker | null>(null);
+
+  const openAdjustmentFor = (workerId?: string, kind: AdjustmentKind = "bonus") => {
+    setAdjustmentWorkerId(workerId);
+    setAdjustmentInitialType(kind);
+    setAdjustmentModalOpen(true);
+  };
 
   // Navigation & Search State
   const [section, setSection] = useUrlState("tab", "overview");
@@ -530,18 +539,28 @@ export default function AdminHRPage() {
     let gross = 0;
     let net = 0;
     let overtime = 0;
+    let bonuses = 0;
+    let manualDeductions = 0;
+    let attendanceDeductions = 0;
     let deductions = 0;
     let advances = 0;
 
     for (const row of payrollTableData) {
-      gross += row.payroll.basePay + row.payroll.overtimePay + row.payroll.allowances;
+      gross +=
+        row.payroll.basePay +
+        row.payroll.overtimePay +
+        row.payroll.allowances +
+        row.payroll.manualBonuses;
       net += row.payroll.netPayable;
       overtime += row.payroll.overtimePay;
-      deductions +=
+      bonuses += row.payroll.manualBonuses + row.payroll.allowances;
+      manualDeductions += row.payroll.manualDeductions;
+      const attDed =
         row.payroll.absencePenalty +
         row.payroll.totalLatePenaltyEgp +
-        row.payroll.shortfallDeduction +
-        row.payroll.manualDeductions;
+        row.payroll.shortfallDeduction;
+      attendanceDeductions += attDed;
+      deductions += attDed + row.payroll.manualDeductions;
       advances += row.payroll.salaryAdvances;
     }
 
@@ -549,10 +568,63 @@ export default function AdminHRPage() {
       gross: Math.round(gross),
       net: Math.round(net),
       overtime: Math.round(overtime),
+      bonuses: Math.round(bonuses),
+      manualDeductions: Math.round(manualDeductions),
+      attendanceDeductions: Math.round(attendanceDeductions),
       deductions: Math.round(deductions),
       advances: Math.round(advances),
     };
   }, [payrollTableData]);
+
+  const handleRemoveAdjustment = async (adj: PayrollAdjustment, workerDisplayName?: string) => {
+    if (!adj.id) return;
+    const typeAr =
+      adj.type === "bonus"
+        ? "البونص / المكافأة"
+        : adj.type === "deduction"
+          ? "الخصم الإداري"
+          : adj.type === "allowance"
+            ? "البدل"
+            : "السلفة";
+    const ok = await confirmDialog({
+      title: t(`حذف ${typeAr} (${adj.amount} ج.م)؟`, `Remove ${adj.type} (EGP ${adj.amount})?`),
+      message: t(
+        `هل تريد إزالة ${typeAr} بقيمة ${adj.amount} ج.م (${adj.reason || "—"}) من شيت الرواتب فوراً؟`,
+        `Remove this ${adj.type} of EGP ${adj.amount} ("${adj.reason || "—"}") from the Payroll Sheet immediately?`,
+      ),
+      confirmLabel: t("شيل من شيت الرواتب 🗑️", "Remove from Payroll 🗑️"),
+      tone: "danger",
+    });
+    if (!ok) return;
+    try {
+      await deletePayrollAdjustment(adj.id);
+      if (adj.workerId) {
+        void sendExpoPushToWorkers(db, {
+          recipientUids: [adj.workerId],
+          title: `↩ تم إلغاء ${typeAr}`,
+          body: `تم إزالة ${typeAr} بقيمة ${adj.amount} ج.م من شيت الرواتب.`,
+          tab: "profile",
+        }).catch(() => {});
+      }
+      void logActivity({
+        action: "deleted",
+        entity: "hr",
+        entityId: adj.id,
+        label: `Removed ${adj.type} (EGP ${adj.amount}) for ${workerDisplayName || adj.workerName || adj.workerId}`,
+        detail: adj.reason,
+      });
+      toast.success(
+        t(
+          `تم حذف ${typeAr} (${adj.amount} ج.م) وتحديث شيت الرواتب فوراً`,
+          `Removed ${adj.type} (EGP ${adj.amount}) & updated Payroll Sheet`,
+        ),
+      );
+    } catch (err) {
+      toast.error(t("تعذر حذف البند", "Failed to remove adjustment"), {
+        description: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
 
   const missingHireCount = useMemo(() => approved.filter((w) => !w.hireDate).length, [approved]);
   const pendingExpensesCount = useMemo(
@@ -573,16 +645,27 @@ export default function AdminHRPage() {
       "Hourly Rate (EGP)",
       "Base Pay (EGP)",
       "Overtime Pay (EGP)",
-      "Allowances (EGP)",
+      "Bonuses / مكافآت (EGP)",
+      "Allowances / بدلات ومصروفات (EGP)",
+      "Admin Deductions / خصومات إدارية (EGP)",
       "Absence Deductions (EGP)",
       "Late Penalties (EGP)",
-      "Salary Advances (EGP)",
-      "Net Payable (EGP)",
+      "Salary Advances / سلف (EGP)",
+      "Adjustments Details / تفاصيل البونص والخصومات",
+      "Net Payable / صافي المستحق (EGP)",
     ];
 
     const rows: (string | number)[][] = [headers];
 
     for (const row of payrollTableData) {
+      const adjSummary = row.adjustments
+        .filter((a) => a.status !== "cancelled")
+        .map((a) => {
+          const sign = a.type === "bonus" || a.type === "allowance" ? "+" : "-";
+          return `[${a.type.toUpperCase()} ${sign}${a.amount} EGP: ${a.reason || ""}]`;
+        })
+        .join(" | ");
+
       rows.push([
         workerName(row.worker),
         row.worker.id,
@@ -595,10 +678,13 @@ export default function AdminHRPage() {
         row.payroll.hourlyRate,
         row.payroll.basePay,
         row.payroll.overtimePay,
+        row.payroll.manualBonuses,
         row.payroll.allowances,
+        row.payroll.manualDeductions,
         row.payroll.absencePenalty,
         row.payroll.totalLatePenaltyEgp,
         row.payroll.salaryAdvances,
+        adjSummary,
         row.payroll.netPayable,
       ]);
     }
@@ -606,7 +692,7 @@ export default function AdminHRPage() {
     const s = activePeriod.start.toISOString().split("T")[0];
     const e = activePeriod.end.toISOString().split("T")[0];
     downloadCsv(rows, `payroll_${s}_to_${e}.csv`);
-    toast.success(t("تم تحميل شيت الرواتب بصيغة CSV", "Payroll report downloaded"));
+    toast.success(t("تم تحميل شيت الرواتب بصيغة CSV شاملاً البونص والخصومات", "Payroll sheet CSV downloaded (with Bonuses & Deductions)"));
   };
 
   const handleToggleCycleStatus = async (nextStatus: "draft" | "approved" | "paid") => {
@@ -790,10 +876,18 @@ export default function AdminHRPage() {
 
           <button
             type="button"
-            onClick={() => setAdjustmentModalOpen(true)}
+            onClick={() => openAdjustmentFor(undefined, "bonus")}
             className="px-3 py-2 border-2 border-zinc-900 dark:border-zinc-700 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 text-emerald-800 dark:text-emerald-300 text-xs font-bold cursor-pointer flex items-center gap-1 rounded shadow-[2px_2px_0px_0px_#059669]"
           >
-            <span>{t("+ تسجيل سلفة / مكافأة", "+ Record Advance / Bonus")}</span>
+            <span>{t("🎁 + بونص / مكافأة", "🎁 + Bonus")}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => openAdjustmentFor(undefined, "deduction")}
+            className="px-3 py-2 border-2 border-zinc-900 dark:border-zinc-700 bg-red-50 dark:bg-red-950/40 hover:bg-red-100 text-red-800 dark:text-red-300 text-xs font-bold cursor-pointer flex items-center gap-1 rounded shadow-[2px_2px_0px_0px_#dc2626]"
+          >
+            <span>{t("⛔ + خصم / سلفة", "⛔ + Deduction / Advance")}</span>
           </button>
 
           <Link
@@ -1220,10 +1314,24 @@ export default function AdminHRPage() {
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setAdjustmentModalOpen(true)}
+                  onClick={() => openAdjustmentFor(undefined, "bonus")}
+                  className="px-3 py-1.5 border-2 border-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-600 hover:text-white text-emerald-800 dark:text-emerald-300 text-xs font-bold cursor-pointer rounded transition-colors"
+                >
+                  {t("🎁 + إضافة بونص / مكافأة", "🎁 + Add Bonus")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openAdjustmentFor(undefined, "deduction")}
+                  className="px-3 py-1.5 border-2 border-red-700 bg-red-50 dark:bg-red-950/40 hover:bg-red-600 hover:text-white text-red-800 dark:text-red-300 text-xs font-bold cursor-pointer rounded transition-colors"
+                >
+                  {t("⛔ + إضافة خصم إداري", "⛔ + Add Deduction")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openAdjustmentFor(undefined, "advance")}
                   className="px-3 py-1.5 border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:bg-zinc-100 text-zinc-950 dark:text-zinc-100 text-xs font-bold cursor-pointer rounded"
                 >
-                  {t("+ إضافة سلفة / بدل / مكافأة", "+ Add Advance / Allowance")}
+                  {t("💸 + سلفة / بدل", "💸 + Advance / Allowance")}
                 </button>
                 <button
                   type="button"
@@ -1263,7 +1371,7 @@ export default function AdminHRPage() {
             </div>
 
             {/* Financial Numbers Strip */}
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs">
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-3 text-xs">
               <div className="p-3 bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 rounded">
                 <span className="text-zinc-500 text-[10px] uppercase font-bold">
                   {t("إجمالي الاستحقاقات", "Gross Earnings")}
@@ -1281,17 +1389,33 @@ export default function AdminHRPage() {
                 </span>
                 <p className="text-xl font-bold font-oswald text-emerald-700 dark:text-emerald-400 mt-1">+EGP {payrollTotals.overtime}</p>
               </div>
+              <div className="p-3 bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/60 rounded">
+                <span className="text-emerald-800 dark:text-emerald-300 text-[10px] uppercase font-bold">
+                  {t("🎁 البونص والبدلات", "🎁 Bonuses & Allowances")}
+                </span>
+                <p className="text-xl font-bold font-oswald text-emerald-700 dark:text-emerald-400 mt-1">
+                  +EGP {payrollTotals.bonuses}
+                </p>
+              </div>
+              <div className="p-3 bg-red-50/60 dark:bg-red-950/20 border border-red-200 dark:border-red-800/60 rounded">
+                <span className="text-red-800 dark:text-red-300 text-[10px] uppercase font-bold">
+                  {t("⛔ الخصومات الإدارية والحضور", "⛔ Admin & Attendance Ded.")}
+                </span>
+                <p className="text-xl font-bold font-oswald text-red-600 dark:text-red-400 mt-1">
+                  -EGP {payrollTotals.deductions}
+                </p>
+                <div className="text-[10px] text-zinc-500 mt-0.5">
+                  {t(
+                    `إداري: ${payrollTotals.manualDeductions} · غياب/تأخير: ${payrollTotals.attendanceDeductions}`,
+                    `Admin: ${payrollTotals.manualDeductions} · Att: ${payrollTotals.attendanceDeductions}`,
+                  )}
+                </div>
+              </div>
               <div className="p-3 bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 rounded">
                 <span className="text-zinc-500 text-[10px] uppercase font-bold">
                   {t("السلف المستردة (Advances)", "Advances (سلف)")}
                 </span>
                 <p className="text-xl font-bold font-oswald text-red-600 dark:text-red-400 mt-1">-EGP {payrollTotals.advances}</p>
-              </div>
-              <div className="p-3 bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 rounded">
-                <span className="text-zinc-500 text-[10px] uppercase font-bold">
-                  {t("خصومات الغياب والتأخير", "Absence & Late Deductions")}
-                </span>
-                <p className="text-xl font-bold font-oswald text-red-600 dark:text-red-400 mt-1">-EGP {payrollTotals.deductions}</p>
               </div>
               <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 rounded col-span-2 md:col-span-1">
                 <span className="text-emerald-800 dark:text-emerald-300 text-[10px] uppercase font-bold">
@@ -1313,16 +1437,28 @@ export default function AdminHRPage() {
                   <th className="py-3 px-3 text-start">{t("أجر الساعة", "Rate")}</th>
                   <th className="py-3 px-3 text-start">{t("الأساسي", "Base Pay")}</th>
                   <th className="py-3 px-3 text-start text-emerald-700 dark:text-emerald-400">{t("الإضافي", "OT Pay")}</th>
+                  <th className="py-3 px-3 text-start text-emerald-700 dark:text-emerald-400">
+                    {t("🎁 البونص / البدلات", "🎁 Bonuses / Allowances")}
+                  </th>
                   <th className="py-3 px-3 text-start text-sky-700 dark:text-sky-400">{t("الأذونات", "Permissions")}</th>
-                  <th className="py-3 px-3 text-start text-red-600">{t("الغياب/التأخير", "Deductions")}</th>
+                  <th className="py-3 px-3 text-start text-red-600">
+                    {t("⛔ خصومات إدارية", "⛔ Admin Deductions")}
+                  </th>
+                  <th className="py-3 px-3 text-start text-red-600">{t("الغياب/التأخير", "Attendance Ded.")}</th>
                   <th className="py-3 px-3 text-start text-red-600">{t("السلف", "Advances")}</th>
                   <th className="py-3 px-4 text-end">{t("صافي المستحق", "Net Payable")}</th>
-                  <th className="py-3 px-3 text-center">{t("إجراءات", "Actions")}</th>
+                  <th className="py-3 px-3 text-center">{t("إجراءات سريعة", "Quick Actions")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                {payrollTableData.map(({ worker: w, payroll: p }) => {
-                  const totalDed = p.absencePenalty + p.totalLatePenaltyEgp + p.shortfallDeduction + p.manualDeductions;
+                {payrollTableData.map(({ worker: w, payroll: p, adjustments: workerAdjs }) => {
+                  const attendanceDed =
+                    Math.round((p.absencePenalty + p.totalLatePenaltyEgp + p.shortfallDeduction) * 100) / 100;
+                  const bonusAndAllowanceTotal =
+                    Math.round((p.manualBonuses + p.allowances) * 100) / 100;
+                  const bonusAdjs = workerAdjs.filter((a) => a.type === "bonus" || a.type === "allowance");
+                  const deductionAdjs = workerAdjs.filter((a) => a.type === "deduction");
+                  const advanceAdjs = workerAdjs.filter((a) => a.type === "advance");
                   return (
                     <tr key={w.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors">
                       <td className="py-3 px-4">
@@ -1351,20 +1487,117 @@ export default function AdminHRPage() {
                       <td className="py-3 px-3 text-emerald-700 dark:text-emerald-400 font-semibold">
                         +{p.overtimePay}
                       </td>
+                      {/* Bonuses & Allowances Column with Inline Remove Chips */}
+                      <td className="py-3 px-3">
+                        <div className="text-emerald-700 dark:text-emerald-400 font-bold">
+                          {bonusAndAllowanceTotal > 0 ? `+EGP ${bonusAndAllowanceTotal}` : "0"}
+                        </div>
+                        {bonusAdjs.length > 0 && (
+                          <div className="mt-1 flex flex-col gap-1">
+                            {bonusAdjs.map((adj) => (
+                              <div
+                                key={adj.id}
+                                className="inline-flex items-center justify-between gap-1.5 px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-300 dark:border-emerald-800 text-[10px] text-emerald-900 dark:text-emerald-200"
+                                title={adj.reason}
+                              >
+                                <span className="truncate max-w-[120px]">
+                                  {adj.type === "bonus" ? "🎁" : "🚕"} +{adj.amount} ({adj.reason})
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleRemoveAdjustment(adj, workerName(w))}
+                                  title={t("شيل / حذف من البايرول", "Remove from Payroll")}
+                                  className="px-1 py-0.2 bg-red-600 hover:bg-red-700 text-white rounded text-[9px] font-bold cursor-pointer shrink-0"
+                                >
+                                  {t("✕ شيل", "✕")}
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </td>
                       <td className="py-3 px-3 text-sky-700 dark:text-sky-400">
                         {p.permissionsUsed}/4 ({p.permissionMinutesUsed}m)
                       </td>
+                      {/* Admin Deductions Column with Inline Remove Chips */}
+                      <td className="py-3 px-3">
+                        <div className="text-red-600 font-bold">
+                          {p.manualDeductions > 0 ? `-EGP ${p.manualDeductions}` : "0"}
+                        </div>
+                        {deductionAdjs.length > 0 && (
+                          <div className="mt-1 flex flex-col gap-1">
+                            {deductionAdjs.map((adj) => (
+                              <div
+                                key={adj.id}
+                                className="inline-flex items-center justify-between gap-1.5 px-1.5 py-0.5 rounded bg-red-50 dark:bg-red-950/50 border border-red-300 dark:border-red-800 text-[10px] text-red-900 dark:text-red-200"
+                                title={adj.reason}
+                              >
+                                <span className="truncate max-w-[120px]">
+                                  ⛔ -{adj.amount} ({adj.reason})
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleRemoveAdjustment(adj, workerName(w))}
+                                  title={t("شيل الخصم من البايرول", "Remove Deduction from Payroll")}
+                                  className="px-1 py-0.2 bg-red-600 hover:bg-red-700 text-white rounded text-[9px] font-bold cursor-pointer shrink-0"
+                                >
+                                  {t("✕ شيل الخصم", "✕ Remove")}
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </td>
                       <td className="py-3 px-3 text-red-600">
-                        {totalDed > 0 ? `-${totalDed}` : "0"}
+                        {attendanceDed > 0 ? `-${attendanceDed}` : "0"}
                       </td>
                       <td className="py-3 px-3 text-red-600 font-semibold">
-                        {p.salaryAdvances > 0 ? `-${p.salaryAdvances}` : "0"}
+                        <div>{p.salaryAdvances > 0 ? `-${p.salaryAdvances}` : "0"}</div>
+                        {advanceAdjs.length > 0 && (
+                          <div className="mt-1 flex flex-col gap-1">
+                            {advanceAdjs.map((adj) => (
+                              <div
+                                key={adj.id}
+                                className="inline-flex items-center justify-between gap-1.5 px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-800 text-[10px] text-amber-900 dark:text-amber-200"
+                                title={adj.reason}
+                              >
+                                <span className="truncate max-w-[100px]">
+                                  💸 -{adj.amount}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleRemoveAdjustment(adj, workerName(w))}
+                                  title={t("شيل السلفة من البايرول", "Remove Advance")}
+                                  className="px-1 py-0.2 bg-red-600 hover:bg-red-700 text-white rounded text-[9px] font-bold cursor-pointer shrink-0"
+                                >
+                                  {t("✕ شيل", "✕")}
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </td>
                       <td className="py-3 px-4 text-end font-bold font-oswald text-sm text-emerald-700 dark:text-emerald-400">
                         EGP {p.netPayable}
                       </td>
                       <td className="py-3 px-3 text-center">
-                        <div className="flex items-center justify-center gap-1">
+                        <div className="flex flex-wrap items-center justify-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => openAdjustmentFor(w.id, "bonus")}
+                            title={t("إضافة بونص / مكافأة لهذا الموظف", "Add Bonus for this Employee")}
+                            className="px-2 py-1 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-600 hover:text-white text-emerald-800 dark:text-emerald-300 border border-emerald-400 dark:border-emerald-700 rounded text-[10px] font-bold transition-all cursor-pointer"
+                          >
+                            {t("🎁 +بونص", "🎁 +Bonus")}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openAdjustmentFor(w.id, "deduction")}
+                            title={t("إضافة خصم إداري على هذا الموظف", "Add Admin Deduction for this Employee")}
+                            className="px-2 py-1 bg-red-50 dark:bg-red-950/40 hover:bg-red-600 hover:text-white text-red-800 dark:text-red-300 border border-red-400 dark:border-red-700 rounded text-[10px] font-bold transition-all cursor-pointer"
+                          >
+                            {t("⛔ +خصم", "⛔ +Deduct")}
+                          </button>
                           <button
                             type="button"
                             onClick={() => setOnboardModalWorker(w)}
@@ -1594,12 +1827,23 @@ export default function AdminHRPage() {
         />
       )}
 
-      {/* 2. Record Advance / Allowance Modal */}
+      {/* 2. Record Bonus / Deduction / Advance / Allowance Modal */}
       {adjustmentModalOpen && (
         <HrAdjustmentModal
           workers={approved}
+          preselectedWorkerId={adjustmentWorkerId}
+          initialType={adjustmentInitialType}
+          existingAdjustments={adjustments.filter((a) => {
+            const pStart = activePeriod.start.toISOString().split("T")[0];
+            const pEnd = activePeriod.end.toISOString().split("T")[0];
+            return a.date >= pStart && a.date <= pEnd;
+          })}
           adminEmail={adminEmail}
-          onClose={() => setAdjustmentModalOpen(false)}
+          onClose={() => {
+            setAdjustmentModalOpen(false);
+            setAdjustmentWorkerId(undefined);
+            setAdjustmentInitialType("bonus");
+          }}
         />
       )}
 
@@ -1637,6 +1881,13 @@ export default function AdminHRPage() {
             <HrPayslipModal
               worker={payslipModalWorker}
               payroll={computed}
+              adjustments={row?.adjustments ?? []}
+              onRemoveAdjustment={(adj) => void handleRemoveAdjustment(adj, workerName(payslipModalWorker))}
+              onOpenAddAdjustment={(kind) => {
+                const wId = payslipModalWorker.id;
+                setPayslipModalWorker(null);
+                openAdjustmentFor(wId, kind);
+              }}
               cycleLabel={activePeriod.label}
               periodStart={activePeriod.start}
               periodEnd={activePeriod.end}

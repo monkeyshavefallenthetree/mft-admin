@@ -417,23 +417,114 @@ export default function AdminExceptionsPage() {
     }
   };
 
-  const remove = async (ids: string[]) => {
+  const revokeApproved = async (ids: string[]) => {
     const ok = await confirmDialog({
-      title: ids.length === 1 ? "Delete this request?" : `Delete ${ids.length} requests?`,
-      message: "This permanently removes the request and any admin response. This can't be undone.",
+      title:
+        ids.length === 1
+          ? "إلغاء اعتماد الطلب وإرجاع الرصيد؟ / Revoke approval & restore balance?"
+          : `Revoke ${ids.length} approved requests & restore balances?`,
+      message:
+        "سيتم إلغاء الموافقة على هذه الإجازة/الإذن وإرجاع الأيام أو الدقائق المخصومة إلى رصيد الموظف فوراً.",
+      confirmLabel: "إلغاء الإجازة وإرجاع الرصيد · Revoke & Restore",
       tone: "danger",
     });
     if (!ok) return;
     setBusy(true);
     try {
       const batch = writeBatch(db);
-      ids.forEach((id) => batch.delete(doc(db, "exceptionRequests", id)));
+      ids.forEach((id) => {
+        batch.update(doc(db, "exceptionRequests", id), {
+          status: "rejected",
+          adminResponse: "تم إلغاء الإجازة المعتمدة وإعادة الرصيد إلى حساب الموظف",
+          rejectedAt: serverTimestamp(),
+          rejectedBy: adminId(),
+          revokedAt: serverTimestamp(),
+          revokedBy: adminId(),
+        });
+        const x = byId(id);
+        if ((x?.type === "advance_late" || x?.type === "early_permission" || x?.type === "late") && x.workerId && x.exceptionDate) {
+          const isEarly = x.type === "early_permission";
+          const suffix = isEarly ? "early" : "late";
+          batch.set(
+            doc(db, "permissionLedger", `${x.workerId}_${x.exceptionDate}_${suffix}`),
+            {
+              workerId: x.workerId,
+              date: x.exceptionDate,
+              kind: isEarly ? "early_leave" : "late",
+              status: "reversed",
+              covered: false,
+              chargedMinutes: 0,
+              updatedAt: serverTimestamp(),
+            },
+            { merge: true },
+          );
+        }
+      });
+      await batch.commit();
+      ids.forEach((id) => {
+        const x = byId(id);
+        void logActivity({
+          action: "rejected",
+          entity: "exception",
+          entityId: id,
+          label: `Revoked approved ${formatExceptionType(x?.type)} · ${x?.workerName ?? "worker"}`,
+          detail: "Balance restored to worker",
+        });
+        if (x?.workerId) {
+          void sendExpoPushToWorkers(db, {
+            recipientUids: [x.workerId],
+            title: "تم إلغاء الإجازة وإعادة الرصيد ↩",
+            body: `تم إلغاء "${formatExceptionType(x.type)}" بتاريخ ${x.exceptionDate ?? ""} وإرجاع الرصيد إلى حسابك.`,
+            tab: "exceptions",
+          });
+        }
+      });
+      toast.success("تم إلغاء الإجازة وإرجاع الرصيد للموظف بنجاح");
+      setSelected(new Set());
+    } catch (err) {
+      toast.error("Revoke failed", { description: err instanceof Error ? err.message : undefined });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (ids: string[]) => {
+    const ok = await confirmDialog({
+      title: ids.length === 1 ? "Delete this request?" : `Delete ${ids.length} requests?`,
+      message: "This permanently removes the request and restores any deducted leave or permission balance.",
+      tone: "danger",
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const batch = writeBatch(db);
+      ids.forEach((id) => {
+        batch.delete(doc(db, "exceptionRequests", id));
+        const x = byId(id);
+        if ((x?.type === "advance_late" || x?.type === "early_permission" || x?.type === "late") && x.workerId && x.exceptionDate) {
+          const isEarly = x.type === "early_permission";
+          const suffix = isEarly ? "early" : "late";
+          batch.set(
+            doc(db, "permissionLedger", `${x.workerId}_${x.exceptionDate}_${suffix}`),
+            {
+              workerId: x.workerId,
+              date: x.exceptionDate,
+              kind: isEarly ? "early_leave" : "late",
+              status: "reversed",
+              covered: false,
+              chargedMinutes: 0,
+              updatedAt: serverTimestamp(),
+            },
+            { merge: true },
+          );
+        }
+      });
       await batch.commit();
       ids.forEach((id) => {
         const x = byId(id);
         void logActivity({ action: "deleted", entity: "exception", entityId: id, label: `${formatExceptionType(x?.type)} · ${x?.workerName ?? "worker"}` });
       });
-      toast.success(ids.length === 1 ? "Request deleted" : `${ids.length} requests deleted`);
+      toast.success(ids.length === 1 ? "Request deleted & balance restored" : `${ids.length} requests deleted`);
       setSelected(new Set());
     } catch (err) {
       toast.error("Delete failed", { description: err instanceof Error ? err.message : undefined });
@@ -715,6 +806,19 @@ export default function AdminExceptionsPage() {
                         <Svg d="M6 18L18 6M6 6l12 12" className="h-3.5 w-3.5" /> Reject
                       </button>
                     </>
+                  )}
+                  {st === "approved" && (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void revokeApproved([e.id])}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-red-300 bg-red-50 px-3 py-1.5 text-xs font-bold text-red-700 transition-colors hover:bg-red-600 hover:text-white disabled:opacity-50 cursor-pointer"
+                    >
+                      <Svg d="M3 10h10a5 5 0 015 5v2M3 10l4-4M3 10l4 4" className="h-3.5 w-3.5" />
+                      {isLeaveReq
+                        ? "إلغاء الإجازة وإرجاع الرصيد · Revoke & Restore Leave"
+                        : "إلغاء الاعتماد وإرجاع الرصيد · Revoke Approval"}
+                    </button>
                   )}
                   <button
                     type="button"

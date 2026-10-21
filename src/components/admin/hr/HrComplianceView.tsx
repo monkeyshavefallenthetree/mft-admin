@@ -19,11 +19,14 @@ import {
   bulkSetSystemStartDate,
   reapplyPermission,
   reversePermission,
+  revokeApprovedLeaveRequest,
   saveWorkerLeaveProfile,
   type ApprovedRequestRow,
   type PermissionLedgerDoc,
   type ReimbursementDoc,
 } from "@/lib/admin/hrSettings";
+import { db } from "@/lib/firebase";
+import { sendExpoPushToWorkers } from "@/lib/chatNotifications";
 import { toast, confirmDialog } from "@/lib/admin/feedback";
 import { logActivity } from "@/lib/admin/activity";
 import { useHrLang } from "@/lib/admin/hrI18n";
@@ -216,6 +219,15 @@ export default function HrComplianceView({
         const hire = (draft ? draft.hireDate : w.hireDate) || fallbackHire;
         const leaveLawType: LeaveLawType =
           (draft ? draft.leaveLawType : w.leaveLawType) === "legacy_21" ? "legacy_21" : "new_15";
+        const workerLeaveReqs = approvedRequests.filter(
+          (r) =>
+            r.workerId === w.id &&
+            (r.type === "annual_leave" ||
+              r.type === "emergency_leave" ||
+              r.type === "unpaid_leave" ||
+              r.type === "sick_leave") &&
+            r.exceptionDate,
+        );
         const usedLeave = approvedRequests
           .filter((r) => r.workerId === w.id && (r.type === "annual_leave" || r.type === "emergency_leave") && r.exceptionDate)
           .map((r) => ({ date: r.exceptionDate, days: effectiveLeaveDaysForRequest(r, settings.weekendDays || [5, 6]) }))
@@ -244,6 +256,7 @@ export default function HrComplianceView({
           worker: w,
           name: `${w.firstName || ""} ${w.lastName || ""}`.trim() || w.email || "Worker",
           cycleLedger,
+          workerLeaveReqs,
           usage,
           uncovered,
           hire,
@@ -301,6 +314,48 @@ export default function HrComplianceView({
       toast.success(reversing ? t("تم إلغاء الإذن واستعادة الرصيد", "Permission reversed") : t("تم إعادة تطبيق الإذن", "Permission re-applied"));
     } catch (err) {
       toast.error(t("فشل التحديث", "Update failed"), { description: err instanceof Error ? err.message : String(err) });
+    }
+  };
+
+  const handleRevokeLeave = async (req: ApprovedRequestRow, name: string) => {
+    const effDays = effectiveLeaveDaysForRequest(req, settings.weekendDays || [5, 6]);
+    const ok = await confirmDialog({
+      title: t("إلغاء الإجازة المعتمدة وإرجاع الرصيد؟", "Cancel approved leave & restore balance?"),
+      message: t(
+        `هل تريد إلغاء إجازة ${name} بتاريخ ${req.exceptionDate}${req.endDate && req.endDate !== req.exceptionDate ? ` إلى ${req.endDate}` : ""} (${effDays} يوم عمل) وإرجاع الأيام إلى رصيد إجازاته فوراً؟`,
+        `Cancel ${name}'s approved leave (${req.exceptionDate}${req.endDate && req.endDate !== req.exceptionDate ? ` → ${req.endDate}` : ""}, ${effDays} working day(s)) and restore their leave balance immediately?`,
+      ),
+      confirmLabel: t("إلغاء الإجازة وإرجاع الرصيد ↩", "Cancel Leave & Restore ↩"),
+      tone: "danger",
+    });
+    if (!ok) return;
+    try {
+      await revokeApprovedLeaveRequest(req.id, adminEmail);
+      if (req.workerId) {
+        void sendExpoPushToWorkers(db, {
+          recipientUids: [req.workerId],
+          title: "تم إلغاء الإجازة وإرجاع الرصيد ↩",
+          body: `تم إلغاء إجازتك بتاريخ ${req.exceptionDate} وإرجاع ${effDays} يوم إلى رصيد إجازاتك السنوية.`,
+          tab: "exceptions",
+        });
+      }
+      void logActivity({
+        action: "rejected",
+        entity: "hr",
+        entityId: req.id,
+        label: `Revoked approved leave (${req.exceptionDate}, ${effDays}d) for ${name}`,
+        detail: "Leave balance restored",
+      });
+      toast.success(
+        t(
+          `تم إلغاء الإجازة وإرجاع ${effDays} يوم إلى رصيد ${name}`,
+          `Leave cancelled & ${effDays}d restored to ${name}'s balance`,
+        ),
+      );
+    } catch (err) {
+      toast.error(t("تعذر إلغاء الإجازة", "Failed to cancel leave"), {
+        description: err instanceof Error ? err.message : String(err),
+      });
     }
   };
 
@@ -617,6 +672,15 @@ export default function HrComplianceView({
                               : `${r.accrual.accruedDays}d accrued${r.accrual.totalCarryOverDays > 0 ? ` + ${r.accrual.totalCarryOverDays}d carry` : ""} − ${r.accrual.usedDays}d used`}
                           </div>
                         )}
+                        {r.workerLeaveReqs.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setExpanded(open ? null : r.worker.id)}
+                            className="mt-1 inline-flex items-center gap-1 rounded border border-emerald-300 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800 hover:border-red-500 hover:bg-red-50 hover:text-red-700 cursor-pointer dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
+                          >
+                            <span>🌴 {r.workerLeaveReqs.length} {t("إجازة معتمدة (إلغاء/عرض)", "approved leave")}</span>
+                          </button>
+                        )}
                       </td>
                       <td className="p-3">
                         <div className="flex justify-between mb-1">
@@ -665,7 +729,9 @@ export default function HrComplianceView({
                             onClick={() => setExpanded(open ? null : r.worker.id)}
                             className="px-2 py-1 border border-zinc-300 dark:border-zinc-700 rounded font-bold uppercase text-[10px] hover:border-red-600 hover:text-red-600 cursor-pointer"
                           >
-                            {open ? t("إخفاء", "Hide") : `${t("السجل", "Ledger")} (${r.cycleLedger.length})`}
+                            {open
+                              ? t("إخفاء", "Hide")
+                              : `${t("الإجازات والأذونات", "Leave & Ledger")} (${r.workerLeaveReqs.length + r.cycleLedger.length})`}
                           </button>
                         </div>
                       </td>
@@ -824,9 +890,74 @@ export default function HrComplianceView({
 
                     {open && (
                       <tr className="bg-zinc-50/70 dark:bg-zinc-950/40">
-                        <td colSpan={9} className="p-3">
+                        <td colSpan={9} className="p-3 space-y-3">
+                          {/* Approved Leave Requests with 1-Click Cancel & Restore Balance */}
+                          <div>
+                            <div className="mb-1.5 text-[11px] font-bold text-emerald-800 dark:text-emerald-300">
+                              {t(
+                                "🌴 الإجازات المعتمدة المخصومة من الرصيد (يمكنك إلغاء أي إجازة لإرجاع أيامها فوراً لرصيد الموظف):",
+                                "🌴 Approved Leave Requests (Cancel any leave to immediately restore days to worker's balance):",
+                              )}
+                            </div>
+                            {r.workerLeaveReqs.length === 0 ? (
+                              <p className="text-zinc-400 text-[11px] py-1">
+                                {t("لا توجد إجازات سنوية أو عارضة معتمدة مسجلة لهذا الموظف.", "No approved leave requests recorded for this worker.")}
+                              </p>
+                            ) : (
+                              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                                {r.workerLeaveReqs.map((req) => {
+                                  const effDays = effectiveLeaveDaysForRequest(req, settings.weekendDays || [5, 6]);
+                                  const typeLabel =
+                                    req.type === "annual_leave"
+                                      ? t("إجازة سنوية", "Annual Leave")
+                                      : req.type === "emergency_leave"
+                                        ? t("إجازة عارضة", "Emergency Leave")
+                                        : req.type === "sick_leave"
+                                          ? t("إجازة مرضية", "Sick Leave")
+                                          : t("إجازة بدون مرتب", "Unpaid Leave");
+                                  return (
+                                    <div
+                                      key={req.id}
+                                      className="p-2.5 border-2 border-emerald-300 dark:border-emerald-800 bg-white dark:bg-zinc-900 rounded flex items-start justify-between gap-2"
+                                    >
+                                      <div className="space-y-0.5">
+                                        <div className="font-bold text-zinc-950 dark:text-white">
+                                          🌴 {typeLabel} ·{" "}
+                                          <span className="text-emerald-700 dark:text-emerald-400">
+                                            {effDays} {t("يوم عمل", "working day(s)")}
+                                          </span>
+                                        </div>
+                                        <div className="text-[10px] text-zinc-500">
+                                          {req.exceptionDate}
+                                          {req.endDate && req.endDate !== req.exceptionDate ? ` ← ${req.endDate}` : ""}
+                                        </div>
+                                        {req.reason && (
+                                          <div className="text-[10px] text-zinc-400" dir="rtl">
+                                            {req.reason}
+                                          </div>
+                                        )}
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => void handleRevokeLeave(req, r.name)}
+                                        className="shrink-0 px-2 py-1 bg-red-50 hover:bg-red-600 text-red-700 hover:text-white border border-red-300 rounded text-[10px] font-bold cursor-pointer transition-colors"
+                                      >
+                                        {t("↩ إلغاء وإرجاع الرصيد", "↩ Cancel & Restore")}
+                                      </button>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Monthly Permissions Ledger */}
+                          <div>
+                            <div className="mb-1.5 text-[11px] font-bold text-sky-800 dark:text-sky-300">
+                              {t("⏱️ سجل الأذونات الشهرية في هذه الدورة:", "⏱️ Monthly Permissions Ledger in this cycle:")}
+                            </div>
                           {r.cycleLedger.length === 0 ? (
-                            <p className="text-zinc-400 text-center py-3">
+                            <p className="text-zinc-400 text-[11px] py-1">
                               {t("لا توجد أذونات مسجلة في هذه الدورة.", "No permissions recorded in this cycle.")}
                             </p>
                           ) : (
@@ -878,6 +1009,7 @@ export default function HrComplianceView({
                               ))}
                             </div>
                           )}
+                          </div>
                           {r.accrual && (
                             <p className="mt-3 text-[10px] text-zinc-500">
                               {isAr

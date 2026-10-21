@@ -13,12 +13,15 @@ import {
 } from "@/lib/admin/hrPolicy2026";
 import { DEFAULT_HR_SETTINGS, type HrSettings } from "@/lib/admin/hrReports";
 import {
+  revokeApprovedLeaveRequest,
   saveWorkerLeaveProfile,
   subscribeApprovedPolicyRequests,
   subscribeHrSettings,
   type ApprovedRequestRow,
 } from "@/lib/admin/hrSettings";
-import { toast } from "@/lib/admin/feedback";
+import { db } from "@/lib/firebase";
+import { sendExpoPushToWorkers } from "@/lib/chatNotifications";
+import { toast, confirmDialog } from "@/lib/admin/feedback";
 import { logActivity } from "@/lib/admin/activity";
 import { useHrLang } from "@/lib/admin/hrI18n";
 
@@ -100,6 +103,61 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
   const todayYmd = ymd(new Date());
   const fallback = worker.createdAt?.toDate ? ymd(worker.createdAt.toDate()) : "";
   const effectiveHire = hireDate || fallback;
+  const workerLeaveReqs = useMemo(
+    () =>
+      approvedRequests.filter(
+        (r) =>
+          r.workerId === worker.id &&
+          (r.type === "annual_leave" ||
+            r.type === "emergency_leave" ||
+            r.type === "unpaid_leave" ||
+            r.type === "sick_leave") &&
+          r.exceptionDate,
+      ),
+    [approvedRequests, worker.id],
+  );
+
+  const handleRevokeLeave = async (req: ApprovedRequestRow) => {
+    const effDays = effectiveLeaveDaysForRequest(req, settings.weekendDays || [5, 6]);
+    const fullName = `${worker.firstName ?? ""} ${worker.lastName ?? ""}`.trim() || "Worker";
+    const ok = await confirmDialog({
+      title: t("إلغاء الإجازة المعتمدة وإرجاع الرصيد؟", "Cancel approved leave & restore balance?"),
+      message: t(
+        `هل تريد إلغاء إجازة ${fullName} بتاريخ ${req.exceptionDate}${req.endDate && req.endDate !== req.exceptionDate ? ` إلى ${req.endDate}` : ""} (${effDays} يوم عمل) وإرجاع الأيام إلى رصيد إجازاته فوراً؟`,
+        `Cancel ${fullName}'s approved leave (${req.exceptionDate}${req.endDate && req.endDate !== req.exceptionDate ? ` → ${req.endDate}` : ""}, ${effDays} working day(s)) and restore their leave balance immediately?`,
+      ),
+      confirmLabel: t("إلغاء الإجازة وإرجاع الرصيد ↩", "Cancel Leave & Restore ↩"),
+      tone: "danger",
+    });
+    if (!ok) return;
+    try {
+      await revokeApprovedLeaveRequest(req.id, adminEmail);
+      void sendExpoPushToWorkers(db, {
+        recipientUids: [worker.id],
+        title: "تم إلغاء الإجازة وإرجاع الرصيد ↩",
+        body: `تم إلغاء إجازتك بتاريخ ${req.exceptionDate} وإرجاع ${effDays} يوم إلى رصيد إجازاتك السنوية.`,
+        tab: "exceptions",
+      });
+      void logActivity({
+        action: "rejected",
+        entity: "hr",
+        entityId: req.id,
+        label: `Revoked approved leave (${req.exceptionDate}, ${effDays}d) for ${fullName}`,
+        detail: "Leave balance restored",
+      });
+      toast.success(
+        t(
+          `تم إلغاء الإجازة وإرجاع ${effDays} يوم إلى رصيد ${fullName}`,
+          `Leave cancelled & ${effDays}d restored to ${fullName}'s balance`,
+        ),
+      );
+    } catch (e) {
+      toast.error(t("تعذر إلغاء الإجازة", "Failed to cancel leave"), {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    }
+  };
+
   const usedLeave = useMemo(
     () =>
       approvedRequests
@@ -447,6 +505,62 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
           />
         </label>
       </div>
+
+      {/* Row 3.5: Approved Leave Requests with 1-Click Cancel & Restore Balance */}
+      {workerLeaveReqs.length > 0 && (
+        <div className="p-3 bg-amber-50/50 dark:bg-amber-950/20 border border-amber-300 dark:border-amber-800 rounded space-y-2 text-xs">
+          <div className="font-bold text-amber-950 dark:text-amber-200 flex items-center justify-between">
+            <span>
+              {t(
+                `🌴 الإجازات المعتمدة المخصومة من الرصيد (${workerLeaveReqs.length}):`,
+                `🌴 Approved Leave Deducted from Balance (${workerLeaveReqs.length}):`,
+              )}
+            </span>
+            <span className="text-[10px] font-normal text-amber-800 dark:text-amber-300">
+              {t("اضغط لإلغاء الإجازة وإرجاع الأيام للرصيد فوراً", "Click to cancel & restore days immediately")}
+            </span>
+          </div>
+          <div className="space-y-1.5">
+            {workerLeaveReqs.map((req) => {
+              const effDays = effectiveLeaveDaysForRequest(req, settings.weekendDays || [5, 6]);
+              const typeLabel =
+                req.type === "annual_leave"
+                  ? t("إجازة سنوية", "Annual Leave")
+                  : req.type === "emergency_leave"
+                    ? t("إجازة عارضة", "Emergency Leave")
+                    : req.type === "sick_leave"
+                      ? t("إجازة مرضية", "Sick Leave")
+                      : t("إجازة بدون مرتب", "Unpaid Leave");
+              return (
+                <div
+                  key={req.id}
+                  className="p-2 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded flex items-center justify-between gap-2"
+                >
+                  <div>
+                    <span className="font-bold text-zinc-900 dark:text-white">{typeLabel}</span>{" "}
+                    <span className="text-emerald-700 dark:text-emerald-400 font-bold">
+                      ({effDays} {t("يوم عمل", "working day(s)")})
+                    </span>{" "}
+                    ·{" "}
+                    <span className="text-zinc-500">
+                      {req.exceptionDate}
+                      {req.endDate && req.endDate !== req.exceptionDate ? ` ← ${req.endDate}` : ""}
+                    </span>
+                    {req.reason && <span className="text-zinc-400 ms-1">({req.reason})</span>}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleRevokeLeave(req)}
+                    className="shrink-0 px-2.5 py-1 bg-red-50 hover:bg-red-600 text-red-700 hover:text-white border border-red-300 rounded text-[10px] font-bold cursor-pointer transition-colors"
+                  >
+                    {t("↩ شيل الإجازة ورجّع الرصيد", "↩ Cancel & Restore")}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Live Preview & Save Footer */}
       <div className="pt-3 border-t border-zinc-200 dark:border-zinc-800 flex flex-wrap items-center justify-between gap-3">
