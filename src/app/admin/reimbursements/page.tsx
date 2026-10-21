@@ -19,6 +19,7 @@ import {
   subscribeReimbursements,
   type ReimbursementAttachmentDoc,
   type ReimbursementDoc,
+  type ReimbursementPayoutMethod,
 } from "@/lib/admin/hrSettings";
 import {
   policyConfigFromSettings,
@@ -260,6 +261,17 @@ export default function AdminReimbursementsPage() {
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="truncate text-sm font-semibold text-zinc-900">{r.workerName || r.workerEmail || "Worker"}</p>
                         <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${STAGE_TONE[r.stage]}`} dir="rtl">{REIMBURSEMENT_STAGE_AR[r.stage]}</span>
+                        {r.stage === "approved" && (
+                          r.payoutMethod === "instant_transfer" ? (
+                            <span className="rounded-full border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold text-violet-800" dir="rtl">
+                              ⚡ تم تحويله فورياً (خارج المرتب)
+                            </span>
+                          ) : (
+                            <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-800" dir="rtl">
+                              📅 ينزل أول الشهر مع المرتب
+                            </span>
+                          )
+                        )}
                         {errors > 0 && <span className="rounded-full bg-red-600 px-2 py-0.5 text-[10px] font-bold text-white">{errors} issue{errors > 1 ? "s" : ""}</span>}
                         {warns > 0 && <span className="rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-bold text-white">{warns} warning{warns > 1 ? "s" : ""}</span>}
                       </div>
@@ -353,19 +365,36 @@ function ReviewDrawer({ r, flags, onClose }: { r: ReimbursementDoc; flags: Reimb
     }
   };
 
-  const doApproveFinal = async () => {
-    if (!(amt > 0)) return toast.error("Enter the amount to pay");
-    if (!allChecked && !override.trim()) return toast.warning("Complete the checklist or write an override reason");
+  const doApproveFinal = async (payoutMethod: ReimbursementPayoutMethod) => {
+    if (!(amt > 0)) return toast.error("Enter the amount to pay · أدخل المبلغ المصروف");
     if (overApproval && !override.trim()) return toast.warning("Amount exceeds the pre-approved value — an override reason is required");
     if (duplicate && !override.trim()) return toast.warning("Duplicate image detected — an override reason is required");
+    if (blockingErrors.length > 0 && !override.trim()) return toast.warning("Claim has issues — write an override reason to approve");
+    const finalChecks =
+      allChecked || override.trim()
+        ? checks
+        : Object.fromEntries(items.map((i) => [i.key, true]));
+    const isInstant = payoutMethod === "instant_transfer";
     setBusy(true);
     try {
-      await approveReimbursementFinal(r, { amount: amt, note: note.trim(), checklist: checks, overrideReason: override.trim() || undefined }, adminId());
+      await approveReimbursementFinal(
+        r,
+        {
+          amount: amt,
+          note: note.trim(),
+          checklist: finalChecks,
+          overrideReason: override.trim() || undefined,
+          payoutMethod,
+        },
+        adminId(),
+      );
       if (r.workerId) {
         void sendExpoPushToWorkers(db, {
           recipientUids: [r.workerId],
-          title: "Reimbursement Approved 💰",
-          body: `${egp(amt)} for "${r.purpose}" has been approved and added to your payroll.`,
+          title: isInstant ? "تم اعتماد المأمورية وتحويلها فوراً ⚡" : "تم اعتماد المأمورية (تنزل مع المرتب) 📅",
+          body: isInstant
+            ? `تم اعتماد ${egp(amt)} لـ "${r.purpose}" كتحويل فوري الآن (لن يُضاف على مرتب أول الشهر).`
+            : `تم اعتماد ${egp(amt)} لـ "${r.purpose}" وسينزل أول الشهر مع المرتب.`,
           tab: "expenses",
         });
       }
@@ -373,14 +402,31 @@ function ReviewDrawer({ r, flags, onClose }: { r: ReimbursementDoc; flags: Reimb
         targetRoles: ["super_admin", "hr_admin"],
         category: "hr",
         eventType: "reimbursement_approved",
-        title: `💰 Reimbursement Approved: ${r.workerName ?? "Worker"}`,
-        body: `${egp(amt)} approved for "${r.purpose}" and added to payroll by ${adminId()}.`,
+        title: isInstant
+          ? `⚡ Reimbursement Paid Immediately: ${r.workerName ?? "Worker"}`
+          : `📅 Reimbursement Added to Payroll: ${r.workerName ?? "Worker"}`,
+        body: isInstant
+          ? `${egp(amt)} approved for "${r.purpose}" via Instant Transfer (excluded from monthly payroll) by ${adminId()}.`
+          : `${egp(amt)} approved for "${r.purpose}" and added to monthly payroll by ${adminId()}.`,
         href: "/admin/reimbursements",
         actorUid: auth.currentUser?.uid,
         actorName: adminId(),
       });
-      void logActivity({ action: "approved", entity: "hr", entityId: r.id, label: `Reimbursement approved — ${label}`, detail: `${egp(amt)} → payroll allowance${override.trim() ? ` · override: ${override.trim()}` : ""}` });
-      toast.success("Reimbursement approved", { description: `${egp(amt)} added to the worker's payroll as an allowance.` });
+      void logActivity({
+        action: "approved",
+        entity: "hr",
+        entityId: r.id,
+        label: `Reimbursement approved — ${label}`,
+        detail: `${egp(amt)} → ${isInstant ? "instant transfer (excluded from payroll)" : "monthly payroll allowance"}${override.trim() ? ` · override: ${override.trim()}` : ""}`,
+      });
+      toast.success(
+        isInstant ? "تم الاعتماد (تحويل فوري الآن ⚡)" : "تم الاعتماد (ينزل أول الشهر مع المرتب 📅)",
+        {
+          description: isInstant
+            ? `${egp(amt)} تم اعتماده كتحويل فوري ولن ينزل على مرتب أول الشهر.`
+            : `${egp(amt)} تم إضافته لينزل أول الشهر مع المرتب كبدل/مصروفات.`,
+        },
+      );
       onClose();
     } catch (e) {
       toast.error("Approval failed", { description: e instanceof Error ? e.message : undefined });
@@ -499,7 +545,16 @@ function ReviewDrawer({ r, flags, onClose }: { r: ReimbursementDoc; flags: Reimb
             {/* Checklist */}
             {canDecide && (
               <section>
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">Verification checklist · قائمة التحقق</p>
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Verification checklist · قائمة التحقق</p>
+                  <button
+                    type="button"
+                    onClick={() => setChecks(Object.fromEntries(items.map((i) => [i.key, !allChecked])))}
+                    className="text-[11px] font-semibold text-emerald-700 hover:underline cursor-pointer"
+                  >
+                    {allChecked ? "إلغاء الكل · Clear all" : "تحديد الكل ✓ · Check all"}
+                  </button>
+                </div>
                 <div className="space-y-1.5">
                   {items.map((i) => (
                     <label key={i.key} className={`flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 text-[13px] transition-colors ${checks[i.key] ? "border-emerald-300 bg-emerald-50" : "border-zinc-200 hover:bg-zinc-50"}`}>
@@ -522,7 +577,7 @@ function ReviewDrawer({ r, flags, onClose }: { r: ReimbursementDoc; flags: Reimb
                   <input id="reimb-amount" type="number" min={0} step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} className="brutal-input" />
                   {overApproval && <p className="mt-1 text-[12px] font-medium text-red-600" dir="rtl">المبلغ يتجاوز الموافقة المسبقة ({egp(r.approvedAmount)}) — يلزم سبب للاستثناء.</p>}
                 </div>
-                {r.stage === "review" && (overApproval || !allChecked || duplicate || blockingErrors.length > 0) && (
+                {r.stage === "review" && (overApproval || duplicate || blockingErrors.length > 0) && (
                   <div>
                     <label htmlFor="reimb-override" className="mb-1.5 block text-xs font-medium text-zinc-700">Override reason · سبب الاستثناء</label>
                     <input id="reimb-override" value={override} onChange={(e) => setOverride(e.target.value)} placeholder="Required to approve despite issues" className="brutal-input" />
@@ -539,10 +594,26 @@ function ReviewDrawer({ r, flags, onClose }: { r: ReimbursementDoc; flags: Reimb
               <section className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-3 text-[13px] text-zinc-700">
                 {r.stage === "pending_invoice" && <p dir="rtl">تمت الموافقة المسبقة على {egp(r.approvedAmount)}. بانتظار رفع الفاتورة من الموظف.</p>}
                 {r.stage === "approved" && (
-                  <p>
-                    Paid {egp((r as ReimbursementDoc & { paidAmount?: number }).paidAmount ?? r.approvedAmount)} as a payroll allowance
-                    {r.payrollAdjustmentId ? ` (adjustment ${r.payrollAdjustmentId.slice(0, 6)}…)` : ""}. Reviewed by {r.reviewedBy ?? "—"}.
-                  </p>
+                  r.payoutMethod === "instant_transfer" ? (
+                    <div className="space-y-1">
+                      <p className="font-semibold text-violet-800" dir="rtl">
+                        ⚡ تم الاعتماد والتحويل الفوري بمبلغ {egp(r.paidAmount ?? r.approvedAmount)} — لا ينزل على مرتب أول الشهر.
+                      </p>
+                      <p className="text-xs text-zinc-500">
+                        Paid {egp(r.paidAmount ?? r.approvedAmount)} via Instant Transfer (excluded from monthly payroll). Reviewed by {r.reviewedBy ?? "—"}.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      <p className="font-semibold text-emerald-800" dir="rtl">
+                        📅 تم الاعتماد بمبلغ {egp(r.paidAmount ?? r.approvedAmount)} — ينزل أول الشهر مع المرتب.
+                      </p>
+                      <p className="text-xs text-zinc-500">
+                        Paid {egp(r.paidAmount ?? r.approvedAmount)} as a monthly payroll allowance
+                        {r.payrollAdjustmentId ? ` (adjustment ${r.payrollAdjustmentId.slice(0, 6)}…)` : ""}. Reviewed by {r.reviewedBy ?? "—"}.
+                      </p>
+                    </div>
+                  )
                 )}
                 {r.stage === "rejected" && <p>Rejected by {r.reviewedBy ?? "—"}.</p>}
                 {r.adminNote && <p className="mt-1 text-zinc-500" dir="auto">“{r.adminNote}”</p>}
@@ -551,22 +622,43 @@ function ReviewDrawer({ r, flags, onClose }: { r: ReimbursementDoc; flags: Reimb
             )}
           </div>
 
-          <footer className="flex flex-wrap items-center justify-end gap-2 border-t border-zinc-100 bg-zinc-50/60 px-5 py-3">
-            {(canDecide || r.stage === "pending_invoice") && (
-              <button type="button" id="reimb-reject" disabled={busy} onClick={doReject} className="brutal-btn-outline normal-case tracking-normal text-red-600 disabled:opacity-50">
-                Reject · رفض
-              </button>
-            )}
-            {r.stage === "pre_approval" && (
-              <button type="button" id="reimb-approve-quote" disabled={busy} onClick={doApproveQuote} className="brutal-btn normal-case tracking-normal disabled:opacity-50">
-                Approve quote · موافقة مسبقة
-              </button>
-            )}
+          <footer className="flex flex-col gap-2 border-t border-zinc-100 bg-zinc-50/60 px-5 py-3">
             {r.stage === "review" && (
-              <button type="button" id="reimb-approve-final" disabled={busy} onClick={doApproveFinal} className="brutal-btn normal-case tracking-normal disabled:opacity-50">
-                Approve &amp; add to payroll · اعتماد
-              </button>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2" dir="rtl">
+                <button
+                  type="button"
+                  id="reimb-approve-payroll"
+                  disabled={busy}
+                  onClick={() => void doApproveFinal("payroll")}
+                  className="flex flex-col items-center justify-center rounded-xl border border-emerald-600 bg-emerald-600 px-3 py-2.5 text-center text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-50 cursor-pointer"
+                >
+                  <span className="text-[13px] font-bold">📅 ينزل أول الشهر مع المرتب</span>
+                  <span className="text-[10px] text-emerald-100" dir="ltr">Approve &amp; Add to Monthly Payroll</span>
+                </button>
+                <button
+                  type="button"
+                  id="reimb-approve-instant"
+                  disabled={busy}
+                  onClick={() => void doApproveFinal("instant_transfer")}
+                  className="flex flex-col items-center justify-center rounded-xl border border-violet-600 bg-violet-600 px-3 py-2.5 text-center text-white shadow-sm transition hover:bg-violet-700 disabled:opacity-50 cursor-pointer"
+                >
+                  <span className="text-[13px] font-bold">⚡ هحوله دلوقتي (لا ينزل على المرتب)</span>
+                  <span className="text-[10px] text-violet-100" dir="ltr">Approve &amp; Transfer Now (No Payroll)</span>
+                </button>
+              </div>
             )}
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {(canDecide || r.stage === "pending_invoice") && (
+                <button type="button" id="reimb-reject" disabled={busy} onClick={doReject} className="brutal-btn-outline normal-case tracking-normal text-red-600 disabled:opacity-50">
+                  Reject · رفض
+                </button>
+              )}
+              {r.stage === "pre_approval" && (
+                <button type="button" id="reimb-approve-quote" disabled={busy} onClick={doApproveQuote} className="brutal-btn normal-case tracking-normal disabled:opacity-50">
+                  Approve quote · موافقة مسبقة
+                </button>
+              )}
+            </div>
           </footer>
         </aside>
 

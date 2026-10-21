@@ -461,6 +461,8 @@ export function mergeLedgerWithApprovedRequests(
   return Array.from(byKey.values()).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
 }
 
+export type ReimbursementPayoutMethod = "payroll" | "instant_transfer";
+
 export type ReimbursementDoc = {
   id: string;
   workerId: string;
@@ -477,6 +479,13 @@ export type ReimbursementDoc = {
   quoteLink?: string | null;
   approvedAmount?: number | null;
   invoiceAmount?: number | null;
+  paidAmount?: number | null;
+  /**
+   * How the approved claim is disbursed:
+   * - "payroll": added as an allowance to the monthly salary at the start of the month
+   * - "instant_transfer": transferred immediately by the admin and excluded from monthly payroll
+   */
+  payoutMethod?: ReimbursementPayoutMethod;
   attachmentIds?: string[];
   attachmentKinds?: string[];
   imageHashes?: string[];
@@ -555,41 +564,58 @@ export async function approveReimbursementQuote(
 }
 
 /**
- * Final approval: records a payroll allowance (source = "reimbursement") so it
- * appears on the worker's monthly payslip, then marks the claim approved.
+ * Final approval:
+ * - When `payoutMethod === "payroll"` (default): records a `payrollAdjustments` allowance
+ *   (`source = "reimbursement"`) so it drops onto the worker's monthly salary at the start of the month.
+ * - When `payoutMethod === "instant_transfer"`: marks the claim approved as paid immediately
+ *   WITHOUT creating a `payrollAdjustments` record, so it is NOT added to the monthly salary.
  */
 export async function approveReimbursementFinal(
   r: ReimbursementDoc,
-  payload: { amount: number; note: string; checklist: Record<string, boolean>; overrideReason?: string },
+  payload: {
+    amount: number;
+    note: string;
+    checklist: Record<string, boolean>;
+    overrideReason?: string;
+    payoutMethod?: ReimbursementPayoutMethod;
+  },
   adminEmail = "admin",
-): Promise<string> {
-  const label = r.type === "outdoor" ? "مأمورية خارجية" : "مشتريات";
-  const adjRef = await addDoc(collection(db, "payrollAdjustments"), {
-    workerId: r.workerId,
-    workerName: r.workerName || "",
-    type: "allowance",
-    amount: payload.amount,
-    date: new Date().toISOString().split("T")[0],
-    reason: `[${label}] ${r.purpose}${r.type === "outdoor" && r.routeFrom ? ` (${r.routeFrom} → ${r.routeTo})` : ""}`,
-    status: "applied",
-    source: "reimbursement",
-    reimbursementId: r.id,
-    createdAt: serverTimestamp(),
-    createdBy: adminEmail,
-  });
+): Promise<string | null> {
+  const payoutMethod: ReimbursementPayoutMethod = payload.payoutMethod ?? "payroll";
+  let adjId: string | null = null;
+
+  if (payoutMethod === "payroll") {
+    const label = r.type === "outdoor" ? "مأمورية خارجية" : "مشتريات";
+    const adjRef = await addDoc(collection(db, "payrollAdjustments"), {
+      workerId: r.workerId,
+      workerName: r.workerName || "",
+      type: "allowance",
+      amount: payload.amount,
+      date: new Date().toISOString().split("T")[0],
+      reason: `[${label}] ${r.purpose}${r.type === "outdoor" && r.routeFrom ? ` (${r.routeFrom} → ${r.routeTo})` : ""}`,
+      status: "applied",
+      source: "reimbursement",
+      reimbursementId: r.id,
+      createdAt: serverTimestamp(),
+      createdBy: adminEmail,
+    });
+    adjId = adjRef.id;
+  }
+
   await updateDoc(doc(db, "reimbursements", r.id), {
     stage: "approved",
     approvedAmount: r.type === "outdoor" ? payload.amount : r.approvedAmount ?? payload.amount,
     paidAmount: payload.amount,
+    payoutMethod,
     checklist: payload.checklist,
     adminNote: payload.note || "",
     overrideReason: payload.overrideReason || "",
-    payrollAdjustmentId: adjRef.id,
+    payrollAdjustmentId: adjId,
     reviewedAt: serverTimestamp(),
     reviewedBy: adminEmail,
     updatedAt: serverTimestamp(),
   });
-  return adjRef.id;
+  return adjId;
 }
 
 export async function rejectReimbursement(r: ReimbursementDoc, note: string, adminEmail = "admin"): Promise<void> {
