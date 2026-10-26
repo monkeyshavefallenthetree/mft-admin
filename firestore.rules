@@ -314,32 +314,13 @@ service cloud.firestore {
       allow update: if isOpsAdmin() || (
         isSignedIn()
         && validWorkerTaskStatus()
-        && (
-          // (a) Assigned worker starts task, submits/undoes approval, or updates checklist items.
-          (
-            isAssignedWorker(resource.data)
-            && changedOnly(['status', 'startedAt', 'submittedForApprovalAt', 'updatedAt', 'subtasks'])
-          )
-          // (b) Worker claims an unassigned directive.
-          || (
-            isUnassignedTask(resource.data)
-            && request.resource.data.get('assignedTo', '') == request.auth.uid
-            && changedOnly([
-                 'assignedTo', 'assignedWorkerName', 'assignedWorkerIds',
-                 'status', 'startedAt', 'updatedAt'
-               ])
-          )
-          // (c) Creator or assignee edits task details from TasksPanel.
-          || (
-            (resource.data.get('createdBy', '') == request.auth.uid || isAssignedWorker(resource.data))
-            && changedOnly([
-                 'title', 'description', 'department', 'priority', 'status',
-                 'assignedTo', 'assignedWorkerName', 'assignedWorkerIds',
-                 'startDate', 'dueDate', 'photo', 'subtasks', 'projectId', 'projectName',
-                 'startedAt', 'submittedForApprovalAt', 'updatedAt'
-               ])
-          )
-        )
+        && isAssignedWorker(resource.data)
+        && changedOnly([
+             'title', 'description', 'department', 'priority', 'status',
+             'assignedTo', 'assignedWorkerName', 'assignedWorkerIds',
+             'startDate', 'dueDate', 'photo', 'subtasks', 'projectId', 'projectName',
+             'startedAt', 'submittedForApprovalAt', 'updatedAt'
+           ])
       );
 
       match /messages/{msgId} {
