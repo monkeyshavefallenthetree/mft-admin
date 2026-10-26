@@ -218,9 +218,9 @@ export default function ProjectBoardView({
 
                       {/* Description Snippet */}
                       {task.description && (
-                        <p className="text-[11px] text-zinc-500 font-mono line-clamp-2 mt-1 leading-snug">
+                        <div className="text-[11px] text-zinc-500 font-mono line-clamp-2 mt-1 leading-snug">
                           <LinkifiedText text={task.description} />
-                        </p>
+                        </div>
                       )}
 
                       {/* Attached Proof Photo Thumbnail */}

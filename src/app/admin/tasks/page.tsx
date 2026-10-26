@@ -920,7 +920,7 @@ export default function AdminTasksPage() {
       // Search query
       if (!q) return true;
       const titleMatch = (t.title || "").toLowerCase().includes(q);
-      const descMatch = (t.description || "").toLowerCase().includes(q);
+      const descMatch = stripRichHtml(t.description || "").toLowerCase().includes(q);
       const projMatch = (t.projectName || "").toLowerCase().includes(q);
       const deptMatch = (t.department || "").toLowerCase().includes(q);
       const assigneeMatch = formatAssignees(t.assignedTo).toLowerCase().includes(q);
@@ -1165,10 +1165,10 @@ export default function AdminTasksPage() {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4 text-sm text-zinc-700 font-mono">
-                <p>
+                <div>
                   <span className="text-zinc-500 font-medium">Description:</span>{" "}
                   <LinkifiedText text={task.description} />
-                </p>
+                </div>
                 <p>
                   <span className="text-zinc-500 font-medium">Project:</span>{" "}
                   <span className="font-semibold text-zinc-900">

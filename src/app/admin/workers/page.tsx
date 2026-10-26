@@ -24,6 +24,7 @@ import { bulkSetSystemStartDate } from "@/lib/admin/hrSettings";
 import { useHrLang } from "@/lib/admin/hrI18n";
 import { BulkBar, BulkButton, EmptyState, PageHeader, SkeletonRows, STATE_ICONS } from "@/components/admin/ui/States";
 import ModalPortal from "@/components/admin/ui/ModalPortal";
+import RichDescriptionEditor from "@/components/admin/ui/RichDescriptionEditor";
 import WorkerLeaveProfileCard from "@/components/admin/hr/WorkerLeaveProfileCard";
 
 interface WorkerTask {
@@ -1628,13 +1629,11 @@ export default function AdminWorkersPage() {
                 <label className="block font-bold uppercase tracking-wider text-zinc-700 mb-1">
                   Directive Details *
                 </label>
-                <textarea
-                  required
-                  rows={3}
+                <RichDescriptionEditor
                   value={taskForm.description}
-                  onChange={(e) => setTaskForm({ ...taskForm, description: e.target.value })}
+                  onChange={(html) => setTaskForm({ ...taskForm, description: html })}
                   placeholder="Provide detailed instructions, deliverables, and guidelines..."
-                  className="w-full bg-white border-2 border-zinc-900 px-3 py-2 text-sm text-zinc-950 focus:outline-none focus:ring-2 focus:ring-red-600 resize-y"
+                  minHeight="100px"
                 />
               </div>
 
@@ -1791,13 +1790,11 @@ export default function AdminWorkersPage() {
                 <label className="block font-bold uppercase tracking-wider text-zinc-700 mb-1">
                   Directive Details *
                 </label>
-                <textarea
-                  required
-                  rows={3}
+                <RichDescriptionEditor
                   value={editTaskForm.description}
-                  onChange={(e) => setEditTaskForm({ ...editTaskForm, description: e.target.value })}
+                  onChange={(html) => setEditTaskForm({ ...editTaskForm, description: html })}
                   placeholder="Provide detailed instructions, deliverables, and guidelines..."
-                  className="w-full bg-white border-2 border-zinc-900 px-3 py-2 text-sm text-zinc-950 focus:outline-none focus:ring-2 focus:ring-red-600 resize-y"
+                  minHeight="100px"
                 />
               </div>
 
