@@ -10,6 +10,7 @@ import {
   parseLocationCoordinates,
   computeDailyOfficePin,
   fetchClientPublicIp,
+  normalizeIpString,
 } from "@/lib/admin/hrReports";
 import { saveHrSettings } from "@/lib/admin/hrSettings";
 import { toast } from "@/lib/admin/feedback";
@@ -119,12 +120,13 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
     };
   }, []);
 
-  const handleAddCurrentOfficeIp = () => {
-    if (!currentPublicIp) {
+  const handleAddCurrentOfficeIp = async () => {
+    const cleanIp = normalizeIpString(currentPublicIp);
+    if (!cleanIp) {
       toast.warning(t("لم يتم اكتشاف الـ IP الحالي بعد", "Current Public IP not detected yet"));
       return;
     }
-    const existing = (settings.officeNetworks ?? []).some((n) => n.ip.trim() === currentPublicIp.trim());
+    const existing = (settings.officeNetworks ?? []).some((n) => normalizeIpString(n.ip) === cleanIp);
     if (existing) {
       toast.info(t("شبكة الشركة الحالية مسجلة بالفعل في القائمة ✓", "Current Office IP is already in the list ✓"));
       return;
@@ -132,26 +134,44 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
     const newNet: OfficeNetworkItem = {
       id: `net_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       name: netName.trim() || t("راوتر / شبكة المقر الرئيسي", "Main Office Wi-Fi / Router"),
-      ip: currentPublicIp.trim(),
+      ip: cleanIp,
       active: true,
     };
+    const nextNetworks = [...(settings.officeNetworks ?? []), newNet];
     setSettings((prev) => ({
       ...prev,
-      officeNetworks: [...(prev.officeNetworks ?? []), newNet],
+      officeNetworks: nextNetworks,
+      enforceGeofence: true,
     }));
     setNetName("");
-    toast.success(
-      t(
-        `تمت إضافة شبكة الشركة (${newNet.ip}) — اضغط حفظ السياسات لتأكيد التفعيل`,
-        `Added Office Network (${newNet.ip}) — click Save Policies`,
-      ),
-    );
+    try {
+      await saveHrSettings({ officeNetworks: nextNetworks, enforceGeofence: true }, adminEmail);
+      toast.success(
+        t(
+          `تم تسجيل وحفظ شبكة الشركة (${newNet.ip}) فوراً ✓`,
+          `Saved Office Network (${newNet.ip}) immediately ✓`,
+        ),
+      );
+    } catch {
+      toast.success(
+        t(
+          `تمت إضافة شبكة الشركة (${newNet.ip}) — اضغط حفظ السياسات لتأكيد التفعيل`,
+          `Added Office Network (${newNet.ip}) — click Save Policies`,
+        ),
+      );
+    }
   };
 
-  const handleAddCustomOfficeIp = () => {
-    const clean = netIp.trim();
+  const handleAddCustomOfficeIp = async () => {
+    const clean = normalizeIpString(netIp);
     if (!clean) {
       toast.warning(t("يرجى كتابة عنوان الـ IP لشبكة الشركة", "Please enter an IP address"));
+      return;
+    }
+    const existing = (settings.officeNetworks ?? []).some((n) => normalizeIpString(n.ip) === clean);
+    if (existing) {
+      toast.info(t("هذا الـ IP مسجل بالفعل في القائمة ✓", "This IP is already in the list ✓"));
+      setNetIp("");
       return;
     }
     const newNet: OfficeNetworkItem = {
@@ -160,29 +180,49 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
       ip: clean,
       active: true,
     };
+    const nextNetworks = [...(settings.officeNetworks ?? []), newNet];
     setSettings((prev) => ({
       ...prev,
-      officeNetworks: [...(prev.officeNetworks ?? []), newNet],
+      officeNetworks: nextNetworks,
+      enforceGeofence: true,
     }));
     setNetName("");
     setNetIp("");
-    toast.success(t(`تمت إضافة الشبكة (${clean})`, `Added network (${clean})`));
+    try {
+      await saveHrSettings({ officeNetworks: nextNetworks, enforceGeofence: true }, adminEmail);
+      toast.success(t(`تمت إضافة وحفظ الشبكة (${clean}) فوراً ✓`, `Added and saved network (${clean}) ✓`));
+    } catch {
+      toast.success(t(`تمت إضافة الشبكة (${clean})`, `Added network (${clean})`));
+    }
   };
 
-  const handleToggleOfficeNetwork = (id: string) => {
+  const handleToggleOfficeNetwork = async (id: string) => {
+    const nextNetworks = (settings.officeNetworks ?? []).map((n) =>
+      n.id === id ? { ...n, active: n.active === false ? true : false } : n,
+    );
     setSettings((prev) => ({
       ...prev,
-      officeNetworks: (prev.officeNetworks ?? []).map((n) =>
-        n.id === id ? { ...n, active: n.active === false ? true : false } : n,
-      ),
+      officeNetworks: nextNetworks,
     }));
+    try {
+      await saveHrSettings({ officeNetworks: nextNetworks }, adminEmail);
+    } catch {
+      /* saved on form submit */
+    }
   };
 
-  const handleRemoveOfficeNetwork = (id: string) => {
+  const handleRemoveOfficeNetwork = async (id: string) => {
+    const nextNetworks = (settings.officeNetworks ?? []).filter((n) => n.id !== id);
     setSettings((prev) => ({
       ...prev,
-      officeNetworks: (prev.officeNetworks ?? []).filter((n) => n.id !== id),
+      officeNetworks: nextNetworks,
     }));
+    try {
+      await saveHrSettings({ officeNetworks: nextNetworks }, adminEmail);
+      toast.info(t("تم حذف الشبكة من القائمة", "Network removed"));
+    } catch {
+      /* saved on form submit */
+    }
   };
 
   const handleRegenerateDailyPin = () => {
@@ -308,7 +348,27 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
     e.preventDefault();
     setSaving(true);
     try {
-      await saveHrSettings(settings, adminEmail);
+      let finalSettings = settings;
+      const pendingIp = normalizeIpString(netIp);
+      if (pendingIp) {
+        const exists = (settings.officeNetworks ?? []).some((n) => normalizeIpString(n.ip) === pendingIp);
+        if (!exists) {
+          const newNet: OfficeNetworkItem = {
+            id: `net_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            name: netName.trim() || t("شبكة مكتب الشركة", "Office Network"),
+            ip: pendingIp,
+            active: true,
+          };
+          finalSettings = {
+            ...settings,
+            officeNetworks: [...(settings.officeNetworks ?? []), newNet],
+          };
+          setSettings(finalSettings);
+          setNetIp("");
+          setNetName("");
+        }
+      }
+      await saveHrSettings(finalSettings, adminEmail);
       toast.success(t("تم حفظ سياسات الموارد البشرية والرواتب بنجاح", "HR & Payroll policies updated"));
       onClose();
     } catch (err) {

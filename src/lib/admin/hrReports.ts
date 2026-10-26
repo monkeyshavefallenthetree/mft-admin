@@ -105,21 +105,34 @@ export function computeDailyOfficePin(
   return String(pinNum);
 }
 
+export function normalizeIpString(raw: string | null | undefined): string {
+  if (!raw) return "";
+  return normalizeDigits(String(raw))
+    .replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, "")
+    .replace(/^https?:\/\//i, "")
+    .replace(/\/.*$/, "")
+    .replace(/^::ffff:/i, "")
+    .replace(/\s+/g, "")
+    .toLowerCase();
+}
+
 export async function fetchClientPublicIp(): Promise<string | null> {
   try {
-    const res = await fetch("/api/client-ip", { cache: "no-store" });
+    const res = await fetch("https://api.ipify.org?format=json", { cache: "no-store" });
     if (res.ok) {
-      const data = (await res.json()) as { ip?: string | null };
-      if (data?.ip) return data.ip.trim();
+      const data = (await res.json()) as { ip?: string };
+      const cleaned = normalizeIpString(data?.ip);
+      if (cleaned) return cleaned;
     }
   } catch {
     /* fallback below */
   }
   try {
-    const res = await fetch("https://api.ipify.org?format=json", { cache: "no-store" });
+    const res = await fetch("/api/client-ip", { cache: "no-store" });
     if (res.ok) {
-      const data = (await res.json()) as { ip?: string };
-      if (data?.ip) return data.ip.trim();
+      const data = (await res.json()) as { ip?: string | null };
+      const cleaned = normalizeIpString(data?.ip);
+      if (cleaned) return cleaned;
     }
   } catch {
     /* ignore */
