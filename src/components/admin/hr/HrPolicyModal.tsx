@@ -804,7 +804,7 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
               </div>
             )}
 
-            {/* 5. Allowed Work Locations (Geofencing & External Mission Gate) */}
+            {/* 5. Non-GPS Office Attendance & External Mission Gate */}
             <div className="p-4 bg-zinc-50 dark:bg-zinc-800/60 border-2 border-zinc-900 dark:border-zinc-700 rounded-lg space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
@@ -812,15 +812,15 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
                     <span className="text-red-600">٥.</span>
                     <span>
                       {t(
-                        "📍 مواقع العمل المعتمدة وبوابة المأموريات الخارجية (Geofence)",
-                        "5. 📍 Allowed Work Locations & External Mission Gate",
+                        "🏢 بوابة حضور مقر الشركة والمأموريات الخارجية (بدون GPS)",
+                        "5. 🏢 Office Attendance & External Mission Gate (No GPS)",
                       )}
                     </span>
                   </h4>
                   <p className="text-zinc-500 dark:text-zinc-400 text-[11px] mt-0.5">
                     {t(
-                      "إذا كان الموظف خارج جميع المواقع المفعّلة، لن يقبل النظام بدء الشيفت العادي، وسيُطلب منه إرسال طلب مأمورية خارجية بعدد الساعات وسكرين شوت للموافقة عليها.",
-                      "If a worker is outside all active locations, regular shift clock-in is blocked and they must submit an External Mission request (with hours & screenshot) for Admin approval.",
+                      "يتم التحقق من تواجد الموظف داخل الشركة عبر شبكة Wi-Fi الشركة أو كود حضور المكتب اليومي أو الكمبيوتر المكتبي المعتمد (بدون استخدام GPS). إذا فتح الموظف باقة الموبايل (Mobile Data) أو كان خارج المقر، يُطلب منه إرسال طلب مأمورية خارجية للموافقة عليها.",
+                      "Verifies office presence via Company Wi-Fi IP, Daily Office PIN, or Trusted Office PC (Zero GPS). Mobile Data is blocked from automatic clock-in and requires an External Mission approval.",
                     )}
                   </p>
                 </div>
@@ -833,195 +833,13 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
                     className="h-4 w-4 accent-emerald-600 cursor-pointer"
                   />
                   <span className="text-[11px] font-bold">
-                    {t("إلزام التواجد في اللوكيشن لبدء الشيفت", "Enforce Location Gate")}
+                    {t("إلزام بوابة حضور الشركة لبدء الشيفت", "Enforce Office Attendance Gate")}
                   </span>
                 </label>
               </div>
 
-              {/* Add Location Form Box */}
-              <div className="p-3 bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded space-y-2.5">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-[11px] font-bold text-zinc-800 dark:text-zinc-200">
-                    {t("➕ إضافة موقع عمل / فرع جديد:", "➕ Add New Office / Work Location:")}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={handleCaptureCurrentGps}
-                    disabled={locGettingGps}
-                    className="px-2.5 py-1 bg-sky-600 hover:bg-sky-700 text-white rounded text-[11px] font-bold cursor-pointer disabled:opacity-50"
-                  >
-                    {locGettingGps
-                      ? t("⏳ جاري التقاط موقعك...", "⏳ Getting GPS...")
-                      : t("📍 التقط موقعي الحالي الآن (GPS)", "📍 Use My Current Location")}
-                  </button>
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-bold text-zinc-500 mb-0.5">
-                    {t(
-                      "أو الصق رابط Google Maps أو الإحداثيات (مثال: 30.0444, 31.2357):",
-                      "Or paste a Google Maps link or 'lat, lng' coordinates:",
-                    )}
-                  </label>
-                  <input
-                    type="text"
-                    dir="ltr"
-                    value={locPasteUrl}
-                    onChange={(e) => handlePasteCoordinates(e.target.value)}
-                    placeholder="https://maps.google.com/?q=30.0444,31.2357  أو  30.0444, 31.2357"
-                    className={INPUT_CLS}
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
-                  <PolicyField label={t("اسم الموقع / الفرع *", "Location Name *")}>
-                    <input
-                      type="text"
-                      value={locName}
-                      onChange={(e) => setLocName(e.target.value)}
-                      placeholder={t("مثال: المكتب الرئيسي", "e.g. Main Office")}
-                      className={INPUT_CLS}
-                    />
-                  </PolicyField>
-                  <PolicyField label={t("خط العرض (Latitude) *", "Latitude *")}>
-                    <input
-                      type="number"
-                      step="any"
-                      dir="ltr"
-                      value={locLat}
-                      onChange={(e) => setLocLat(e.target.value)}
-                      placeholder="30.044420"
-                      className={INPUT_CLS}
-                    />
-                  </PolicyField>
-                  <PolicyField label={t("خط الطول (Longitude) *", "Longitude *")}>
-                    <input
-                      type="number"
-                      step="any"
-                      dir="ltr"
-                      value={locLng}
-                      onChange={(e) => setLocLng(e.target.value)}
-                      placeholder="31.235712"
-                      className={INPUT_CLS}
-                    />
-                  </PolicyField>
-                  <PolicyField label={t("النطاق المسموح (متر)", "Allowed Radius (m)")}>
-                    <select
-                      value={locRadius}
-                      onChange={(e) => setLocRadius(parseInt(e.target.value, 10) || 200)}
-                      className={INPUT_CLS}
-                    >
-                      <option value={100}>{t("100 متر (دقيق)", "100 meters")}</option>
-                      <option value={150}>{t("150 متر", "150 meters")}</option>
-                      <option value={200}>{t("200 متر (موصى به)", "200m (Recommended)")}</option>
-                      <option value={300}>{t("300 متر", "300 meters")}</option>
-                      <option value={500}>{t("500 متر", "500 meters")}</option>
-                      <option value={1000}>{t("1000 متر (1 كم)", "1000m (1 km)")}</option>
-                    </select>
-                  </PolicyField>
-                </div>
-
-                <div className="flex justify-end">
-                  <button
-                    type="button"
-                    onClick={handleAddLocation}
-                    className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded text-xs cursor-pointer shadow-[2px_2px_0px_0px_#09090b]"
-                  >
-                    {t("+ أضف هذا اللوكيشن لقائمة المواقع المعتمدة", "+ Add Location to List")}
-                  </button>
-                </div>
-              </div>
-
-              {/* Configured Locations List */}
-              {(settings.workLocations ?? []).length === 0 ? (
-                <div className="p-3 rounded border border-dashed border-zinc-400 text-center text-[11px] text-zinc-500">
-                  {t(
-                    "لا توجد مواقع عمل مضافة حالياً (يمكن للموظفين بدء الشيفت من أي مكان حتى تضيف موقعاً واحداً على الأقل).",
-                    "No work locations configured yet (workers can clock in from anywhere until at least one active location is added).",
-                  )}
-                </div>
-              ) : (
-                <div className="space-y-1.5">
-                  <div className="text-[11px] font-bold text-zinc-700 dark:text-zinc-300">
-                    {t(
-                      `المواقع المضافة (${(settings.workLocations ?? []).length} موقع):`,
-                      `Configured Locations (${(settings.workLocations ?? []).length}):`,
-                    )}
-                  </div>
-                  {(settings.workLocations ?? []).map((loc) => (
-                    <div
-                      key={loc.id}
-                      className={`p-2.5 rounded border flex flex-wrap items-center justify-between gap-2 ${
-                        loc.active !== false
-                          ? "bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-400 dark:border-emerald-800"
-                          : "bg-zinc-100 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 opacity-60"
-                      }`}
-                    >
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-bold text-xs text-zinc-950 dark:text-white">
-                          📍 {loc.name}
-                        </span>
-                        <span className="px-1.5 py-0.5 rounded bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 text-[10px] font-mono" dir="ltr">
-                          {Number(loc.lat).toFixed(5)}, {Number(loc.lng).toFixed(5)}
-                        </span>
-                        <span className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-200 text-[10px] font-bold">
-                          {t(`النطاق: ${loc.radiusMeters || 200} متر`, `Radius: ${loc.radiusMeters || 200}m`)}
-                        </span>
-                        <a
-                          href={`https://www.google.com/maps?q=${loc.lat},${loc.lng}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-[10px] font-bold text-blue-600 hover:underline"
-                        >
-                          {t("🗺️ عرض على الخريطة", "🗺️ View Map")}
-                        </a>
-                      </div>
-
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => handleToggleLocationActive(loc.id)}
-                          className={`px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer border ${
-                            loc.active !== false
-                              ? "bg-emerald-600 text-white border-emerald-700"
-                              : "bg-zinc-200 text-zinc-700 border-zinc-400"
-                          }`}
-                        >
-                          {loc.active !== false ? t("✓ مفعّل", "✓ Active") : t("متوقف", "Paused")}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveLocation(loc.id)}
-                          className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white rounded text-[10px] font-bold cursor-pointer"
-                        >
-                          {t("🗑️ حذف", "🗑️ Remove")}
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* ── Non-GPS Office Verification Alternatives (Wi-Fi IP + Office PIN + Trusted PC) ── */}
-              <div className="mt-4 pt-4 border-t-2 border-sky-300 dark:border-sky-800 space-y-3">
-                <div>
-                  <h5 className="font-black text-xs sm:text-sm uppercase text-sky-950 dark:text-sky-200 flex items-center gap-1.5">
-                    <span>💻</span>
-                    <span>
-                      {t(
-                        "بدائل التحقق من التواجد داخل الشركة (للأجهزة والكمبيوترات بدون GPS)",
-                        "Non-GPS Office Verification (For Desktop PCs & Devices without GPS)",
-                      )}
-                    </span>
-                  </h5>
-                  <p className="text-[11px] text-zinc-600 dark:text-zinc-400 mt-0.5">
-                    {t(
-                      "حتى يتمكن الموظفون الذين يعملون على أجهزة كمبيوتر مكتبية بدون GPS من بدء الشيفت فوراً من داخل الشركة دون الحاجة لطلب مأمورية:",
-                      "Allow workers on desktop PCs without GPS to clock in seamlessly from inside the office:",
-                    )}
-                  </p>
-                </div>
-
+              {/* ── Non-GPS Office Verification Channels (Wi-Fi IP + Office PIN + Trusted PC) ── */}
+              <div className="pt-2 space-y-3">
                 {/* Method 1: Company Wi-Fi / Public IP Whitelist */}
                 <div className="p-3 bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded space-y-2.5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1031,8 +849,8 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
                       </span>
                       <p className="text-[10px] text-zinc-500">
                         {t(
-                          "أي جهاز متصل بنفس راوتر/إنترنت الشركة المسجل هنا سيفتح له الشيفت تلقائياً فور الضغط على «ابدأ الشيفت» حتى لو لم يكن به GPS.",
-                          "Any device connected to a registered Office Public IP will automatically pass location verification without needing GPS.",
+                          "أي جهاز متصل بـ Wi-Fi الشركة المسجل هنا سيفتح له الشيفت تلقائياً فور الضغط على «ابدأ الشيفت» (ويتم رفض باقة الموبايل Mobile Data تلقائياً).",
+                          "Any device connected to a registered Office Wi-Fi IP will clock in automatically (Cellular / Mobile Data is automatically rejected).",
                         )}
                       </p>
                     </div>

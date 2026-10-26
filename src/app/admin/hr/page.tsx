@@ -910,8 +910,8 @@ export default function AdminHRPage() {
           >
             <span>
               {t(
-                `📍 مواقع العمل (${(settings.workLocations ?? []).filter((l) => l.active !== false).length})`,
-                `📍 Work Locations (${(settings.workLocations ?? []).filter((l) => l.active !== false).length})`,
+                `🏢 شبكات وبوابة الحضور (${(settings.officeNetworks ?? []).filter((n) => n.active !== false).length})`,
+                `🏢 Office Wi-Fi & Gate (${(settings.officeNetworks ?? []).filter((n) => n.active !== false).length})`,
               )}
             </span>
           </button>
