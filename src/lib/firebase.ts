@@ -10,7 +10,10 @@ export { firebaseConfig };
 export const auth = getAuth(app);
 export const db = (() => {
   try {
-    return initializeFirestore(app, { ignoreUndefinedProperties: true });
+    return initializeFirestore(app, {
+      ignoreUndefinedProperties: true,
+      experimentalAutoDetectLongPolling: true,
+    });
   } catch {
     return getFirestore(app);
   }
