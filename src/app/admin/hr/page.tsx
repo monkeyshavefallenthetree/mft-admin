@@ -66,6 +66,8 @@ import HrDateRangeSelector from "@/components/admin/hr/HrDateRangeSelector";
 import HrExcuseModal from "@/components/admin/hr/HrExcuseModal";
 import HrComplianceView from "@/components/admin/hr/HrComplianceView";
 import WorkerLeaveProfileCard from "@/components/admin/hr/WorkerLeaveProfileCard";
+import HrDisciplinaryCatalog from "@/components/admin/hr/HrDisciplinaryCatalog";
+import { DISCIPLINARY_RULES } from "@/lib/admin/hrDisciplinary";
 
 interface Worker {
   id: string;
@@ -181,21 +183,27 @@ const HR_NAV_TABS = [
     icon: "M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z",
   },
   {
+    key: "disciplinary",
+    ar: "٤. لائحة الجزاءات والمخالفات",
+    en: "4. Disciplinary & Penalties",
+    icon: "M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3",
+  },
+  {
     key: "holidays",
-    ar: "٤. العطلات الرسمية واللائحة",
-    en: "4. Holidays & Policy",
+    ar: "٥. العطلات الرسمية واللائحة",
+    en: "5. Holidays & Policy",
     icon: "M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z",
   },
   {
     key: "team",
-    ar: "٥. تقييم أداء الفريق",
-    en: "5. Team Performance",
+    ar: "٦. تقييم أداء الفريق",
+    en: "6. Team Performance",
     icon: "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z",
   },
   {
     key: "alerts",
-    ar: "٦. التنبيهات والتعاميم",
-    en: "6. Alerts & Notices",
+    ar: "٧. التنبيهات والتعاميم",
+    en: "7. Alerts & Notices",
     icon: "M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9",
   },
 ];
@@ -247,6 +255,9 @@ export default function AdminHRPage() {
   const [departmentFilter, setDepartmentFilter] = useUrlState("dept");
   const [employmentFilter, setEmploymentFilter] = useUrlState("type");
   const [todayFilter, setTodayFilter] = useState<"all" | "present" | "absent" | "late" | "overtime">("all");
+  const [todaySearch, setTodaySearch] = useState("");
+  const [payrollSearch, setPayrollSearch] = useState("");
+  const [payrollAdjFilter, setPayrollAdjFilter] = useState<"all" | "has_deduction" | "has_bonus">("all");
 
   // Date Range and Cycle Selection State
   const [rangeKey, setRangeKey] = useState<string>("cycle");
@@ -425,18 +436,24 @@ export default function AdminHRPage() {
   }, [approved.length, presentWorkerIds.size, lateWorkerIds.size, overtimeWorkerIds.size, todaysSessions]);
 
   const filteredTodayWorkers = useMemo(() => {
+    const q = todaySearch.trim().toLowerCase();
     return approved.filter((w) => {
       const isPresent = presentWorkerIds.has(w.id);
       const isLate = lateWorkerIds.has(w.id);
       const isOvertime = overtimeWorkerIds.has(w.id);
 
-      if (todayFilter === "present") return isPresent;
-      if (todayFilter === "absent") return !isPresent;
-      if (todayFilter === "late") return isLate;
-      if (todayFilter === "overtime") return isOvertime;
+      if (todayFilter === "present" && !isPresent) return false;
+      if (todayFilter === "absent" && isPresent) return false;
+      if (todayFilter === "late" && !isLate) return false;
+      if (todayFilter === "overtime" && !isOvertime) return false;
+
+      if (q) {
+        const blob = `${workerName(w)} ${w.department || ""} ${w.role || ""} ${w.email || ""}`.toLowerCase();
+        if (!blob.includes(q)) return false;
+      }
       return true;
     });
-  }, [approved, todayFilter, presentWorkerIds, lateWorkerIds, overtimeWorkerIds]);
+  }, [approved, todayFilter, todaySearch, presentWorkerIds, lateWorkerIds, overtimeWorkerIds]);
 
   const workerTaskStats = useMemo(() => {
     const m = new Map<string, { completed: number; total: number }>();
@@ -536,6 +553,32 @@ export default function AdminHRPage() {
       };
     });
   }, [approved, activePeriod, sessions, adjustments, settings, holidays, policyInputsFor]);
+
+  const filteredPayrollRows = useMemo(() => {
+    const q = payrollSearch.trim().toLowerCase();
+    return payrollTableData.filter(({ worker: w, payroll: p, adjustments: workerAdjs }) => {
+      if (payrollAdjFilter === "has_deduction") {
+        const hasDed =
+          p.manualDeductions > 0 ||
+          p.absencePenalty > 0 ||
+          p.totalLatePenaltyEgp > 0 ||
+          workerAdjs.some((a) => a.type === "deduction" || a.type === "advance");
+        if (!hasDed) return false;
+      } else if (payrollAdjFilter === "has_bonus") {
+        const hasBon =
+          p.manualBonuses > 0 ||
+          p.allowances > 0 ||
+          p.overtimePay > 0 ||
+          workerAdjs.some((a) => a.type === "bonus" || a.type === "allowance");
+        if (!hasBon) return false;
+      }
+      if (q) {
+        const blob = `${workerName(w)} ${w.department || ""} ${w.role || ""} ${w.email || ""}`.toLowerCase();
+        if (!blob.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [payrollTableData, payrollSearch, payrollAdjFilter]);
 
   // Overall Payroll Totals
   const payrollTotals = useMemo(() => {
@@ -864,145 +907,179 @@ export default function AdminHRPage() {
 
   return (
     <div dir={dir} className="space-y-5">
-      {/* ── Top Header with Prominent Language Toggle & Clear Actions ── */}
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 p-4 rounded-lg shadow-[3px_3px_0px_0px_#09090b]">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] font-bold uppercase tracking-widest text-red-600 font-mono">
-              {t("// لوحة إدارة الموارد البشرية والرواتب · HR-POL-2026", "// HR OPERATIONS & PAYROLL CENTER · HR-POL-2026")}
-            </span>
+      {/* ── Top Command Center Header (Clean 2-Row Architecture) ── */}
+      <div className="bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 rounded-lg shadow-[3px_3px_0px_0px_#09090b] overflow-hidden">
+        {/* Row 1: Identity & System/Gate Controls */}
+        <div className="p-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between border-b-2 border-zinc-900 dark:border-zinc-700">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-red-600 font-mono">
+                {t("// لوحة إدارة الموارد البشرية والرواتب · HR-POL-2026", "// HR OPERATIONS & PAYROLL CENTER · HR-POL-2026")}
+              </span>
+              <span className="px-2 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-[10px] font-mono font-bold text-zinc-700 dark:text-zinc-300">
+                {t(`📅 دورة الرواتب: ${activePeriod.label}`, `📅 Cycle: ${activePeriod.label}`)}
+              </span>
+            </div>
+            <h2 className="text-2xl font-bold tracking-tight text-zinc-950 dark:text-white mt-0.5">
+              {t("إدارة الموارد البشرية والرواتب والجزاءات", "HR Operations, Payroll & Disciplinary Center")}
+            </h2>
+            <p className="mt-1 text-xs sm:text-sm text-zinc-500 dark:text-zinc-400">
+              {t(
+                "متابعة الحضور اليومي، تواريخ التعيين، الأذونات والإجازات، لائحة الجزاءات الرسمية، وكشوف الرواتب.",
+                "Daily attendance, joining dates, permissions & leave, official disciplinary schedule, and automated payroll.",
+              )}
+            </p>
           </div>
-          <h2 className="text-2xl font-bold tracking-tight text-zinc-950 dark:text-white mt-0.5">
-            {t("إدارة الموارد البشرية والرواتب", "HR Operations & Payroll")}
-          </h2>
-          <p className="mt-1 text-xs sm:text-sm text-zinc-500 dark:text-zinc-400">
-            {t(
-              "متابعة الحضور اليومي، تواريخ تعيين الموظفين، الأذونات الشهرية (4 أذونات/240 د)، الإجازات السنوية، وكشوف الرواتب.",
-              "Daily attendance, worker joining dates, monthly permissions (4/240m), annual leave, and automated payroll.",
-            )}
-          </p>
+
+          {/* System & Office Gate Controls */}
+          <div className="flex flex-wrap items-center gap-2 font-mono">
+            <button
+              type="button"
+              id="hr-lang-toggle"
+              onClick={toggleLang}
+              className="px-3 py-2 border-2 border-red-600 bg-red-50 dark:bg-red-950/40 hover:bg-red-600 hover:text-white text-red-700 dark:text-red-300 text-xs font-bold cursor-pointer flex items-center gap-1.5 rounded transition-colors"
+            >
+              <span>🌐</span>
+              <span>{isAr ? "English (EN)" : "العربية (AR)"}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                const pin = computeDailyOfficePin(settings);
+                navigator.clipboard?.writeText(pin);
+                toast.success(
+                  t(`تم نسخ كود حضور المكتب اليوم (${pin}) ✓`, `Copied Today's Office PIN (${pin}) ✓`),
+                  {
+                    description: t(
+                      "يستخدمه الموظفون داخل الشركة على الأجهزة لبدء الشيفت فوراً.",
+                      "Used by workers inside the office to start their shift immediately.",
+                    ),
+                  },
+                );
+              }}
+              title={t("اضغط لنسخ كود حضور المكتب اليومي", "Click to copy today's Office PIN")}
+              className="px-3 py-2 border-2 border-zinc-900 dark:border-zinc-700 bg-indigo-50 dark:bg-indigo-950/40 hover:bg-indigo-100 text-indigo-950 dark:text-indigo-200 text-xs font-bold cursor-pointer flex items-center gap-1.5 rounded shadow-[2px_2px_0px_0px_#4f46e5]"
+            >
+              <span>🔑 {t("كود المكتب:", "Office PIN:")}</span>
+              <strong className="font-mono text-sm tracking-widest bg-white dark:bg-zinc-900 px-1.5 py-0.2 rounded border border-indigo-300 dark:border-indigo-700" dir="ltr">
+                {computeDailyOfficePin(settings)}
+              </strong>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setPolicyModalOpen(true)}
+              className="px-3 py-2 border-2 border-zinc-900 dark:border-zinc-700 bg-sky-50 dark:bg-sky-950/40 hover:bg-sky-100 text-sky-900 dark:text-sky-300 text-xs font-bold cursor-pointer flex items-center gap-1.5 rounded shadow-[2px_2px_0px_0px_#0284c7]"
+            >
+              <span>
+                {t(
+                  `🏢 بوابة وشبكات الحضور (${(settings.officeNetworks ?? []).filter((n) => n.active !== false).length})`,
+                  `🏢 Office Gate & IP (${(settings.officeNetworks ?? []).filter((n) => n.active !== false).length})`,
+                )}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setPolicyModalOpen(true)}
+              className="px-3 py-2 border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 text-zinc-950 dark:text-zinc-100 text-xs font-bold cursor-pointer flex items-center gap-1.5 rounded shadow-[2px_2px_0px_0px_#09090b]"
+            >
+              <span>{t(`⚙️ إعدادات اللائحة (يوم ${settings.monthStartDay})`, `⚙️ Policies (Day ${settings.monthStartDay})`)}</span>
+            </button>
+
+            <Link
+              href="/admin/hr/policy-lab"
+              id="hr-open-policy-lab"
+              className="px-3 py-2 border-2 border-zinc-900 dark:border-zinc-700 bg-zinc-950 dark:bg-zinc-100 hover:bg-zinc-800 text-white dark:text-zinc-950 text-xs font-bold cursor-pointer flex items-center gap-1.5 rounded shadow-[2px_2px_0px_0px_#dc2626]"
+            >
+              <span>{t("🧪 مختبر اللائحة", "🧪 Policy Lab")}</span>
+            </Link>
+
+            <button
+              type="button"
+              onClick={() => {
+                setRefreshTick((n) => n + 1);
+                toast.info(t("تم تحديث البيانات الحية", "Refreshed live data"));
+              }}
+              title={t("تحديث البيانات", "Refresh Data")}
+              className="p-2 border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 text-zinc-600 dark:text-zinc-300 rounded cursor-pointer"
+            >
+              <SvgI d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </button>
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 font-mono">
-          {/* Language Switcher */}
-          <button
-            type="button"
-            id="hr-lang-toggle"
-            onClick={toggleLang}
-            className="px-3 py-2 border-2 border-red-600 bg-red-50 dark:bg-red-950/40 hover:bg-red-600 hover:text-white text-red-700 dark:text-red-300 text-xs font-bold cursor-pointer flex items-center gap-1.5 rounded transition-colors"
-          >
-            <span>🌐</span>
-            <span>{isAr ? "English (EN)" : "العربية (AR)"}</span>
-          </button>
+        {/* Row 2: Daily HR Quick-Action Bar */}
+        <div className="px-4 py-2.5 bg-zinc-50 dark:bg-zinc-800/60 flex flex-wrap items-center justify-between gap-2 font-mono">
+          <span className="text-[11px] font-bold uppercase text-zinc-500 dark:text-zinc-400">
+            {t("⚡ إجراءات الـ HR السريعة:", "⚡ Quick Daily HR Actions:")}
+          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSection("disciplinary")}
+              className={`px-3 py-1.5 border-2 border-zinc-900 dark:border-zinc-700 text-xs font-black cursor-pointer flex items-center gap-1.5 rounded shadow-[2px_2px_0px_0px_#dc2626] transition-colors ${
+                section === "disciplinary"
+                  ? "bg-red-600 text-white"
+                  : "bg-red-50 dark:bg-red-950/50 hover:bg-red-600 hover:text-white text-red-900 dark:text-red-200"
+              }`}
+            >
+              <span>{t(`⚖️ لائحة الجزاءات وتوقيع جزاء (${DISCIPLINARY_RULES.length} بند)`, `⚖️ Disciplinary Schedule (${DISCIPLINARY_RULES.length})`)}</span>
+            </button>
 
-          <button
-            type="button"
-            onClick={() => setPolicyModalOpen(true)}
-            className="px-3 py-2 border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 text-zinc-950 dark:text-zinc-100 text-xs font-bold cursor-pointer flex items-center gap-1.5 rounded shadow-[2px_2px_0px_0px_#09090b]"
-          >
-            <span>{t(`⚙️ إعدادات اللائحة (يوم ${settings.monthStartDay})`, `⚙️ Policies (Day ${settings.monthStartDay})`)}</span>
-          </button>
+            <button
+              type="button"
+              onClick={() => openAdjustmentFor(undefined, "bonus")}
+              className="px-3 py-1.5 border-2 border-zinc-900 dark:border-zinc-700 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-600 hover:text-white text-emerald-800 dark:text-emerald-300 text-xs font-bold cursor-pointer flex items-center gap-1 rounded shadow-[2px_2px_0px_0px_#059669] transition-colors"
+            >
+              <span>{t("🎁 + بونص / مكافأة", "🎁 + Bonus")}</span>
+            </button>
 
-          <button
-            type="button"
-            onClick={() => setPolicyModalOpen(true)}
-            className="px-3 py-2 border-2 border-zinc-900 dark:border-zinc-700 bg-sky-50 dark:bg-sky-950/40 hover:bg-sky-100 text-sky-900 dark:text-sky-300 text-xs font-bold cursor-pointer flex items-center gap-1.5 rounded shadow-[2px_2px_0px_0px_#0284c7]"
-          >
-            <span>
-              {t(
-                `🏢 شبكات وبوابة الحضور (${(settings.officeNetworks ?? []).filter((n) => n.active !== false).length})`,
-                `🏢 Office Wi-Fi & Gate (${(settings.officeNetworks ?? []).filter((n) => n.active !== false).length})`,
-              )}
-            </span>
-          </button>
+            <button
+              type="button"
+              onClick={() => openAdjustmentFor(undefined, "deduction")}
+              className="px-3 py-1.5 border-2 border-zinc-900 dark:border-zinc-700 bg-red-50 dark:bg-red-950/40 hover:bg-red-600 hover:text-white text-red-800 dark:text-red-300 text-xs font-bold cursor-pointer flex items-center gap-1 rounded shadow-[2px_2px_0px_0px_#dc2626] transition-colors"
+            >
+              <span>{t("⛔ + خصم / سلفة", "⛔ + Deduction / Advance")}</span>
+            </button>
 
-          <button
-            type="button"
-            onClick={() => {
-              const pin = computeDailyOfficePin(settings);
-              navigator.clipboard?.writeText(pin);
-              toast.success(
-                t(`تم نسخ كود حضور المكتب اليوم (${pin}) ✓`, `Copied Today's Office PIN (${pin}) ✓`),
-                {
-                  description: t(
-                    "يستخدمه الموظفون داخل الشركة على أجهزة الكمبيوتر التي لا تحتوي على GPS لبدء الشيفت فوراً.",
-                    "Used by workers inside the office on PCs without GPS to start their shift immediately.",
-                  ),
-                },
-              );
-            }}
-            title={t("اضغط لنسخ كود حضور المكتب للأجهزة بدون GPS", "Click to copy today's Office PIN")}
-            className="px-3 py-2 border-2 border-zinc-900 dark:border-zinc-700 bg-indigo-50 dark:bg-indigo-950/40 hover:bg-indigo-100 text-indigo-950 dark:text-indigo-200 text-xs font-bold cursor-pointer flex items-center gap-1.5 rounded shadow-[2px_2px_0px_0px_#4f46e5]"
-          >
-            <span>🔑 {t("كود المكتب (بدون GPS):", "Office PIN:")}</span>
-            <strong className="font-mono text-sm tracking-widest bg-white dark:bg-zinc-900 px-1.5 py-0.2 rounded border border-indigo-300 dark:border-indigo-700" dir="ltr">
-              {computeDailyOfficePin(settings)}
-            </strong>
-          </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAlertForm((prev) => ({
+                  ...prev,
+                  type: prev.type || "system_announcement",
+                  recipient: "all",
+                  priority: "high",
+                }));
+                setSendOpen(true);
+              }}
+              className="px-3 py-1.5 border-2 border-zinc-900 dark:border-zinc-700 bg-amber-400 hover:bg-amber-300 text-zinc-950 text-xs font-black cursor-pointer flex items-center gap-1.5 rounded shadow-[2px_2px_0px_0px_#09090b]"
+            >
+              <span>{t("📢 إرسال تعميم للكل", "📢 Broadcast Alert")}</span>
+            </button>
 
-          <button
-            type="button"
-            onClick={() => {
-              setAlertForm((prev) => ({
-                ...prev,
-                type: prev.type || "system_announcement",
-                recipient: "all",
-                priority: "high",
-              }));
-              setSendOpen(true);
-            }}
-            className="px-3 py-2 border-2 border-zinc-900 dark:border-zinc-700 bg-amber-400 hover:bg-amber-300 text-zinc-950 text-xs font-black cursor-pointer flex items-center gap-1.5 rounded shadow-[2px_2px_0px_0px_#09090b]"
-          >
-            <span>{t("📢 إرسال رسالة / تنبيه للكل", "📢 Broadcast Alert to All")}</span>
-          </button>
+            <Link
+              href="/admin/reimbursements"
+              className="px-3 py-1.5 border-2 border-zinc-900 dark:border-zinc-700 bg-violet-50 dark:bg-violet-950/40 hover:bg-violet-100 text-violet-800 dark:text-violet-300 text-xs font-bold cursor-pointer flex items-center gap-1 rounded shadow-[2px_2px_0px_0px_#7c3aed]"
+            >
+              <span>{t(`🚕 المصروفات والمأموريات (${pendingExpensesCount})`, `🚕 Expenses (${pendingExpensesCount})`)}</span>
+            </Link>
 
-          <button
-            type="button"
-            onClick={() => openAdjustmentFor(undefined, "bonus")}
-            className="px-3 py-2 border-2 border-zinc-900 dark:border-zinc-700 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 text-emerald-800 dark:text-emerald-300 text-xs font-bold cursor-pointer flex items-center gap-1 rounded shadow-[2px_2px_0px_0px_#059669]"
-          >
-            <span>{t("🎁 + بونص / مكافأة", "🎁 + Bonus")}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => openAdjustmentFor(undefined, "deduction")}
-            className="px-3 py-2 border-2 border-zinc-900 dark:border-zinc-700 bg-red-50 dark:bg-red-950/40 hover:bg-red-100 text-red-800 dark:text-red-300 text-xs font-bold cursor-pointer flex items-center gap-1 rounded shadow-[2px_2px_0px_0px_#dc2626]"
-          >
-            <span>{t("⛔ + خصم / سلفة", "⛔ + Deduction / Advance")}</span>
-          </button>
-
-          <Link
-            href="/admin/reimbursements"
-            className="px-3 py-2 border-2 border-zinc-900 dark:border-zinc-700 bg-violet-50 dark:bg-violet-950/40 hover:bg-violet-100 text-violet-800 dark:text-violet-300 text-xs font-bold cursor-pointer flex items-center gap-1 rounded shadow-[2px_2px_0px_0px_#7c3aed]"
-          >
-            <span>{t(`🚕 المصروفات (${pendingExpensesCount})`, `🚕 Expenses (${pendingExpensesCount})`)}</span>
-          </Link>
-
-          <Link
-            href="/admin/hr/policy-lab"
-            id="hr-open-policy-lab"
-            className="px-3 py-2 border-2 border-zinc-900 dark:border-zinc-700 bg-zinc-950 dark:bg-zinc-100 hover:bg-zinc-800 text-white dark:text-zinc-950 text-xs font-bold cursor-pointer flex items-center gap-1.5 rounded shadow-[2px_2px_0px_0px_#dc2626]"
-          >
-            <span>{t("🧪 مختبر اللائحة والمدقق", "🧪 Policy Lab")}</span>
-          </Link>
-
-          <button
-            type="button"
-            onClick={() => {
-              setRefreshTick((n) => n + 1);
-              toast.info(t("تم تحديث البيانات الحية", "Refreshed live data"));
-            }}
-            title={t("تحديث البيانات", "Refresh Data")}
-            className="p-2 border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 text-zinc-600 dark:text-zinc-300 rounded cursor-pointer"
-          >
-            <SvgI d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-          </button>
+            <button
+              type="button"
+              onClick={exportPayrollCsv}
+              className="px-3 py-1.5 border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-900 hover:bg-zinc-100 text-zinc-900 dark:text-zinc-100 text-xs font-bold cursor-pointer flex items-center gap-1 rounded shadow-[2px_2px_0px_0px_#09090b]"
+            >
+              <span>{t("📥 تصدير شيت الرواتب CSV", "📥 Export Payroll CSV")}</span>
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* ── Guided 4-Step Quick Workflow Cards (Easy HR Navigation) ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 font-mono">
+      {/* ── Guided 5-Step Quick Workflow Cards (Easy HR Navigation) ── */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 font-mono">
         {[
           {
             key: "overview",
@@ -1018,12 +1095,12 @@ export default function AdminHRPage() {
           {
             key: "compliance",
             step: isAr ? "الخطوة ٢" : "STEP 2",
-            title: t("تواريخ التعيين والأذونات والإجازات", "Joining Dates, Permissions & Leave"),
+            title: t("التعيين والأذونات والإجازات", "Joining, Permissions & Leave"),
             sub:
               missingHireCount > 0
                 ? t(`⚠ ${missingHireCount} موظف بحاجة لتحديد تاريخ التعيين`, `⚠ ${missingHireCount} worker(s) need joining date`)
                 : t("الأذونات الشهرية (4/240د) ورصيد الإجازات", "Monthly permissions (4/240m) & leave balances"),
-            action: t("ضبط تواريخ التعيين والرصيد ←", "Set Dates & Quotas →"),
+            action: t("ضبط التعيين والرصيد ←", "Set Dates & Quotas →"),
             tone: missingHireCount > 0 ? "border-amber-500" : "border-sky-600",
           },
           {
@@ -1031,15 +1108,26 @@ export default function AdminHRPage() {
             step: isAr ? "الخطوة ٣" : "STEP 3",
             title: t("الرواتب وكشوف المرتبات", "Monthly Payroll & Payslips"),
             sub: t(
-              `صافي الدورة: ${payrollTotals.net} ج.م · إضافي ${settings.dayOtMultiplier ?? 1.35}x/${settings.nightOtMultiplier ?? 1.7}x`,
-              `Net due: EGP ${payrollTotals.net} · OT ${settings.dayOtMultiplier ?? 1.35}x/${settings.nightOtMultiplier ?? 1.7}x`,
+              `صافي الدورة: ${payrollTotals.net} ج.م · إداري: -${payrollTotals.manualDeductions} ج.م`,
+              `Net due: EGP ${payrollTotals.net} · Ded: -EGP ${payrollTotals.manualDeductions}`,
             ),
             action: t("مراجعة الرواتب والطباعة ←", "Review & Print Payslips →"),
             tone: "border-red-600",
           },
           {
-            key: "holidays",
+            key: "disciplinary",
             step: isAr ? "الخطوة ٤" : "STEP 4",
+            title: t("⚖️ لائحة الجزاءات والمخالفات", "⚖️ Disciplinary Schedule"),
+            sub: t(
+              `${DISCIPLINARY_RULES.length} مادة قانونية (مواعيد، سلوك، نظام عمل) مع خصم تلقائي`,
+              `${DISCIPLINARY_RULES.length} official articles with auto EGP deduction`,
+            ),
+            action: t("تصفح اللائحة وتوقيع جزاء ←", "View Rules & Apply Penalty →"),
+            tone: "border-rose-600",
+          },
+          {
+            key: "holidays",
+            step: isAr ? "الخطوة ٥" : "STEP 5",
             title: t("العطلات الرسمية والسياسات", "Holidays & Work Policies"),
             sub: t(
               `${holidays.length} عطلة رسمية مسجلة · بداية الشهر يوم ${settings.monthStartDay}`,
@@ -1156,8 +1244,8 @@ export default function AdminHRPage() {
             ))}
           </div>
 
-          {/* Live Roster Filter Pills */}
-          <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 shadow-[2px_2px_0px_0px_#09090b] rounded-lg">
+          {/* Live Roster Filter Pills & Search */}
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 p-3.5 bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 shadow-[2px_2px_0px_0px_#09090b] rounded-lg">
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="text-[10px] font-bold uppercase text-zinc-400 me-1">
                 {t("تصفية الموظفين:", "Filter Roster:")}
@@ -1186,12 +1274,21 @@ export default function AdminHRPage() {
               ))}
             </div>
 
-            <span className="text-xs text-zinc-500">
-              {t(
-                `الوردية: ${settings.shiftStartTime || "10:00"} + سماح ${settings.gracePeriodMinutes || 60} دقيقة`,
-                `Shift: ${settings.shiftStartTime || "10:00"} + ${settings.gracePeriodMinutes || 60}m Grace`,
-              )}
-            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="text"
+                value={todaySearch}
+                onChange={(e) => setTodaySearch(e.target.value)}
+                placeholder={t("🔍 ابحث باسم الموظف أو القسم...", "🔍 Search worker or dept...")}
+                className="bg-zinc-50 dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 px-3 py-1.5 text-xs font-bold rounded text-zinc-950 dark:text-zinc-100 w-full sm:w-64 focus:outline-none focus:ring-2 focus:ring-red-600"
+              />
+              <span className="text-[11px] text-zinc-500">
+                {t(
+                  `الوردية: ${settings.shiftStartTime || "10:00"} + سماح ${settings.gracePeriodMinutes || 60}د`,
+                  `Shift: ${settings.shiftStartTime || "10:00"} + ${settings.gracePeriodMinutes || 60}m Grace`,
+                )}
+              </span>
+            </div>
           </div>
 
           {/* Live Workers Grid */}
@@ -1280,8 +1377,8 @@ export default function AdminHRPage() {
                   </div>
 
                   {/* Actions Bar */}
-                  <div className="mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800 flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-1.5">
+                  <div className="mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800 flex flex-wrap items-center justify-between gap-1.5">
+                    <div className="flex flex-wrap items-center gap-1">
                       {w.phone && (
                         <a
                           href={`https://wa.me/${w.phone.replace(/\D/g, "")}`}
@@ -1297,7 +1394,22 @@ export default function AdminHRPage() {
                         onClick={() => setOnboardModalWorker(w)}
                         className="px-2 py-1 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 text-zinc-900 dark:text-zinc-200 border border-zinc-300 dark:border-zinc-700 rounded text-[10px] font-bold cursor-pointer"
                       >
-                        {t("🗓️ التعيين والراتب", "🗓️ Join Date & Rate")}
+                        {t("🗓️ التعيين والراتب", "🗓️ Join & Rate")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openAdjustmentFor(w.id, "deduction")}
+                        title={t("توقيع جزاء لائحي أو خصم على هذا الموظف", "Apply disciplinary deduction")}
+                        className="px-2 py-1 bg-red-50 dark:bg-red-950/40 hover:bg-red-600 hover:text-white text-red-700 dark:text-red-300 border border-red-300 dark:border-red-800 rounded text-[10px] font-bold cursor-pointer transition-colors"
+                      >
+                        {t("⚖️ جزاء/خصم", "⚖️ Penalty")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openAdjustmentFor(w.id, "bonus")}
+                        className="px-2 py-1 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-600 hover:text-white text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 rounded text-[10px] font-bold cursor-pointer transition-colors"
+                      >
+                        {t("🎁 بونص", "🎁 Bonus")}
                       </button>
                     </div>
 
@@ -1508,6 +1620,49 @@ export default function AdminHRPage() {
             </div>
           </div>
 
+          {/* Payroll Search & Quick Filter Bar */}
+          <div className="p-3.5 bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 shadow-[2px_2px_0px_0px_#09090b] rounded-lg flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="text"
+                value={payrollSearch}
+                onChange={(e) => setPayrollSearch(e.target.value)}
+                placeholder={t("🔍 ابحث عن موظف في شيت الرواتب بالاسم أو القسم...", "🔍 Search employee in Payroll Sheet...")}
+                className="bg-zinc-50 dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 px-3 py-1.5 text-xs font-bold rounded text-zinc-950 dark:text-zinc-100 w-full sm:w-72 focus:outline-none focus:ring-2 focus:ring-red-600"
+              />
+              <div className="flex items-center gap-1">
+                {(
+                  [
+                    { id: "all", label: t(`كل الموظفين (${payrollTableData.length})`, `All (${payrollTableData.length})`) },
+                    { id: "has_deduction", label: t("⛔ عليهم خصم / جزاء", "⛔ Has Deductions") },
+                    { id: "has_bonus", label: t("🎁 لهم بونص / إضافي", "🎁 Has Bonus / OT") },
+                  ] as const
+                ).map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    onClick={() => setPayrollAdjFilter(f.id)}
+                    className={`px-2.5 py-1.5 rounded text-xs font-bold cursor-pointer border transition-all ${
+                      payrollAdjFilter === f.id
+                        ? "bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950 border-zinc-950"
+                        : "bg-zinc-50 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100"
+                    }`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setSection("disciplinary")}
+              className="px-3 py-1.5 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-600 hover:text-white text-rose-800 dark:text-rose-200 border border-rose-400 dark:border-rose-800 rounded text-xs font-bold cursor-pointer transition-colors"
+            >
+              {t("⚖️ فتح لائحة الجزاءات الرسمية وتوقيع جزاء ←", "⚖️ Open Official Disciplinary Schedule →")}
+            </button>
+          </div>
+
           {/* Full Payroll Data Table */}
           <div className="bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 shadow-[3px_3px_0px_0px_#09090b] rounded-lg overflow-x-auto text-xs">
             <table className="w-full text-start divide-y divide-zinc-200 dark:divide-zinc-800 font-mono">
@@ -1533,7 +1688,7 @@ export default function AdminHRPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
-                {payrollTableData.map(({ worker: w, payroll: p, adjustments: workerAdjs }) => {
+                {filteredPayrollRows.map(({ worker: w, payroll: p, adjustments: workerAdjs }) => {
                   const attendanceDed =
                     Math.round((p.absencePenalty + p.totalLatePenaltyEgp + p.shortfallDeduction) * 100) / 100;
                   const bonusAndAllowanceTotal =
@@ -1707,7 +1862,20 @@ export default function AdminHRPage() {
       )}
 
       {/* ══════════════════════════════════════════════════════════════════
-          TAB 4: HOLIDAYS & WORK POLICIES
+          TAB 4: OFFICIAL DISCIPLINARY SCHEDULE & PENALTIES (لائحة الجزاءات)
+      ══════════════════════════════════════════════════════════════════ */}
+      {section === "disciplinary" && (
+        <HrDisciplinaryCatalog
+          workers={approved}
+          adjustments={adjustments}
+          defaultHourlyRate={settings.defaultHourlyRate}
+          standardHours={settings.standardHours}
+          adminEmail={adminEmail}
+        />
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════
+          TAB 5: HOLIDAYS & WORK POLICIES
       ══════════════════════════════════════════════════════════════════ */}
       {section === "holidays" && (
         <div className="space-y-6 animate-fade-in font-mono">

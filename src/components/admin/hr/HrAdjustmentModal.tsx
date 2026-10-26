@@ -10,6 +10,12 @@ import { auth, db } from "@/lib/firebase";
 import { sendExpoPushToWorkers } from "@/lib/chatNotifications";
 import { notifyAdmins } from "@/lib/adminNotifications";
 import { useHrLang } from "@/lib/admin/hrI18n";
+import {
+  DISCIPLINARY_RULES,
+  type OffenseTier,
+  computeWorkerDailyWageEgp,
+  computeDisciplinaryDeductionEgp,
+} from "@/lib/admin/hrDisciplinary";
 
 interface WorkerOption {
   id: string;
@@ -17,6 +23,8 @@ interface WorkerOption {
   lastName?: string;
   department?: string;
   role?: string;
+  hourlyRate?: number;
+  expectedSalary?: number | string;
 }
 
 export type AdjustmentKind = "bonus" | "deduction" | "advance" | "allowance";
@@ -48,10 +56,26 @@ export default function HrAdjustmentModal({
   const [amount, setAmount] = useState<number | "">("");
   const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
   const [reason, setReason] = useState("");
+  const [selectedRuleNum, setSelectedRuleNum] = useState<number | "">("");
+  const [selectedOffenseTier, setSelectedOffenseTier] = useState<OffenseTier>(1);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const selectedWorkers = workers.filter((w) => selectedWorkerIds.includes(w.id));
+  const primaryWorkerDailyWage = computeWorkerDailyWageEgp(selectedWorkers[0] ?? {});
+
+  const applyDisciplinaryPreset = (ruleCode: number, tier: OffenseTier) => {
+    const rule = DISCIPLINARY_RULES.find((r) => r.code === ruleCode);
+    if (!rule) return;
+    const penalty = rule.tiers[tier];
+    const calcEgp = computeDisciplinaryDeductionEgp(rule, tier, primaryWorkerDailyWage);
+    if (calcEgp > 0) {
+      setAmount(calcEgp);
+    }
+    const tierLabelAr =
+      tier === 1 ? "أول مرة" : tier === 2 ? "ثاني مرة" : tier === 3 ? "ثالث مرة" : "رابع مرة";
+    setReason(`[بند #${rule.code} - ${tierLabelAr}] ${rule.titleAr} (${penalty.labelAr})`);
+  };
   const workerFullName =
     selectedWorkers.length === 1
       ? `${selectedWorkers[0].firstName || ""} ${selectedWorkers[0].lastName || ""}`.trim()
@@ -353,6 +377,63 @@ export default function HrAdjustmentModal({
                 ))}
               </div>
             </div>
+
+            {/* Quick Disciplinary Violation Picker (When type === "deduction") */}
+            {type === "deduction" && (
+              <div className="p-3 rounded-lg border-2 border-red-300 dark:border-red-900 bg-red-50/50 dark:bg-red-950/20 space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-bold text-red-900 dark:text-red-200 text-xs">
+                    {t(
+                      "⚖️ اختيار مخالفة من لائحة الجزاءات الرسمية (اختياري — يحسب الخصم تلقائياً):",
+                      "⚖️ Pick from Official Disciplinary Schedule (Optional — auto-calculates EGP):",
+                    )}
+                  </span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-white dark:bg-zinc-900 border border-red-200 dark:border-red-800 text-zinc-600 dark:text-zinc-300 font-bold">
+                    {t(`أجر اليوم: ${primaryWorkerDailyWage} ج.م`, `Daily Wage: EGP ${primaryWorkerDailyWage}`)}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <select
+                    value={selectedRuleNum}
+                    onChange={(e) => {
+                      const val = e.target.value === "" ? "" : Number(e.target.value);
+                      setSelectedRuleNum(val);
+                      if (val !== "") {
+                        applyDisciplinaryPreset(val, selectedOffenseTier);
+                      }
+                    }}
+                    className="sm:col-span-2 bg-white dark:bg-zinc-900 border border-red-300 dark:border-red-800 px-2.5 py-2 text-xs font-bold rounded text-zinc-900 dark:text-zinc-100"
+                  >
+                    <option value="">
+                      {t("— اختر بند المخالفة من اللائحة (أو اكتب الخصم يدوياً بالأسفل) —", "— Select Violation Rule (or enter custom below) —")}
+                    </option>
+                    {DISCIPLINARY_RULES.map((r) => (
+                      <option key={r.code} value={r.code}>
+                        #{r.code} — {r.titleAr}
+                      </option>
+                    ))}
+                  </select>
+
+                  <select
+                    value={selectedOffenseTier}
+                    onChange={(e) => {
+                      const tier = Number(e.target.value) as OffenseTier;
+                      setSelectedOffenseTier(tier);
+                      if (selectedRuleNum !== "") {
+                        applyDisciplinaryPreset(Number(selectedRuleNum), tier);
+                      }
+                    }}
+                    className="bg-white dark:bg-zinc-900 border border-red-300 dark:border-red-800 px-2.5 py-2 text-xs font-bold rounded text-zinc-900 dark:text-zinc-100"
+                  >
+                    <option value={1}>{t("المرة ١ (أول مرة)", "1st Offense")}</option>
+                    <option value={2}>{t("المرة ٢ (ثاني مرة)", "2nd Offense")}</option>
+                    <option value={3}>{t("المرة ٣ (ثالث مرة)", "3rd Offense")}</option>
+                    <option value={4}>{t("المرة ٤ (رابع مرة)", "4th Offense")}</option>
+                  </select>
+                </div>
+              </div>
+            )}
 
             {/* Amount and Date */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
