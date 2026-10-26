@@ -1,12 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import ModalPortal from "@/components/admin/ui/ModalPortal";
 import {
   type HrSettings,
   type WorkLocationItem,
+  type OfficeNetworkItem,
   DEFAULT_HR_SETTINGS,
   parseLocationCoordinates,
+  computeDailyOfficePin,
+  fetchClientPublicIp,
 } from "@/lib/admin/hrReports";
 import { saveHrSettings } from "@/lib/admin/hrSettings";
 import { toast } from "@/lib/admin/feedback";
@@ -75,6 +78,12 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
     ...initialSettings,
     workLocations: initialSettings.workLocations ?? [],
     enforceGeofence: initialSettings.enforceGeofence ?? true,
+    officeNetworks: initialSettings.officeNetworks ?? [],
+    officePinEnabled: initialSettings.officePinEnabled ?? true,
+    officePinMode: initialSettings.officePinMode ?? "daily_auto",
+    officePinFixedCode: initialSettings.officePinFixedCode ?? "2026",
+    officePinSalt: initialSettings.officePinSalt ?? "mft_office_pin_2026",
+    officeDeviceAuthSecret: initialSettings.officeDeviceAuthSecret ?? "MFT-OFFICE-2026",
   });
   const [saving, setSaving] = useState(false);
   const { isAr, dir, toggleLang, t } = useHrLang();
@@ -86,6 +95,106 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
   const [locRadius, setLocRadius] = useState(200);
   const [locPasteUrl, setLocPasteUrl] = useState("");
   const [locGettingGps, setLocGettingGps] = useState(false);
+
+  // Office Wi-Fi / IP state (for GPS-less devices)
+  const [currentPublicIp, setCurrentPublicIp] = useState<string | null>(null);
+  const [loadingIp, setLoadingIp] = useState(false);
+  const [netName, setNetName] = useState("");
+  const [netIp, setNetIp] = useState("");
+
+  useEffect(() => {
+    let mounted = true;
+    setLoadingIp(true);
+    fetchClientPublicIp()
+      .then((ip) => {
+        if (mounted && ip) {
+          setCurrentPublicIp(ip);
+        }
+      })
+      .finally(() => {
+        if (mounted) setLoadingIp(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const handleAddCurrentOfficeIp = () => {
+    if (!currentPublicIp) {
+      toast.warning(t("لم يتم اكتشاف الـ IP الحالي بعد", "Current Public IP not detected yet"));
+      return;
+    }
+    const existing = (settings.officeNetworks ?? []).some((n) => n.ip.trim() === currentPublicIp.trim());
+    if (existing) {
+      toast.info(t("شبكة الشركة الحالية مسجلة بالفعل في القائمة ✓", "Current Office IP is already in the list ✓"));
+      return;
+    }
+    const newNet: OfficeNetworkItem = {
+      id: `net_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      name: netName.trim() || t("راوتر / شبكة المقر الرئيسي", "Main Office Wi-Fi / Router"),
+      ip: currentPublicIp.trim(),
+      active: true,
+    };
+    setSettings((prev) => ({
+      ...prev,
+      officeNetworks: [...(prev.officeNetworks ?? []), newNet],
+    }));
+    setNetName("");
+    toast.success(
+      t(
+        `تمت إضافة شبكة الشركة (${newNet.ip}) — اضغط حفظ السياسات لتأكيد التفعيل`,
+        `Added Office Network (${newNet.ip}) — click Save Policies`,
+      ),
+    );
+  };
+
+  const handleAddCustomOfficeIp = () => {
+    const clean = netIp.trim();
+    if (!clean) {
+      toast.warning(t("يرجى كتابة عنوان الـ IP لشبكة الشركة", "Please enter an IP address"));
+      return;
+    }
+    const newNet: OfficeNetworkItem = {
+      id: `net_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      name: netName.trim() || t("شبكة مكتب الشركة", "Office Network"),
+      ip: clean,
+      active: true,
+    };
+    setSettings((prev) => ({
+      ...prev,
+      officeNetworks: [...(prev.officeNetworks ?? []), newNet],
+    }));
+    setNetName("");
+    setNetIp("");
+    toast.success(t(`تمت إضافة الشبكة (${clean})`, `Added network (${clean})`));
+  };
+
+  const handleToggleOfficeNetwork = (id: string) => {
+    setSettings((prev) => ({
+      ...prev,
+      officeNetworks: (prev.officeNetworks ?? []).map((n) =>
+        n.id === id ? { ...n, active: n.active === false ? true : false } : n,
+      ),
+    }));
+  };
+
+  const handleRemoveOfficeNetwork = (id: string) => {
+    setSettings((prev) => ({
+      ...prev,
+      officeNetworks: (prev.officeNetworks ?? []).filter((n) => n.id !== id),
+    }));
+  };
+
+  const handleRegenerateDailyPin = () => {
+    const newSalt = `mft_pin_${Date.now().toString(36)}`;
+    setSettings((prev) => ({
+      ...prev,
+      officePinSalt: newSalt,
+      officePinMode: "daily_auto",
+      officePinEnabled: true,
+    }));
+    toast.success(t("تم توليد كود حضور يومي جديد للمكتب — اضغط حفظ السياسات لاعتماده", "New daily Office PIN generated"));
+  };
 
   const handleCaptureCurrentGps = () => {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
@@ -892,6 +1001,260 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
                   ))}
                 </div>
               )}
+
+              {/* ── Non-GPS Office Verification Alternatives (Wi-Fi IP + Office PIN + Trusted PC) ── */}
+              <div className="mt-4 pt-4 border-t-2 border-sky-300 dark:border-sky-800 space-y-3">
+                <div>
+                  <h5 className="font-black text-xs sm:text-sm uppercase text-sky-950 dark:text-sky-200 flex items-center gap-1.5">
+                    <span>💻</span>
+                    <span>
+                      {t(
+                        "بدائل التحقق من التواجد داخل الشركة (للأجهزة والكمبيوترات بدون GPS)",
+                        "Non-GPS Office Verification (For Desktop PCs & Devices without GPS)",
+                      )}
+                    </span>
+                  </h5>
+                  <p className="text-[11px] text-zinc-600 dark:text-zinc-400 mt-0.5">
+                    {t(
+                      "حتى يتمكن الموظفون الذين يعملون على أجهزة كمبيوتر مكتبية بدون GPS من بدء الشيفت فوراً من داخل الشركة دون الحاجة لطلب مأمورية:",
+                      "Allow workers on desktop PCs without GPS to clock in seamlessly from inside the office:",
+                    )}
+                  </p>
+                </div>
+
+                {/* Method 1: Company Wi-Fi / Public IP Whitelist */}
+                <div className="p-3 bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <span className="text-xs font-extrabold text-zinc-900 dark:text-white">
+                        {t("١. التحقق التلقائي عبر شبكة إنترنت الشركة (Office Wi-Fi / IP)", "1. Automatic Office Wi-Fi / Public IP Verification")}
+                      </span>
+                      <p className="text-[10px] text-zinc-500">
+                        {t(
+                          "أي جهاز متصل بنفس راوتر/إنترنت الشركة المسجل هنا سيفتح له الشيفت تلقائياً فور الضغط على «ابدأ الشيفت» حتى لو لم يكن به GPS.",
+                          "Any device connected to a registered Office Public IP will automatically pass location verification without needing GPS.",
+                        )}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleAddCurrentOfficeIp}
+                      disabled={loadingIp || !currentPublicIp}
+                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[11px] font-bold cursor-pointer shadow-[2px_2px_0px_0px_#09090b] disabled:opacity-50"
+                    >
+                      {loadingIp
+                        ? t("⏳ جاري قراءة الـ IP...", "⏳ Detecting IP...")
+                        : currentPublicIp
+                          ? t(`📡 سجل شبكة الشركة الحالية (${currentPublicIp})`, `📡 Add Current Office IP (${currentPublicIp})`)
+                          : t("تعذر قراءة الـ IP تلقائياً", "IP Not Detected")}
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <input
+                      type="text"
+                      value={netName}
+                      onChange={(e) => setNetName(e.target.value)}
+                      placeholder={t("اسم الشبكة (مثال: راوتر المقر الرئيسي)", "Network Label (e.g. Main Office Fiber)")}
+                      className={INPUT_CLS}
+                    />
+                    <input
+                      type="text"
+                      dir="ltr"
+                      value={netIp}
+                      onChange={(e) => setNetIp(e.target.value)}
+                      placeholder={currentPublicIp ? `${currentPublicIp} أو 197.52.*` : "197.52.104.88 أو 197.52.104.*"}
+                      className={INPUT_CLS}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddCustomOfficeIp}
+                      className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-white font-bold rounded text-xs cursor-pointer"
+                    >
+                      {t("+ إضافة IP يدوياً", "+ Add IP Manually")}
+                    </button>
+                  </div>
+
+                  {(settings.officeNetworks ?? []).length > 0 && (
+                    <div className="space-y-1.5 pt-1">
+                      {(settings.officeNetworks ?? []).map((net) => (
+                        <div
+                          key={net.id}
+                          className={`p-2 rounded border flex flex-wrap items-center justify-between gap-2 ${
+                            net.active !== false
+                              ? "bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-400 dark:border-emerald-800"
+                              : "bg-zinc-100 dark:bg-zinc-800 border-zinc-300 opacity-60"
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-zinc-900 dark:text-white">🌐 {net.name}</span>
+                            <span className="px-2 py-0.5 rounded bg-white dark:bg-zinc-900 border border-zinc-300 text-[11px] font-mono font-bold" dir="ltr">
+                              {net.ip}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleOfficeNetwork(net.id)}
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer border ${
+                                net.active !== false
+                                  ? "bg-emerald-600 text-white border-emerald-700"
+                                  : "bg-zinc-200 text-zinc-700 border-zinc-400"
+                              }`}
+                            >
+                              {net.active !== false ? t("✓ مفعّل", "✓ Active") : t("متوقف", "Paused")}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveOfficeNetwork(net.id)}
+                              className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white rounded text-[10px] font-bold cursor-pointer"
+                            >
+                              {t("🗑️ حذف", "🗑️ Remove")}
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Method 2: Daily / Fixed Office Check-In PIN */}
+                <div className="p-3 bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <span className="text-xs font-extrabold text-zinc-900 dark:text-white">
+                        {t("٢. كود حضور المكتب السريع (Office PIN Code)", "2. Office Check-In PIN Code")}
+                      </span>
+                      <p className="text-[10px] text-zinc-500">
+                        {t(
+                          "إذا تغير IP الراوتر أو كان الجهاز بدون GPS، يُدخل الموظف هذا الكود المكون من 4 أرقام ليبدأ الشيفت فوراً.",
+                          "If the router IP changes or a PC has no GPS, the worker enters this 4-digit PIN to clock in immediately.",
+                        )}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="px-3 py-1 rounded bg-amber-100 dark:bg-amber-950/60 border-2 border-amber-500 text-amber-950 dark:text-amber-200 flex items-center gap-2">
+                        <span className="text-[10px] font-bold">{t("كود اليوم:", "Today's PIN:")}</span>
+                        <strong className="font-mono text-base tracking-widest" dir="ltr">
+                          {computeDailyOfficePin(settings)}
+                        </strong>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const pin = computeDailyOfficePin(settings);
+                          navigator.clipboard?.writeText(pin);
+                          toast.success(t(`تم نسخ كود المكتب (${pin}) ✓`, `Copied Office PIN (${pin}) ✓`));
+                        }}
+                        className="px-2.5 py-1.5 bg-zinc-900 text-white rounded text-[10px] font-bold cursor-pointer hover:bg-zinc-800"
+                      >
+                        {t("📋 نسخ", "📋 Copy")}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
+                    <PolicyField label={t("نظام كود المكتب", "PIN Mode")}>
+                      <select
+                        value={settings.officePinMode || "daily_auto"}
+                        onChange={(e) =>
+                          setSettings({
+                            ...settings,
+                            officePinMode: e.target.value as "daily_auto" | "fixed",
+                            officePinEnabled: true,
+                          })
+                        }
+                        className={INPUT_CLS}
+                      >
+                        <option value="daily_auto">{t("يتجدد تلقائياً كل يوم (موصى به)", "Auto-rotates Daily (Recommended)")}</option>
+                        <option value="fixed">{t("كود ثابت يحدده الأدمن", "Fixed Custom PIN")}</option>
+                      </select>
+                    </PolicyField>
+
+                    {settings.officePinMode === "fixed" ? (
+                      <PolicyField label={t("الكود الثابت للمكتب (4 أرقام أو أكثر)", "Fixed Office PIN")}>
+                        <input
+                          type="text"
+                          dir="ltr"
+                          value={settings.officePinFixedCode ?? "2026"}
+                          onChange={(e) => setSettings({ ...settings, officePinFixedCode: e.target.value })}
+                          placeholder="2026"
+                          className={INPUT_CLS}
+                        />
+                      </PolicyField>
+                    ) : (
+                      <div>
+                        <button
+                          type="button"
+                          onClick={handleRegenerateDailyPin}
+                          className="w-full px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold rounded text-xs cursor-pointer border border-zinc-900"
+                        >
+                          {t("🔄 توليد كود يومي جديد الآن", "🔄 Regenerate Today's PIN")}
+                        </button>
+                      </div>
+                    )}
+
+                    <label className="flex items-center gap-2 px-3 py-1.5 rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={settings.officePinEnabled !== false}
+                        onChange={(e) => setSettings({ ...settings, officePinEnabled: e.target.checked })}
+                        className="h-4 w-4 accent-emerald-600 cursor-pointer"
+                      />
+                      <span className="text-[11px] font-bold">
+                        {t("تفعيل الدخول بكود المكتب", "Enable Office PIN")}
+                      </span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Method 3: Trusted Office PC Authorization Code */}
+                <div className="p-3 bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <span className="text-xs font-extrabold text-zinc-900 dark:text-white">
+                        {t("٣. كود اعتماد أجهزة الكمبيوتر الثابتة بالشركة (Trusted Office PC Code)", "3. Trusted Office PC Setup Code")}
+                      </span>
+                      <p className="text-[10px] text-zinc-500">
+                        {t(
+                          "يُكتب هذا الكود السري لمرة واحدة فقط على أي كمبيوتر مكتبي ثابت داخل الشركة ليصبح معتمداً دائماً ولا يطلب GPS أو كود يومي أبداً.",
+                          "Enter this setup code once on any stationary office desktop PC so it is permanently trusted and never asks for GPS or a daily PIN again.",
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
+                    <div className="sm:col-span-2">
+                      <PolicyField label={t("كود اعتماد أجهزة المكتب (خاص بالأدمن فقط)", "Admin Office PC Setup Code")}>
+                        <input
+                          type="text"
+                          dir="ltr"
+                          value={settings.officeDeviceAuthSecret ?? "MFT-OFFICE-2026"}
+                          onChange={(e) => setSettings({ ...settings, officeDeviceAuthSecret: e.target.value })}
+                          placeholder="MFT-OFFICE-2026"
+                          className={INPUT_CLS}
+                        />
+                      </PolicyField>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextSecret = `MFT-PC-${Math.floor(1000 + Math.random() * 9000)}`;
+                        setSettings({ ...settings, officeDeviceAuthSecret: nextSecret });
+                        toast.info(
+                          t(
+                            `تم تغيير كود اعتماد الأجهزة إلى ${nextSecret} — اضغط حفظ السياسات لإلغاء اعتماد أي أجهزة سابقة`,
+                            `Changed PC setup code to ${nextSecret}`,
+                          ),
+                        );
+                      }}
+                      className="px-3 py-1.5 bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-900 dark:text-zinc-100 font-bold rounded text-[11px] cursor-pointer border border-zinc-400"
+                    >
+                      {t("🔒 تغيير الكود (إلغاء الأجهزة السابقة)", "🔒 Rotate Code (Revoke Old PCs)")}
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
 
             {/* Actions */}

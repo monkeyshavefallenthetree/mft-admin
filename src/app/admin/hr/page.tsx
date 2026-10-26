@@ -20,6 +20,7 @@ import {
   type HolidayItem,
   type PayrollAdjustment,
   DEFAULT_HR_SETTINGS,
+  computeDailyOfficePin,
   computePayrollForWorker,
   formatDepartment,
   formatEmploymentType,
@@ -913,6 +914,30 @@ export default function AdminHRPage() {
                 `📍 Work Locations (${(settings.workLocations ?? []).filter((l) => l.active !== false).length})`,
               )}
             </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              const pin = computeDailyOfficePin(settings);
+              navigator.clipboard?.writeText(pin);
+              toast.success(
+                t(`تم نسخ كود حضور المكتب اليوم (${pin}) ✓`, `Copied Today's Office PIN (${pin}) ✓`),
+                {
+                  description: t(
+                    "يستخدمه الموظفون داخل الشركة على أجهزة الكمبيوتر التي لا تحتوي على GPS لبدء الشيفت فوراً.",
+                    "Used by workers inside the office on PCs without GPS to start their shift immediately.",
+                  ),
+                },
+              );
+            }}
+            title={t("اضغط لنسخ كود حضور المكتب للأجهزة بدون GPS", "Click to copy today's Office PIN")}
+            className="px-3 py-2 border-2 border-zinc-900 dark:border-zinc-700 bg-indigo-50 dark:bg-indigo-950/40 hover:bg-indigo-100 text-indigo-950 dark:text-indigo-200 text-xs font-bold cursor-pointer flex items-center gap-1.5 rounded shadow-[2px_2px_0px_0px_#4f46e5]"
+          >
+            <span>🔑 {t("كود المكتب (بدون GPS):", "Office PIN:")}</span>
+            <strong className="font-mono text-sm tracking-widest bg-white dark:bg-zinc-900 px-1.5 py-0.2 rounded border border-indigo-300 dark:border-indigo-700" dir="ltr">
+              {computeDailyOfficePin(settings)}
+            </strong>
           </button>
 
           <button

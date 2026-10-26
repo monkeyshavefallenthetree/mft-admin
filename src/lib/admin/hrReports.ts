@@ -23,6 +23,13 @@ export interface WorkLocationItem {
   active?: boolean;
 }
 
+export interface OfficeNetworkItem {
+  id: string;
+  name: string; // e.g. "راوتر المقر الرئيسي"
+  ip: string; // e.g. "197.52.104.88" or "197.52.104.*"
+  active?: boolean;
+}
+
 export interface HrSettings extends Policy2026SettingsFields {
   monthStartDay: number; // 1-28 (e.g. 21 for 21st to 20th cycle, 1 for calendar month)
   weekendDays: number[]; // [5, 6] (default: Friday, Saturday in Egypt)
@@ -35,6 +42,12 @@ export interface HrSettings extends Policy2026SettingsFields {
   absencePenaltyMultiplier: number; // 2 (2x daily pay)
   workLocations?: WorkLocationItem[];
   enforceGeofence?: boolean;
+  officeNetworks?: OfficeNetworkItem[];
+  officePinEnabled?: boolean;
+  officePinMode?: "daily_auto" | "fixed";
+  officePinFixedCode?: string;
+  officePinSalt?: string;
+  officeDeviceAuthSecret?: string;
 }
 
 export const DEFAULT_HR_SETTINGS: HrSettings = {
@@ -49,9 +62,70 @@ export const DEFAULT_HR_SETTINGS: HrSettings = {
   absencePenaltyMultiplier: 2,
   workLocations: [],
   enforceGeofence: true,
+  officeNetworks: [],
+  officePinEnabled: true,
+  officePinMode: "daily_auto",
+  officePinFixedCode: "2026",
+  officePinSalt: "mft_office_pin_2026",
+  officeDeviceAuthSecret: "MFT-OFFICE-2026",
   // HR-POL-2026 (off until enabled from the Policies modal)
   ...POLICY_2026_SETTINGS_DEFAULTS,
 };
+
+function normalizeDigits(str: string): string {
+  return str
+    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0))
+    .trim();
+}
+
+export function getLocalYmdForPin(d = new Date()): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+export function computeDailyOfficePin(
+  settings?: Partial<HrSettings>,
+  dateYmd: string = getLocalYmdForPin(),
+): string {
+  if (settings?.officePinMode === "fixed") {
+    const fixed = normalizeDigits(settings?.officePinFixedCode || "");
+    if (fixed.length >= 4) return fixed;
+  }
+  const salt = (settings?.officePinSalt || "mft_office_pin_2026").trim();
+  const seed = `${dateYmd}::${salt}`;
+  let hash = 2166136261;
+  for (let i = 0; i < seed.length; i++) {
+    hash ^= seed.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  const pinNum = 1000 + (Math.abs(hash) % 9000);
+  return String(pinNum);
+}
+
+export async function fetchClientPublicIp(): Promise<string | null> {
+  try {
+    const res = await fetch("/api/client-ip", { cache: "no-store" });
+    if (res.ok) {
+      const data = (await res.json()) as { ip?: string | null };
+      if (data?.ip) return data.ip.trim();
+    }
+  } catch {
+    /* fallback below */
+  }
+  try {
+    const res = await fetch("https://api.ipify.org?format=json", { cache: "no-store" });
+    if (res.ok) {
+      const data = (await res.json()) as { ip?: string };
+      if (data?.ip) return data.ip.trim();
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
 
 /**
  * Parses a Google Maps URL or raw "lat, lng" string into { lat, lng }.
