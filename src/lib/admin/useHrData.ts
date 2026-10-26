@@ -20,6 +20,7 @@ import {
 } from "@/lib/admin/hrReports";
 import {
   subscribeHrSettings,
+  saveHrSettings,
   subscribeHolidays,
   subscribePayrollAdjustments,
   subscribePayrollCycles,
@@ -117,20 +118,30 @@ export function useHrData({
   }, [refreshTick]);
 
   // HR Settings & Holidays subscriptions
-  useEffect(() => subscribeHrSettings((s) => setSettings(s)), []);
+  useEffect(() => {
+    let mirroredOnce = false;
+    return subscribeHrSettings((s) => {
+      setSettings(s);
+      const sWithMeta = s as HrSettings & { _mirrorUpdatedAtMs?: number };
+      if (!mirroredOnce && (s.officeNetworks?.length ?? 0) > 0 && !sWithMeta._mirrorUpdatedAtMs) {
+        mirroredOnce = true;
+        saveHrSettings(s, adminEmail).catch(() => {});
+      }
+    });
+  }, [adminEmail, refreshTick]);
 
-  useEffect(() => subscribeHolidays((h) => setHolidays(h)), []);
+  useEffect(() => subscribeHolidays((h) => setHolidays(h)), [adminEmail, refreshTick]);
 
-  useEffect(() => subscribePayrollAdjustments((a) => setAdjustments(a)), []);
+  useEffect(() => subscribePayrollAdjustments((a) => setAdjustments(a)), [adminEmail, refreshTick]);
 
-  useEffect(() => subscribePayrollCycles((c) => setCycleRecords(c)), []);
+  useEffect(() => subscribePayrollCycles((c) => setCycleRecords(c)), [adminEmail, refreshTick]);
 
   // HR-POL-2026 data
-  useEffect(() => subscribePermissionLedger(setLedger), []);
+  useEffect(() => subscribePermissionLedger(setLedger), [adminEmail, refreshTick]);
 
-  useEffect(() => subscribeApprovedPolicyRequests(setApprovedRequests), []);
+  useEffect(() => subscribeApprovedPolicyRequests(setApprovedRequests), [adminEmail, refreshTick]);
 
-  useEffect(() => subscribeReimbursements(setReimbursements), []);
+  useEffect(() => subscribeReimbursements(setReimbursements), [adminEmail, refreshTick]);
 
   const effectiveLedger = useMemo(
     () =>

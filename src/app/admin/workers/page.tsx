@@ -748,7 +748,7 @@ export default function AdminWorkersPage() {
               🌐 {isAr ? "English (EN)" : "العربية (AR)"}
             </button>
             <Link
-              href="/admin/hr?tab=compliance"
+              href="/admin/hr?tab=people&sub=compliance"
               className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-bold text-zinc-900 hover:bg-zinc-100"
             >
               {t("🗓️ سجل الأذونات والإجازات", "🗓️ HR Leave & Quotas")}
@@ -811,7 +811,7 @@ export default function AdminWorkersPage() {
               {t("⚡ ضبط بدء النظام للكل = اليوم", "⚡ Set All System Start = Today")}
             </button>
             <Link
-              href="/admin/hr?tab=compliance"
+              href="/admin/hr?tab=people&sub=compliance"
               className="rounded-lg bg-zinc-900 hover:bg-zinc-800 px-3 py-2 text-xs font-bold text-white"
             >
               {t("فتح جدول التعديل الجماعي ←", "Bulk Edit All Dates →")}

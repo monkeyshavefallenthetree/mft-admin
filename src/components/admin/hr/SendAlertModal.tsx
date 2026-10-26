@@ -92,7 +92,7 @@ export default function SendAlertModal({ approved, adminEmail, onClose }: Props)
         eventType: "hr_alert_sent",
         title: `📢 HR Alert Sent: ${alertForm.title}`,
         body: `${adminEmail} sent "${alertForm.title}" to ${recipients.length} worker(s): ${alertForm.message}`,
-        href: "/admin/hr?tab=alerts",
+        href: "/admin/hr?tab=announcements",
         actorUid: auth.currentUser?.uid,
         actorName: adminEmail,
         urgent: alertForm.priority === "high" || alertForm.type === "urgent" || alertForm.type === "penalty",

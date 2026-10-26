@@ -220,12 +220,12 @@ service cloud.firestore {
 
     match /settings/{id} {
       allow read: if isSignedIn();
-      allow write: if isHrAdmin();
+      allow write: if isAdmin();
     }
 
     match /holidays/{id} {
       allow read: if isSignedIn();
-      allow write: if isHrAdmin();
+      allow write: if isAdmin();
     }
 
     match /penalties/{id} {

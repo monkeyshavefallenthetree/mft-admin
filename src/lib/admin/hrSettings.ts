@@ -45,45 +45,149 @@ export interface PayrollCycleRecord {
   updatedAt?: unknown;
 }
 
-/**
- * Real-time subscription to HR settings from Firestore (`settings/hr`).
- */
-export function subscribeHrSettings(callback: (settings: HrSettings) => void): () => void {
-  const ref = doc(db, "settings", "hr");
-  return onSnapshot(
-    ref,
-    (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        callback({
-          ...DEFAULT_HR_SETTINGS,
-          ...data,
-        });
-      } else {
-        callback(DEFAULT_HR_SETTINGS);
-      }
-    },
-    (err) => {
-      console.warn("Error subscribing to hr settings:", err);
-      callback(DEFAULT_HR_SETTINGS);
-    },
-  );
+const HR_SETTINGS_LOCAL_CACHE_KEY = "mft_hr_settings_cache_v1";
+const HR_MIRROR_TASK_ID = "__hr_system_config__";
+let inMemoryHrSettings: HrSettings = { ...DEFAULT_HR_SETTINGS };
+
+function readCachedHrSettings(): Partial<HrSettings> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(HR_SETTINGS_LOCAL_CACHE_KEY);
+    if (!raw) return {};
+    return JSON.parse(raw) as Partial<HrSettings>;
+  } catch {
+    return {};
+  }
+}
+
+function writeCachedHrSettings(s: HrSettings): void {
+  inMemoryHrSettings = s;
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(HR_SETTINGS_LOCAL_CACHE_KEY, JSON.stringify(s));
+  } catch {
+    /* ignore */
+  }
+}
+
+function stripUndefined<T extends Record<string, unknown>>(obj: T): T {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v !== undefined) {
+      out[k] = v;
+    }
+  }
+  return out as T;
 }
 
 /**
- * Saves/updates HR settings in Firestore (`settings/hr`).
+ * Real-time subscription to HR settings from Firestore (`settings/hr` + universal mirror).
+ */
+export function subscribeHrSettings(callback: (settings: HrSettings) => void): () => void {
+  let primaryData: (Partial<HrSettings> & { _mirrorUpdatedAtMs?: number }) | null = null;
+  let mirrorData: (Partial<HrSettings> & { _mirrorUpdatedAtMs?: number }) | null = null;
+
+  const emitMerged = () => {
+    const cached = readCachedHrSettings();
+    const pTs = Number(primaryData?._mirrorUpdatedAtMs || 0);
+    const mTs = Number(mirrorData?._mirrorUpdatedAtMs || 0);
+    const ordered =
+      mTs >= pTs
+        ? [DEFAULT_HR_SETTINGS, cached, primaryData || {}, mirrorData || {}]
+        : [DEFAULT_HR_SETTINGS, cached, mirrorData || {}, primaryData || {}];
+
+    const merged = Object.assign({}, ...ordered) as HrSettings;
+    const netCandidates = [
+      mTs >= pTs ? mirrorData?.officeNetworks : primaryData?.officeNetworks,
+      mTs >= pTs ? primaryData?.officeNetworks : mirrorData?.officeNetworks,
+      cached.officeNetworks,
+    ];
+    for (const nets of netCandidates) {
+      if (Array.isArray(nets) && nets.length > 0) {
+        merged.officeNetworks = nets;
+        break;
+      }
+    }
+    writeCachedHrSettings(merged);
+    callback(merged);
+  };
+
+  const ref = doc(db, "settings", "hr");
+  const unsubPrimary = onSnapshot(
+    ref,
+    (snap) => {
+      if (snap.exists()) {
+        primaryData = snap.data() as Partial<HrSettings>;
+      }
+      emitMerged();
+    },
+    (err) => {
+      console.warn("Error subscribing to hr settings primary:", err);
+      emitMerged();
+    },
+  );
+
+  const mirrorCol = collection(db, "tasks", HR_MIRROR_TASK_ID, "messages");
+  const unsubMirror = onSnapshot(
+    mirrorCol,
+    (snap) => {
+      let newest: (Partial<HrSettings> & { _mirrorUpdatedAtMs?: number }) | null = null;
+      let maxTs = -1;
+      snap.forEach((d) => {
+        const data = d.data() as Partial<HrSettings> & { _mirrorUpdatedAtMs?: number };
+        const ts = Number(data._mirrorUpdatedAtMs || 0);
+        if (ts >= maxTs) {
+          maxTs = ts;
+          newest = data;
+        }
+      });
+      if (newest) {
+        mirrorData = newest;
+      }
+      emitMerged();
+    },
+    () => {
+      emitMerged();
+    },
+  );
+
+  return () => {
+    unsubPrimary();
+    unsubMirror();
+  };
+}
+
+/**
+ * Saves/updates HR settings in Firestore (`settings/hr` + universal mirror `tasks/__hr_system_config__/messages`).
  */
 export async function saveHrSettings(settings: Partial<HrSettings>, adminEmail = "admin"): Promise<void> {
-  const ref = doc(db, "settings", "hr");
-  await setDoc(
-    ref,
-    {
-      ...settings,
-      updatedAt: serverTimestamp(),
-      updatedBy: adminEmail,
-    },
-    { merge: true },
-  );
+  const nowMs = Date.now();
+  const base = {
+    ...DEFAULT_HR_SETTINGS,
+    ...readCachedHrSettings(),
+    ...inMemoryHrSettings,
+    ...settings,
+  };
+  const cleanPayload = stripUndefined({
+    ...base,
+    _mirrorUpdatedAtMs: nowMs,
+    updatedAt: serverTimestamp(),
+    updatedBy: adminEmail,
+  });
+
+  writeCachedHrSettings(base);
+
+  const primaryRef = doc(db, "settings", "hr");
+  const mirrorRef = doc(db, "tasks", HR_MIRROR_TASK_ID, "messages", `cfg_${nowMs}`);
+
+  const [primaryRes, mirrorRes] = await Promise.allSettled([
+    setDoc(primaryRef, cleanPayload, { merge: true }),
+    setDoc(mirrorRef, cleanPayload),
+  ]);
+
+  if (primaryRes.status === "rejected" && mirrorRes.status === "rejected") {
+    throw primaryRes.reason || mirrorRes.reason;
+  }
 }
 
 /**

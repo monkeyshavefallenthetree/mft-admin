@@ -107,37 +107,74 @@ export function computeDailyOfficePin(
 
 export function normalizeIpString(raw: string | null | undefined): string {
   if (!raw) return "";
-  return normalizeDigits(String(raw))
+  const s = normalizeDigits(String(raw))
     .replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, "")
     .replace(/^https?:\/\//i, "")
-    .replace(/\/.*$/, "")
     .replace(/^::ffff:/i, "")
-    .replace(/\s+/g, "")
+    .trim()
     .toLowerCase();
+  // Extract IPv4 or wildcard pattern if surrounded by text/brackets
+  const ipv4Match = s.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.(?:\d{1,3}|\*))(?:\s*\/\s*(\d{1,2}))?/);
+  if (ipv4Match && ipv4Match[1]) {
+    if (ipv4Match[2] === "24") {
+      const octets = ipv4Match[1].split(".");
+      return `${octets[0]}.${octets[1]}.${octets[2]}.*`;
+    }
+    return ipv4Match[1];
+  }
+  return s.replace(/\/.*$/, "").replace(/[^\da-f:.*]/g, "");
+}
+
+export async function fetchAllClientPublicIps(): Promise<string[]> {
+  const fetchWithTimeout = async (url: string, ms = 4000): Promise<Response> => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), ms);
+    try {
+      return await fetch(url, { cache: "no-store", signal: ctrl.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  const results = await Promise.allSettled([
+    (async () => {
+      const res = await fetchWithTimeout("https://api.ipify.org?format=json", 3800);
+      if (!res.ok) return null;
+      const data = (await res.json()) as { ip?: string };
+      return normalizeIpString(data?.ip);
+    })(),
+    (async () => {
+      const res = await fetchWithTimeout("https://ipv4.icanhazip.com", 3800);
+      if (!res.ok) return null;
+      const txt = await res.text();
+      return normalizeIpString(txt);
+    })(),
+    (async () => {
+      const res = await fetchWithTimeout("/api/client-ip", 3000);
+      if (!res.ok) return null;
+      const data = (await res.json()) as { ip?: string | null };
+      return normalizeIpString(data?.ip);
+    })(),
+    (async () => {
+      const res = await fetchWithTimeout("https://api64.ipify.org?format=json", 3800);
+      if (!res.ok) return null;
+      const data = (await res.json()) as { ip?: string };
+      return normalizeIpString(data?.ip);
+    })(),
+  ]);
+
+  const ips: string[] = [];
+  for (const r of results) {
+    if (r.status === "fulfilled" && r.value && !ips.includes(r.value)) {
+      ips.push(r.value);
+    }
+  }
+  return ips;
 }
 
 export async function fetchClientPublicIp(): Promise<string | null> {
-  try {
-    const res = await fetch("https://api.ipify.org?format=json", { cache: "no-store" });
-    if (res.ok) {
-      const data = (await res.json()) as { ip?: string };
-      const cleaned = normalizeIpString(data?.ip);
-      if (cleaned) return cleaned;
-    }
-  } catch {
-    /* fallback below */
-  }
-  try {
-    const res = await fetch("/api/client-ip", { cache: "no-store" });
-    if (res.ok) {
-      const data = (await res.json()) as { ip?: string | null };
-      const cleaned = normalizeIpString(data?.ip);
-      if (cleaned) return cleaned;
-    }
-  } catch {
-    /* ignore */
-  }
-  return null;
+  const ips = await fetchAllClientPublicIps();
+  return ips[0] || null;
 }
 
 /**

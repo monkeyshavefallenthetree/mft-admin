@@ -9,7 +9,7 @@ import {
   DEFAULT_HR_SETTINGS,
   parseLocationCoordinates,
   computeDailyOfficePin,
-  fetchClientPublicIp,
+  fetchAllClientPublicIps,
   normalizeIpString,
 } from "@/lib/admin/hrReports";
 import { saveHrSettings } from "@/lib/admin/hrSettings";
@@ -99,6 +99,7 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
 
   // Office Wi-Fi / IP state (for GPS-less devices)
   const [currentPublicIp, setCurrentPublicIp] = useState<string | null>(null);
+  const [currentPublicIps, setCurrentPublicIps] = useState<string[]>([]);
   const [loadingIp, setLoadingIp] = useState(false);
   const [netName, setNetName] = useState("");
   const [netIp, setNetIp] = useState("");
@@ -106,15 +107,20 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
   useEffect(() => {
     let mounted = true;
     setLoadingIp(true);
-    fetchClientPublicIp()
-      .then((ip) => {
-        if (mounted && ip) {
-          setCurrentPublicIp(ip);
+    fetchAllClientPublicIps()
+      .then((ips) => {
+        if (mounted && ips.length > 0) {
+          setCurrentPublicIps(ips);
+          setCurrentPublicIp(ips[0] || null);
         }
       })
       .finally(() => {
         if (mounted) setLoadingIp(false);
       });
+    // Ensure any already-configured officeNetworks are synced to the universal Firestore mirror immediately
+    if ((initialSettings.officeNetworks ?? []).length > 0) {
+      saveHrSettings(initialSettings, adminEmail).catch(() => {});
+    }
     return () => {
       mounted = false;
     };
@@ -126,38 +132,54 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
       toast.warning(t("لم يتم اكتشاف الـ IP الحالي بعد", "Current Public IP not detected yet"));
       return;
     }
-    const existing = (settings.officeNetworks ?? []).some((n) => normalizeIpString(n.ip) === cleanIp);
-    if (existing) {
-      toast.info(t("شبكة الشركة الحالية مسجلة بالفعل في القائمة ✓", "Current Office IP is already in the list ✓"));
-      return;
+    const allDetectedClean = (currentPublicIps.length > 0 ? currentPublicIps : [cleanIp])
+      .map((x) => normalizeIpString(x))
+      .filter(Boolean);
+    const combinedIpValue = Array.from(new Set([cleanIp, ...allDetectedClean])).join(" , ");
+
+    const currentList = settings.officeNetworks ?? [];
+    const existingIdx = currentList.findIndex((n) => {
+      const tokens = String(n.ip || "")
+        .split(/[,\s|]+/)
+        .map((p) => normalizeIpString(p))
+        .filter(Boolean);
+      return tokens.includes(cleanIp);
+    });
+
+    let nextNetworks: OfficeNetworkItem[];
+    if (existingIdx >= 0) {
+      nextNetworks = currentList.map((n, idx) =>
+        idx === existingIdx ? { ...n, ip: combinedIpValue, active: true } : n,
+      );
+    } else {
+      const newNet: OfficeNetworkItem = {
+        id: `net_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        name: netName.trim() || t("راوتر / شبكة المقر الرئيسي", "Main Office Wi-Fi / Router"),
+        ip: combinedIpValue,
+        active: true,
+      };
+      nextNetworks = [...currentList, newNet];
     }
-    const newNet: OfficeNetworkItem = {
-      id: `net_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      name: netName.trim() || t("راوتر / شبكة المقر الرئيسي", "Main Office Wi-Fi / Router"),
-      ip: cleanIp,
-      active: true,
-    };
-    const nextNetworks = [...(settings.officeNetworks ?? []), newNet];
-    setSettings((prev) => ({
-      ...prev,
+
+    const updatedSettings: HrSettings = {
+      ...settings,
       officeNetworks: nextNetworks,
       enforceGeofence: true,
-    }));
+    };
+    setSettings(updatedSettings);
     setNetName("");
     try {
-      await saveHrSettings({ officeNetworks: nextNetworks, enforceGeofence: true }, adminEmail);
+      await saveHrSettings(updatedSettings, adminEmail);
       toast.success(
         t(
-          `تم تسجيل وحفظ شبكة الشركة (${newNet.ip}) فوراً ✓`,
-          `Saved Office Network (${newNet.ip}) immediately ✓`,
+          `تم تسجيل وحفظ شبكة الشركة (${cleanIp}) فوراً ✓`,
+          `Saved Office Network (${cleanIp}) immediately ✓`,
         ),
       );
-    } catch {
-      toast.success(
-        t(
-          `تمت إضافة شبكة الشركة (${newNet.ip}) — اضغط حفظ السياسات لتأكيد التفعيل`,
-          `Added Office Network (${newNet.ip}) — click Save Policies`,
-        ),
+    } catch (err) {
+      toast.error(
+        t("تعذر حفظ الشبكة في قاعدة البيانات", "Failed to save network to database"),
+        { description: err instanceof Error ? err.message : String(err) },
       );
     }
   };
@@ -168,31 +190,46 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
       toast.warning(t("يرجى كتابة عنوان الـ IP لشبكة الشركة", "Please enter an IP address"));
       return;
     }
-    const existing = (settings.officeNetworks ?? []).some((n) => normalizeIpString(n.ip) === clean);
-    if (existing) {
-      toast.info(t("هذا الـ IP مسجل بالفعل في القائمة ✓", "This IP is already in the list ✓"));
-      setNetIp("");
-      return;
+    const currentList = settings.officeNetworks ?? [];
+    const existingIdx = currentList.findIndex((n) => {
+      const tokens = String(n.ip || "")
+        .split(/[,\s|]+/)
+        .map((p) => normalizeIpString(p))
+        .filter(Boolean);
+      return tokens.includes(clean);
+    });
+
+    let nextNetworks: OfficeNetworkItem[];
+    if (existingIdx >= 0) {
+      nextNetworks = currentList.map((n, idx) =>
+        idx === existingIdx ? { ...n, active: true } : n,
+      );
+    } else {
+      const newNet: OfficeNetworkItem = {
+        id: `net_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        name: netName.trim() || t("شبكة مكتب الشركة", "Office Network"),
+        ip: clean,
+        active: true,
+      };
+      nextNetworks = [...currentList, newNet];
     }
-    const newNet: OfficeNetworkItem = {
-      id: `net_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      name: netName.trim() || t("شبكة مكتب الشركة", "Office Network"),
-      ip: clean,
-      active: true,
-    };
-    const nextNetworks = [...(settings.officeNetworks ?? []), newNet];
-    setSettings((prev) => ({
-      ...prev,
+
+    const updatedSettings: HrSettings = {
+      ...settings,
       officeNetworks: nextNetworks,
       enforceGeofence: true,
-    }));
+    };
+    setSettings(updatedSettings);
     setNetName("");
     setNetIp("");
     try {
-      await saveHrSettings({ officeNetworks: nextNetworks, enforceGeofence: true }, adminEmail);
+      await saveHrSettings(updatedSettings, adminEmail);
       toast.success(t(`تمت إضافة وحفظ الشبكة (${clean}) فوراً ✓`, `Added and saved network (${clean}) ✓`));
-    } catch {
-      toast.success(t(`تمت إضافة الشبكة (${clean})`, `Added network (${clean})`));
+    } catch (err) {
+      toast.error(
+        t("تعذر حفظ الشبكة في قاعدة البيانات", "Failed to save network to database"),
+        { description: err instanceof Error ? err.message : String(err) },
+      );
     }
   };
 
@@ -200,12 +237,13 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
     const nextNetworks = (settings.officeNetworks ?? []).map((n) =>
       n.id === id ? { ...n, active: n.active === false ? true : false } : n,
     );
-    setSettings((prev) => ({
-      ...prev,
+    const updatedSettings: HrSettings = {
+      ...settings,
       officeNetworks: nextNetworks,
-    }));
+    };
+    setSettings(updatedSettings);
     try {
-      await saveHrSettings({ officeNetworks: nextNetworks }, adminEmail);
+      await saveHrSettings(updatedSettings, adminEmail);
     } catch {
       /* saved on form submit */
     }
@@ -213,12 +251,13 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
 
   const handleRemoveOfficeNetwork = async (id: string) => {
     const nextNetworks = (settings.officeNetworks ?? []).filter((n) => n.id !== id);
-    setSettings((prev) => ({
-      ...prev,
+    const updatedSettings: HrSettings = {
+      ...settings,
       officeNetworks: nextNetworks,
-    }));
+    };
+    setSettings(updatedSettings);
     try {
-      await saveHrSettings({ officeNetworks: nextNetworks }, adminEmail);
+      await saveHrSettings(updatedSettings, adminEmail);
       toast.info(t("تم حذف الشبكة من القائمة", "Network removed"));
     } catch {
       /* saved on form submit */

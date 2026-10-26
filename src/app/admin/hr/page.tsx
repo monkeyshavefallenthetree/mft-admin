@@ -1,20 +1,55 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
+import {
+  collection,
+  onSnapshot,
+  addDoc,
+  deleteDoc,
+  doc,
+  serverTimestamp,
+} from "firebase/firestore";
+import { onAuthStateChanged } from "firebase/auth";
 import { auth, db } from "@/lib/firebase";
 import { downloadCsv } from "@/lib/admin/csv";
+import { DEPARTMENTS } from "@/lib/admin/constants";
+import { sessionHours } from "@/lib/admin/workTime";
 import {
+  type SessionForHr,
+  type HrSettings,
+  type HolidayItem,
   type PayrollAdjustment,
+  DEFAULT_HR_SETTINGS,
   computeDailyOfficePin,
   computePayrollForWorker,
   formatDepartment,
+  formatEmploymentType,
+  getPayrollCycleRange,
+  getHrDateRange,
+  isDateHoliday,
+  isLateTodayHtml,
+  performanceRating,
+  productivityScore,
+  sessionDateYmd,
   workerSessionsInRange,
 } from "@/lib/admin/hrReports";
 import {
+  subscribeHrSettings,
+  subscribeHolidays,
+  subscribePayrollAdjustments,
   deletePayrollAdjustment,
+  subscribePayrollCycles,
   setPayrollCycleStatus,
+  subscribePermissionLedger,
+  subscribeApprovedPolicyRequests,
+  mergeLedgerWithApprovedRequests,
+  subscribeReimbursements,
   type PayrollCycleRecord,
+  type PermissionLedgerDoc,
+  type ApprovedRequestRow,
+  type ReimbursementDoc,
 } from "@/lib/admin/hrSettings";
+import { effectiveLeaveDaysForRequest, ymd as localYmd } from "@/lib/admin/hrPolicy2026";
 import { useHrLang } from "@/lib/admin/hrI18n";
 import Link from "next/link";
 import { toast, confirmDialog } from "@/lib/admin/feedback";
@@ -22,12 +57,15 @@ import { logActivity } from "@/lib/admin/activity";
 import { sendExpoPushToWorkers } from "@/lib/chatNotifications";
 import { notifyAdmins } from "@/lib/adminNotifications";
 import { useUrlState } from "@/lib/admin/useUrlState";
+import ModalPortal from "@/components/admin/ui/ModalPortal";
 import HrPolicyModal from "@/components/admin/hr/HrPolicyModal";
 import HrHolidaysManager from "@/components/admin/hr/HrHolidaysManager";
 import HrPayslipModal from "@/components/admin/hr/HrPayslipModal";
 import HrAdjustmentModal, { type AdjustmentKind } from "@/components/admin/hr/HrAdjustmentModal";
+import HrDateRangeSelector from "@/components/admin/hr/HrDateRangeSelector";
 import HrExcuseModal from "@/components/admin/hr/HrExcuseModal";
 import HrComplianceView from "@/components/admin/hr/HrComplianceView";
+import WorkerLeaveProfileCard from "@/components/admin/hr/WorkerLeaveProfileCard";
 import HrDisciplinaryCatalog from "@/components/admin/hr/HrDisciplinaryCatalog";
 import { DISCIPLINARY_RULES } from "@/lib/admin/hrDisciplinary";
 import TodayTab, { type TodayFilter } from "@/components/admin/hr/tabs/TodayTab";
@@ -93,13 +131,21 @@ export default function AdminHRPage() {
 
   // Modals
   const [sendOpen, setSendOpen] = useState(false);
+
   const [policyModalOpen, setPolicyModalOpen] = useState(false);
+
   const [adjustmentModalOpen, setAdjustmentModalOpen] = useState(false);
+
   const [adjustmentWorkerId, setAdjustmentWorkerId] = useState<string | undefined>(undefined);
+
   const [adjustmentInitialType, setAdjustmentInitialType] = useState<AdjustmentKind>("bonus");
+
   const [excuseModalWorker, setExcuseModalWorker] = useState<Worker | null>(null);
+
   const [payslipModalWorker, setPayslipModalWorker] = useState<Worker | null>(null);
+
   const [dashboardWorker, setDashboardWorker] = useState<Worker | null>(null);
+
   const [onboardModalWorker, setOnboardModalWorker] = useState<Worker | null>(null);
 
   const openAdjustmentFor = (workerId?: string, kind: AdjustmentKind = "bonus") => {
@@ -110,30 +156,37 @@ export default function AdminHRPage() {
 
   // Navigation & Search State
   const [section, setSection] = useUrlState("tab", "overview");
-  const [todayFilter, setTodayFilter] = useState<TodayFilter>("all");
+
+  const [todayFilter, setTodayFilter] = useState<"all" | "present" | "absent" | "late" | "overtime">("all");
 
   // Date Range and Cycle Selection State
   const [rangeKey, setRangeKey] = useState<string>("cycle");
+
   const [customStart, setCustomStart] = useState<Date>(() => {
     const d = new Date();
     d.setDate(d.getDate() - 30);
     return d;
   });
+
   const [customEnd, setCustomEnd] = useState<Date>(() => new Date());
 
-  // All live HR data (Firestore subscriptions + derived attendance/payroll figures)
   const {
     adminEmail,
+    workers,
     sessions,
+    tasks,
     alerts,
     settings,
     holidays,
     adjustments,
+    cycleRecords,
+    ledger,
     approvedRequests,
     reimbursements,
     effectiveLedger,
     approved,
     today,
+    activeCycle,
     activePeriod,
     currentCycleId,
     currentCycleStatus,

@@ -72,7 +72,7 @@ export default function PolicyLabPage() {
             </p>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <Link href="/admin/hr?tab=compliance" id="lab-go-onboarding" className={s.btnPrimary}>
+            <Link href="/admin/hr?tab=people&sub=compliance" id="lab-go-onboarding" className={s.btnPrimary}>
               <Icon d={LAB_ICONS.calendar} size={16} /> ضبط تواريخ تعيين الموظفين الحاليين
             </Link>
             <Link href="/admin/workers" id="lab-go-workers" className={s.btnGhost}>
@@ -103,7 +103,7 @@ export default function PolicyLabPage() {
                 <p className={s.statLabel}>١. للموظفين الحاليين بالشركة (البيانات الحقيقية)</p>
                 <p className={s.small} style={{ marginTop: 4 }}>
                   لضبط تاريخ التحاق كل موظف بالشركة (حساب الإجازات واجتياز فترة الاختبار) وتاريخ بدء الحساب بالنظام الجديد: افتح{" "}
-                  <Link href="/admin/hr?tab=compliance" style={{ color: "#f87171", textDecoration: "underline", fontWeight: 700 }}>
+                  <Link href="/admin/hr?tab=people&sub=compliance" style={{ color: "#f87171", textDecoration: "underline", fontWeight: 700 }}>
                     HR → Permissions &amp; Leave
                   </Link>{" "}
                   أو صفحة{" "}
