@@ -113,16 +113,49 @@ export function normalizeIpString(raw: string | null | undefined): string {
     .replace(/^::ffff:/i, "")
     .trim()
     .toLowerCase();
-  // Extract IPv4 or wildcard pattern if surrounded by text/brackets
-  const ipv4Match = s.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.(?:\d{1,3}|\*))(?:\s*\/\s*(\d{1,2}))?/);
-  if (ipv4Match && ipv4Match[1]) {
-    if (ipv4Match[2] === "24") {
-      const octets = ipv4Match[1].split(".");
-      return `${octets[0]}.${octets[1]}.${octets[2]}.*`;
+
+  // Match IPv4 full, wildcard (e.g. 197.36.*.*, 197.36.*, 197.36.x.x, 197.36.), or CIDR (/8, /16, /24)
+  // First octet must always be numeric (\d{1,3}) so "*.*.*.*" can never be created accidentally.
+  const ipv4Candidate = s.match(
+    /(?:^|[^\da-f:.])(\d{1,3}(?:\.(?:\d{1,3}|\*|x)){1,3}\.?)(?:\s*\/\s*(\d{1,2}))?(?:$|[^\da-f:.])/i,
+  );
+  if (ipv4Candidate && ipv4Candidate[1]) {
+    const rawAddr = ipv4Candidate[1].replace(/x/gi, "*");
+    const cidr = ipv4Candidate[2] ? parseInt(ipv4Candidate[2], 10) : null;
+    const rawParts = rawAddr.split(".");
+    const parts = rawParts.map((p) => (p === "" ? "*" : p)).slice(0, 4);
+
+    if (cidr === 8 && parts.length >= 1) {
+      return `${parts[0]}.*.*.*`;
     }
-    return ipv4Match[1];
+    if (cidr === 16 && parts.length >= 2) {
+      return `${parts[0]}.${parts[1]}.*.*`;
+    }
+    if (cidr === 24 && parts.length >= 3) {
+      return `${parts[0]}.${parts[1]}.${parts[2]}.*`;
+    }
+
+    if (parts.length < 4 && (rawAddr.endsWith("*") || rawAddr.endsWith("."))) {
+      while (parts.length < 4) parts.push("*");
+    }
+
+    if (parts.length === 4) {
+      return parts.join(".");
+    }
   }
+
   return s.replace(/\/.*$/, "").replace(/[^\da-f:.*]/g, "");
+}
+
+/**
+ * Converts an IPv4 address (e.g. "197.36.142.88") into a 2-octet router wildcard ("197.36.*.*")
+ * so dynamic ISP router restarts continue matching automatically.
+ */
+export function toTwoOctetWildcard(rawIp: string | null | undefined): string | null {
+  const clean = normalizeIpString(rawIp);
+  const m = clean.match(/^(\d{1,3})\.(\d{1,3})\./);
+  if (!m) return null;
+  return `${m[1]}.${m[2]}.*.*`;
 }
 
 export async function fetchAllClientPublicIps(): Promise<string[]> {

@@ -11,6 +11,7 @@ import {
   computeDailyOfficePin,
   fetchAllClientPublicIps,
   normalizeIpString,
+  toTwoOctetWildcard,
 } from "@/lib/admin/hrReports";
 import { saveHrSettings } from "@/lib/admin/hrSettings";
 import { toast } from "@/lib/admin/feedback";
@@ -179,6 +180,98 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
     } catch (err) {
       toast.error(
         t("تعذر حفظ الشبكة في قاعدة البيانات", "Failed to save network to database"),
+        { description: err instanceof Error ? err.message : String(err) },
+      );
+    }
+  };
+
+  const handleAddCurrentWildcardIp = async () => {
+    const wildcard = toTwoOctetWildcard(currentPublicIp);
+    if (!wildcard) {
+      toast.warning(
+        t(
+          "لم يتم اكتشاف IPv4 حالي — يمكنك كتابته يدوياً مثل 197.36.*.*",
+          "Current IPv4 not detected — you can enter it manually like 197.36.*.*",
+        ),
+      );
+      return;
+    }
+    const currentList = settings.officeNetworks ?? [];
+    const existingIdx = currentList.findIndex((n) => {
+      const tokens = String(n.ip || "")
+        .split(/[,\s|]+/)
+        .map((p) => normalizeIpString(p))
+        .filter(Boolean);
+      return tokens.includes(wildcard);
+    });
+
+    let nextNetworks: OfficeNetworkItem[];
+    if (existingIdx >= 0) {
+      nextNetworks = currentList.map((n, idx) =>
+        idx === existingIdx ? { ...n, ip: wildcard, active: true } : n,
+      );
+    } else {
+      const newNet: OfficeNetworkItem = {
+        id: `net_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        name: netName.trim() || t("نطاق راوتر الشركة (ضد راستر الراوتر)", "Office Router Range (Dynamic IP)"),
+        ip: wildcard,
+        active: true,
+      };
+      nextNetworks = [...currentList, newNet];
+    }
+
+    const updatedSettings: HrSettings = {
+      ...settings,
+      officeNetworks: nextNetworks,
+      enforceGeofence: true,
+    };
+    setSettings(updatedSettings);
+    setNetName("");
+    try {
+      await saveHrSettings(updatedSettings, adminEmail);
+      toast.success(
+        t(
+          `تم تسجيل نطاق الراوتر (${wildcard}) فوراً — سيقبل أي تغيير في آخر مجموعتين ✓`,
+          `Saved router range (${wildcard}) immediately ✓`,
+        ),
+      );
+    } catch (err) {
+      toast.error(
+        t("تعذر حفظ الشبكة في قاعدة البيانات", "Failed to save network to database"),
+        { description: err instanceof Error ? err.message : String(err) },
+      );
+    }
+  };
+
+  const handleConvertNetworkToWildcard = async (id: string) => {
+    const target = (settings.officeNetworks ?? []).find((n) => n.id === id);
+    if (!target) return;
+    const firstIpv4Token = String(target.ip || "")
+      .split(/[,\s|]+/)
+      .map((p) => normalizeIpString(p))
+      .find((p) => /^\d{1,3}\.\d{1,3}\./.test(p));
+    const wildcard = toTwoOctetWildcard(firstIpv4Token);
+    if (!wildcard) return;
+
+    const nextNetworks = (settings.officeNetworks ?? []).map((n) =>
+      n.id === id ? { ...n, ip: wildcard, active: true } : n,
+    );
+    const updatedSettings: HrSettings = {
+      ...settings,
+      officeNetworks: nextNetworks,
+    };
+    setSettings(updatedSettings);
+    try {
+      await saveHrSettings(updatedSettings, adminEmail);
+      toast.success(
+        t(
+          `تم تحويل الشبكة إلى (${wildcard}) لتعمل حتى بعد راستر الراوتر ✓`,
+          `Converted network to (${wildcard}) ✓`,
+        ),
+      );
+    } catch (err) {
+      toast.error(
+        t("تعذر حفظ التعديل في قاعدة البيانات", "Failed to save update"),
         { description: err instanceof Error ? err.message : String(err) },
       );
     }
@@ -953,18 +1046,38 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
                         )}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={handleAddCurrentOfficeIp}
-                      disabled={loadingIp || !currentPublicIp}
-                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[11px] font-bold cursor-pointer shadow-[2px_2px_0px_0px_#09090b] disabled:opacity-50"
-                    >
-                      {loadingIp
-                        ? t("⏳ جاري قراءة الـ IP...", "⏳ Detecting IP...")
-                        : currentPublicIp
-                          ? t(`📡 سجل شبكة الشركة الحالية (${currentPublicIp})`, `📡 Add Current Office IP (${currentPublicIp})`)
-                          : t("تعذر قراءة الـ IP تلقائياً", "IP Not Detected")}
-                    </button>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={handleAddCurrentOfficeIp}
+                        disabled={loadingIp || !currentPublicIp}
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[11px] font-bold cursor-pointer shadow-[2px_2px_0px_0px_#09090b] disabled:opacity-50"
+                      >
+                        {loadingIp
+                          ? t("⏳ جاري قراءة الـ IP...", "⏳ Detecting IP...")
+                          : currentPublicIp
+                            ? t(`📡 سجل IP الحالي (${currentPublicIp})`, `📡 Add Current IP (${currentPublicIp})`)
+                            : t("تعذر قراءة الـ IP تلقائياً", "IP Not Detected")}
+                      </button>
+
+                      {toTwoOctetWildcard(currentPublicIp) && (
+                        <button
+                          type="button"
+                          onClick={handleAddCurrentWildcardIp}
+                          disabled={loadingIp}
+                          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-[11px] font-bold cursor-pointer shadow-[2px_2px_0px_0px_#09090b] disabled:opacity-50"
+                          title={t(
+                            "يثبت أول مجموعتين ويقبل أي أرقام في آخر مجموعتين حتى لو عملت راستر للراوتر",
+                            "Fixes the first two octets and accepts any last two octets after router restarts",
+                          )}
+                        >
+                          {t(
+                            `🔄 سجل كـ (${toTwoOctetWildcard(currentPublicIp)}) ضد راستر الراوتر`,
+                            `🔄 Add Range (${toTwoOctetWildcard(currentPublicIp)})`,
+                          )}
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -980,7 +1093,17 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
                       dir="ltr"
                       value={netIp}
                       onChange={(e) => setNetIp(e.target.value)}
-                      placeholder={currentPublicIp ? `${currentPublicIp} أو 197.52.*` : "197.52.104.88 أو 197.52.104.*"}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void handleAddCustomOfficeIp();
+                        }
+                      }}
+                      placeholder={
+                        toTwoOctetWildcard(currentPublicIp)
+                          ? `مثال: ${toTwoOctetWildcard(currentPublicIp)} أو ${currentPublicIp}`
+                          : "مثال: 197.36.*.* أو 197.36.*"
+                      }
                       className={INPUT_CLS}
                     />
                     <button
@@ -988,49 +1111,78 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
                       onClick={handleAddCustomOfficeIp}
                       className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-white font-bold rounded text-xs cursor-pointer"
                     >
-                      {t("+ إضافة IP يدوياً", "+ Add IP Manually")}
+                      {t("+ إضافة IP أو نطاق (*.*)", "+ Add IP / Wildcard (*.*)")}
                     </button>
                   </div>
+                  <p className="text-[10px] text-zinc-500">
+                    {t(
+                      "💡 لو آخر مجموعتين بيتغيروا لما ترستر الراوتر، اكتب مثلاً 197.36.*.* (أو 197.36.*) والنظام هيكمل ويقبل أي أرقام مكان النجمة (*) تلقائياً.",
+                      "💡 Tip: Use wildcards like 197.36.*.* (or 197.36.*) so router restarts changing the last two octets still match automatically.",
+                    )}
+                  </p>
 
                   {(settings.officeNetworks ?? []).length > 0 && (
                     <div className="space-y-1.5 pt-1">
-                      {(settings.officeNetworks ?? []).map((net) => (
-                        <div
-                          key={net.id}
-                          className={`p-2 rounded border flex flex-wrap items-center justify-between gap-2 ${
-                            net.active !== false
-                              ? "bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-400 dark:border-emerald-800"
-                              : "bg-zinc-100 dark:bg-zinc-800 border-zinc-300 opacity-60"
-                          }`}
-                        >
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-bold text-zinc-900 dark:text-white">🌐 {net.name}</span>
-                            <span className="px-2 py-0.5 rounded bg-white dark:bg-zinc-900 border border-zinc-300 text-[11px] font-mono font-bold" dir="ltr">
-                              {net.ip}
-                            </span>
+                      {(settings.officeNetworks ?? []).map((net) => {
+                        const rowWildcard = !String(net.ip || "").includes("*.*")
+                          ? toTwoOctetWildcard(
+                              String(net.ip || "")
+                                .split(/[,\s|]+/)
+                                .find((p) => /^\d{1,3}\.\d{1,3}\./.test(normalizeIpString(p))),
+                            )
+                          : null;
+
+                        return (
+                          <div
+                            key={net.id}
+                            className={`p-2 rounded border flex flex-wrap items-center justify-between gap-2 ${
+                              net.active !== false
+                                ? "bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-400 dark:border-emerald-800"
+                                : "bg-zinc-100 dark:bg-zinc-800 border-zinc-300 opacity-60"
+                            }`}
+                          >
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-xs font-bold text-zinc-900 dark:text-white">🌐 {net.name}</span>
+                              <span className="px-2 py-0.5 rounded bg-white dark:bg-zinc-900 border border-zinc-300 text-[11px] font-mono font-bold" dir="ltr">
+                                {net.ip}
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {rowWildcard && (
+                                <button
+                                  type="button"
+                                  onClick={() => void handleConvertNetworkToWildcard(net.id)}
+                                  className="px-2 py-0.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-[10px] font-bold cursor-pointer"
+                                  title={t(
+                                    `تحويل الـ IP إلى ${rowWildcard} ليعمل حتى بعد راستر الراوتر`,
+                                    `Convert to ${rowWildcard} for dynamic router restarts`,
+                                  )}
+                                >
+                                  {t(`✨ تحويل لـ ${rowWildcard}`, `✨ Make ${rowWildcard}`)}
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleToggleOfficeNetwork(net.id)}
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer border ${
+                                  net.active !== false
+                                    ? "bg-emerald-600 text-white border-emerald-700"
+                                    : "bg-zinc-200 text-zinc-700 border-zinc-400"
+                                }`}
+                              >
+                                {net.active !== false ? t("✓ مفعّل", "✓ Active") : t("متوقف", "Paused")}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveOfficeNetwork(net.id)}
+                                className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white rounded text-[10px] font-bold cursor-pointer"
+                              >
+                                {t("🗑️ حذف", "🗑️ Remove")}
+                              </button>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => handleToggleOfficeNetwork(net.id)}
-                              className={`px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer border ${
-                                net.active !== false
-                                  ? "bg-emerald-600 text-white border-emerald-700"
-                                  : "bg-zinc-200 text-zinc-700 border-zinc-400"
-                              }`}
-                            >
-                              {net.active !== false ? t("✓ مفعّل", "✓ Active") : t("متوقف", "Paused")}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveOfficeNetwork(net.id)}
-                              className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white rounded text-[10px] font-bold cursor-pointer"
-                            >
-                              {t("🗑️ حذف", "🗑️ Remove")}
-                            </button>
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
