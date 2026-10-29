@@ -145,10 +145,19 @@ export default function TodayTab({
       {/* Live Workers Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
         {filteredTodayWorkers.map((w) => {
-          const workerSession = todaysSessions.find((s) => s.workerId === w.id);
-          const isPresent = presentWorkerIds.has(w.id);
-          const isLate = lateWorkerIds.has(w.id);
-          const workedHours = workerSession ? Math.round(sessionHours(workerSession) * 10) / 10 : 0;
+          const workerTodaySessions = todaysSessions.filter((s) => s.workerId === w.id);
+          const workerSession =
+            workerTodaySessions.find((s) => s.loginTime?.toDate || s.startTime?.toDate) || workerTodaySessions[0];
+          const isPresent = workerTodaySessions.length > 0 && presentWorkerIds.has(w.id);
+          const isActiveInShift = workerTodaySessions.some((s) => Boolean(s.isActive));
+          const isLate = isPresent && lateWorkerIds.has(w.id);
+          const workedHours =
+            Math.round(workerTodaySessions.reduce((sum, s) => sum + sessionHours(s), 0) * 10) / 10;
+          const clockInTs = workerSession?.loginTime?.toDate
+            ? workerSession.loginTime
+            : workerSession?.startTime?.toDate
+              ? workerSession.startTime
+              : null;
 
           return (
             <div
@@ -192,10 +201,20 @@ export default function TodayTab({
                 <div className="mt-3 pt-2 border-t border-zinc-200 dark:border-zinc-800 text-xs space-y-1">
                   <div className="flex justify-between">
                     <span className="text-zinc-500">{t("الحالة الآن:", "Status:")}</span>
-                    <strong className={w.isOnline ? "text-emerald-600" : "text-zinc-500"}>
-                      {w.isOnline
-                        ? t("🟢 متصل بالوردية", "🟢 Online in shift")
-                        : t("⚪ غير متصل", "⚪ Offline")}
+                    <strong
+                      className={
+                        isActiveInShift
+                          ? "text-emerald-600"
+                          : isPresent
+                            ? "text-blue-600 dark:text-blue-400"
+                            : "text-zinc-500"
+                      }
+                    >
+                      {isActiveInShift
+                        ? t("🟢 متصل بالوردية الآن", "🟢 Online in shift")
+                        : isPresent
+                          ? t("🔵 أنهى الشيفت / استراحة", "🔵 Clocked out")
+                          : t("⚪ لم يسجل حضور اليوم", "⚪ Not clocked in")}
                     </strong>
                   </div>
                   <div className="flex justify-between">
@@ -216,11 +235,11 @@ export default function TodayTab({
                       {w.hireDate || t("⚠ حدد تاريخ التعيين", "⚠ Set join date")}
                     </button>
                   </div>
-                  {workerSession?.loginTime?.toDate && (
+                  {clockInTs?.toDate && (
                     <div className="flex justify-between">
                       <span className="text-zinc-500">{t("وقت الحضور:", "Clock-in Time:")}</span>
                       <strong>
-                        {workerSession.loginTime.toDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        {clockInTs.toDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                       </strong>
                     </div>
                   )}

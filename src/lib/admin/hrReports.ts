@@ -286,8 +286,9 @@ export type SessionForHr = SessionLike & {
 
 export function sessionDateYmd(s: SessionForHr): string | null {
   if (s.date && /^\d{4}-\d{2}-\d{2}/.test(s.date)) return s.date.slice(0, 10);
-  if (s.loginTime?.toDate) return s.loginTime.toDate().toISOString().split("T")[0];
-  if (s.createdAt?.toDate) return s.createdAt.toDate().toISOString().split("T")[0];
+  if (s.loginTime?.toDate) return getLocalYmdForPin(s.loginTime.toDate());
+  if (s.startTime?.toDate) return getLocalYmdForPin(s.startTime.toDate());
+  if (s.createdAt?.toDate) return getLocalYmdForPin(s.createdAt.toDate());
   return null;
 }
 
@@ -973,8 +974,10 @@ export function computePayrollForWorker(
 }
 
 export function isLateTodayHtml(session: SessionForHr, settings: Partial<HrSettings> = DEFAULT_HR_SETTINGS): boolean {
-  if (!session.loginTime?.toDate) return false;
-  const login = session.loginTime.toDate();
+  const ts = session.loginTime?.toDate ? session.loginTime : session.startTime?.toDate ? session.startTime : null;
+  if (!ts?.toDate) return false;
+  const login = ts.toDate();
+
   const loginMin = login.getHours() * 60 + login.getMinutes();
   const shiftStartMin = Math.round(parseHourStringToDecimal(settings.shiftStartTime, 10) * 60);
   const graceMins = settings.gracePeriodMinutes ?? 60;

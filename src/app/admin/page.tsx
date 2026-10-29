@@ -142,7 +142,6 @@ export default function AdminOverviewPage() {
 
     const approvedWorkers = workers.filter((w) => w.status === "approved");
     const pendingWorkers = workers.filter((w) => w.status === "pending");
-    const onlineWorkers = workers.filter((w) => w.isOnline);
 
     const pendingApproval = tasks.filter((t) => t.status === "pending-approval");
     const openTasks = tasks.filter((t) => t.status !== "completed");
@@ -162,7 +161,9 @@ export default function AdminOverviewPage() {
     const todaySessions = sessions.filter((x) => x.date === today);
     const todayMs = todaySessions.reduce((a, x) => a + (x.totalWorkTime || 0), 0);
     const lateToday = todaySessions.filter((x) => x.isLate).length;
-    const activeSessions = sessions.filter((x) => x.isActive);
+    const activeSessions = todaySessions.filter((x) => x.isActive);
+    const activeTodayWorkerIds = new Set(activeSessions.map((x) => x.workerId).filter(Boolean));
+    const onlineWorkers = workers.filter((w) => activeTodayWorkerIds.has(w.id));
 
     // Last 7 days hours
     const week: { label: string; date: string; h: number }[] = [];

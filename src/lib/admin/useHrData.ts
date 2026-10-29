@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback } from "react";
-import { collection, onSnapshot } from "firebase/firestore";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { collection, doc, onSnapshot, updateDoc } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth, db } from "@/lib/firebase";
 import { sessionHours } from "@/lib/admin/workTime";
@@ -55,8 +55,12 @@ export function useHrData({
   const [adminEmail, setAdminEmail] = useState("admin");
 
   const [workers, setWorkers] = useState<Worker[]>([]);
+  const [workersLoaded, setWorkersLoaded] = useState(false);
 
   const [sessions, setSessions] = useState<WorkSession[]>([]);
+  const [sessionsLoaded, setSessionsLoaded] = useState(false);
+
+  const cleanedStaleOnlineRef = useRef<Set<string>>(new Set());
 
   const [tasks, setTasks] = useState<TaskDoc[]>([]);
 
@@ -89,6 +93,7 @@ export function useHrData({
       const list: Worker[] = [];
       snap.forEach((d) => list.push({ id: d.id, ...d.data() } as Worker));
       setWorkers(list);
+      setWorkersLoaded(true);
     });
   }, [refreshTick]);
 
@@ -97,6 +102,7 @@ export function useHrData({
       const list: WorkSession[] = [];
       snap.forEach((d) => list.push({ id: d.id, ...d.data() } as WorkSession));
       setSessions(list);
+      setSessionsLoaded(true);
     });
   }, [refreshTick]);
 
@@ -200,15 +206,45 @@ export function useHrData({
   }, [today, holidays]);
 
   const todaysSessions = useMemo(() => {
-    return sessions.filter((s) => sessionDateYmd(s) === today);
+    return sessions.filter(
+      (s) =>
+        sessionDateYmd(s) === today &&
+        Boolean(s.workerId) &&
+        (Boolean(s.loginTime) || Boolean(s.startTime) || Boolean(s.isActive) || (s.totalWorkTime ?? 0) > 0),
+    );
   }, [sessions, today]);
 
+  // A worker is Present Today ONLY if they actually clocked in and created a workSession today.
+  // Never mark a worker as present based on a stale `w.isOnline` flag on their profile document.
   const presentWorkerIds = useMemo(() => {
     const set = new Set<string>();
     for (const s of todaysSessions) if (s.workerId) set.add(s.workerId);
-    for (const w of approved) if (w.isOnline) set.add(w.id);
     return set;
-  }, [todaysSessions, approved]);
+  }, [todaysSessions]);
+
+  const activeShiftWorkerIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of todaysSessions) {
+      if (s.workerId && s.isActive) set.add(s.workerId);
+    }
+    return set;
+  }, [todaysSessions]);
+
+  // Auto-heal stale `isOnline: true` flags in Firestore for workers who do not have an active shift today.
+  useEffect(() => {
+    if (!workersLoaded || !sessionsLoaded) return;
+    for (const w of workers) {
+      if (w.isOnline && !activeShiftWorkerIds.has(w.id) && !cleanedStaleOnlineRef.current.has(w.id)) {
+        cleanedStaleOnlineRef.current.add(w.id);
+        updateDoc(doc(db, "workers", w.id), {
+          isOnline: false,
+          presenceStatus: "offline",
+        }).catch(() => {});
+      } else if (w.isOnline && activeShiftWorkerIds.has(w.id)) {
+        cleanedStaleOnlineRef.current.delete(w.id);
+      }
+    }
+  }, [workersLoaded, sessionsLoaded, workers, activeShiftWorkerIds]);
 
   const lateWorkerIds = useMemo(() => {
     const set = new Set<string>();
