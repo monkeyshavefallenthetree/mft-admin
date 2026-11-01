@@ -1,4 +1,4 @@
-import { sessionHours, type SessionLike } from "@/lib/admin/workTime";
+import { effectiveSessionWorkMs, sessionHours, type SessionLike } from "@/lib/admin/workTime";
 import {
   POLICY_2026_SETTINGS_DEFAULTS,
   type Policy2026SettingsFields,
@@ -672,8 +672,46 @@ export function computePayrollForWorker(
   const cfg = options?.settings ?? DEFAULT_HR_SETTINGS;
   const hr = hourlyRate > 0 ? hourlyRate : cfg.defaultHourlyRate || DEFAULT_HOURLY;
   const std = cfg.standardHours || WORK_POLICY.STANDARD_HOURS;
-  const daysWorked = workerSessions.length;
-  const totalHours = workerSessions.reduce((sum, s) => sum + sessionHours(s), 0);
+  const consolidatedByDate = new Map<string, SessionForHr>();
+  for (const s of workerSessions) {
+    const dKey = sessionDateYmd(s);
+    if (!dKey) continue;
+    const sMs = effectiveSessionWorkMs(s);
+    const sStart = toJsDate(s.startTime) ?? toJsDate(s.loginTime);
+    const sOut = s.isActive ? null : toJsDate(s.logoutTime);
+    const prev = consolidatedByDate.get(dKey);
+    if (!prev) {
+      consolidatedByDate.set(dKey, {
+        ...s,
+        date: dKey,
+        totalWorkTime: sMs,
+        isActive: Boolean(s.isActive),
+      });
+    } else {
+      const pStart = toJsDate(prev.startTime) ?? toJsDate(prev.loginTime);
+      const earliest =
+        sStart && pStart ? (sStart.getTime() <= pStart.getTime() ? sStart : pStart) : (sStart ?? pStart);
+      const anyActive = Boolean(prev.isActive || s.isActive);
+      const pOut = prev.isActive ? null : toJsDate(prev.logoutTime);
+      const latestOut =
+        anyActive ? null : sOut && pOut ? (sOut.getTime() >= pOut.getTime() ? sOut : pOut) : (sOut ?? pOut);
+      const wrapTs = (dt: Date | null) => (dt ? { toDate: () => dt } : null);
+      consolidatedByDate.set(dKey, {
+        ...prev,
+        date: dKey,
+        startTime: wrapTs(earliest),
+        loginTime: wrapTs(earliest),
+        logoutTime: wrapTs(latestOut),
+        isActive: anyActive,
+        isExternalMission: Boolean(prev.isExternalMission && s.isExternalMission),
+        totalWorkTime: (prev.totalWorkTime || 0) + sMs,
+      });
+    }
+  }
+  const dailySessions = Array.from(consolidatedByDate.values());
+  const daysWorked = dailySessions.length;
+  const totalHours = dailySessions.reduce((sum, s) => sum + (s.totalWorkTime || 0) / 3_600_000, 0);
+
 
   const pcfg = policyConfigFromSettings(cfg);
   const weekend = cfg.weekendDays ?? [5, 6];
@@ -730,12 +768,12 @@ export function computePayrollForWorker(
   const fallbackDaysFor = (firstIn: Date) =>
     evaluateClockIn(firstIn, { count: pcfg.permissionMaxCount, minutes: 0 }, pcfg).fallbackPenaltyDays;
 
-  const sorted = [...workerSessions].sort((a, b) =>
+  const sorted = [...dailySessions].sort((a, b) =>
     (sessionDateYmd(a) ?? "").localeCompare(sessionDateYmd(b) ?? ""),
   );
 
   for (const s of sorted) {
-    const h = sessionHours(s);
+    const h = (s.totalWorkTime || 0) / 3_600_000;
     const date = sessionDateYmd(s) ?? "";
 
     if (!isPolicy2026Active(cfg, date)) {

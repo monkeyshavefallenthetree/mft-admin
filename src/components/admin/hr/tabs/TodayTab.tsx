@@ -146,17 +146,23 @@ export default function TodayTab({
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
         {filteredTodayWorkers.map((w) => {
           const workerTodaySessions = todaysSessions.filter((s) => s.workerId === w.id);
+          const sortedByStart = [...workerTodaySessions].sort((a, b) => {
+            const aMs = (a.startTime?.toDate?.() ?? a.loginTime?.toDate?.())?.getTime() ?? Number.MAX_SAFE_INTEGER;
+            const bMs = (b.startTime?.toDate?.() ?? b.loginTime?.toDate?.())?.getTime() ?? Number.MAX_SAFE_INTEGER;
+            return aMs - bMs;
+          });
           const workerSession =
-            workerTodaySessions.find((s) => s.loginTime?.toDate || s.startTime?.toDate) || workerTodaySessions[0];
+            sortedByStart.find((s) => !s.isExternalMission && (s.startTime?.toDate || s.loginTime?.toDate)) ||
+            sortedByStart[0];
           const isPresent = workerTodaySessions.length > 0 && presentWorkerIds.has(w.id);
           const isActiveInShift = workerTodaySessions.some((s) => Boolean(s.isActive));
           const isLate = isPresent && lateWorkerIds.has(w.id);
           const workedHours =
             Math.round(workerTodaySessions.reduce((sum, s) => sum + sessionHours(s), 0) * 10) / 10;
-          const clockInTs = workerSession?.loginTime?.toDate
-            ? workerSession.loginTime
-            : workerSession?.startTime?.toDate
-              ? workerSession.startTime
+          const clockInTs = workerSession?.startTime?.toDate
+            ? workerSession.startTime
+            : workerSession?.loginTime?.toDate
+              ? workerSession.loginTime
               : null;
 
           return (

@@ -59,6 +59,7 @@ export function useHrData({
 
   const [sessions, setSessions] = useState<WorkSession[]>([]);
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
+  const [liveNowMs, setLiveNowMs] = useState(() => Date.now());
 
   const cleanedStaleOnlineRef = useRef<Set<string>>(new Set());
 
@@ -230,6 +231,13 @@ export function useHrData({
     return set;
   }, [todaysSessions]);
 
+  // Refresh live running shift hours every 30 seconds while any worker has an active shift today
+  useEffect(() => {
+    if (activeShiftWorkerIds.size === 0) return;
+    const id = window.setInterval(() => setLiveNowMs(Date.now()), 30_000);
+    return () => window.clearInterval(id);
+  }, [activeShiftWorkerIds.size]);
+
   // Auto-heal stale `isOnline: true` flags in Firestore for workers who do not have an active shift today.
   useEffect(() => {
     if (!workersLoaded || !sessionsLoaded) return;
@@ -246,21 +254,39 @@ export function useHrData({
     }
   }, [workersLoaded, sessionsLoaded, workers, activeShiftWorkerIds]);
 
+  // Evaluate lateness ONLY against each worker's earliest clock-in of the day
   const lateWorkerIds = useMemo(() => {
-    const set = new Set<string>();
+    const earliestByWorker = new Map<string, { ms: number; session: WorkSession }>();
     for (const s of todaysSessions) {
-      if (s.workerId && isLateTodayHtml(s, settings)) set.add(s.workerId);
+      if (!s.workerId || s.isExternalMission) continue;
+      const startD = s.startTime?.toDate?.() ?? s.loginTime?.toDate?.();
+      if (!startD) continue;
+      const ms = startD.getTime();
+      const cur = earliestByWorker.get(s.workerId);
+      if (!cur || ms < cur.ms) {
+        earliestByWorker.set(s.workerId, { ms, session: s });
+      }
+    }
+    const set = new Set<string>();
+    for (const [wId, entry] of earliestByWorker.entries()) {
+      if (isLateTodayHtml(entry.session, settings)) set.add(wId);
     }
     return set;
   }, [todaysSessions, settings]);
 
   const overtimeWorkerIds = useMemo(() => {
-    const set = new Set<string>();
+    const hoursByWorker = new Map<string, number>();
     for (const s of todaysSessions) {
-      if (s.workerId && sessionHours(s) > (settings.standardHours || 8)) set.add(s.workerId);
+      if (!s.workerId) continue;
+      hoursByWorker.set(s.workerId, (hoursByWorker.get(s.workerId) ?? 0) + sessionHours(s, liveNowMs));
+    }
+    const set = new Set<string>();
+    const std = settings.standardHours || 8;
+    for (const [wId, hrs] of hoursByWorker.entries()) {
+      if (hrs > std) set.add(wId);
     }
     return set;
-  }, [todaysSessions, settings.standardHours]);
+  }, [todaysSessions, settings.standardHours, liveNowMs]);
 
   // Today KPI Metrics
   const hrSummary = useMemo(() => {
@@ -270,7 +296,7 @@ export function useHrData({
     const lateToday = lateWorkerIds.size;
     const overtimeToday = overtimeWorkerIds.size;
     const attendanceRate = expectedWorkers > 0 ? Math.round((presentToday / expectedWorkers) * 100) : 0;
-    const payrollHoursToday = todaysSessions.reduce((sum, s) => sum + sessionHours(s), 0);
+    const payrollHoursToday = todaysSessions.reduce((sum, s) => sum + sessionHours(s, liveNowMs), 0);
 
     return {
       presentToday,
@@ -280,7 +306,7 @@ export function useHrData({
       attendanceRate,
       payrollHoursToday: Math.round(payrollHoursToday * 10) / 10,
     };
-  }, [approved.length, presentWorkerIds.size, lateWorkerIds.size, overtimeWorkerIds.size, todaysSessions]);
+  }, [approved.length, presentWorkerIds.size, lateWorkerIds.size, overtimeWorkerIds.size, todaysSessions, liveNowMs]);
 
   const workerTaskStats = useMemo(() => {
     const m = new Map<string, { completed: number; total: number }>();

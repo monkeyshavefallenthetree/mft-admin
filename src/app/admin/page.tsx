@@ -5,6 +5,7 @@ import Link from "next/link";
 import { collection, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { FILTERED_LINKS, ICONS, STRAPI_CMS_ADMIN } from "@/lib/admin/nav";
+import { effectiveSessionWorkMs, type SessionLike } from "@/lib/admin/workTime";
 
 /* ───────────────────────── Types ───────────────────────── */
 type TS = { toDate?: () => Date } | Date | string | null | undefined;
@@ -12,7 +13,7 @@ type TS = { toDate?: () => Date } | Date | string | null | undefined;
 interface Worker { id: string; firstName?: string; lastName?: string; status?: string; isOnline?: boolean; role?: string; department?: string }
 interface Project { id: string; name: string; clientName?: string; status?: string; createdAt?: TS }
 interface Task { id: string; title: string; status: string; priority?: string; projectId?: string; dueDate?: TS; createdAt?: TS; updatedAt?: TS; assignedTo?: string | string[] }
-interface Session { id: string; date?: string; totalWorkTime?: number; isActive?: boolean; workerId?: string; workerName?: string; isLate?: boolean }
+interface Session extends SessionLike { id: string; isLate?: boolean }
 interface ExceptionReq { id: string; workerName?: string; type?: string; status?: string; createdAt?: TS; submittedAt?: TS }
 interface Submission { id: string; fullName?: string; company?: string; status?: string; submittedAt?: TS; timestamp?: TS; services?: string[] }
 
@@ -159,7 +160,7 @@ export default function AdminOverviewPage() {
     const completedProjects = projects.filter((p) => p.status === "completed");
 
     const todaySessions = sessions.filter((x) => x.date === today);
-    const todayMs = todaySessions.reduce((a, x) => a + (x.totalWorkTime || 0), 0);
+    const todayMs = todaySessions.reduce((a, x) => a + effectiveSessionWorkMs(x, now.getTime()), 0);
     const lateToday = todaySessions.filter((x) => x.isLate).length;
     const activeSessions = todaySessions.filter((x) => x.isActive);
     const activeTodayWorkerIds = new Set(activeSessions.map((x) => x.workerId).filter(Boolean));

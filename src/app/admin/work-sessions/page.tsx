@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo } from "react";
 import { collection, onSnapshot, Timestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { downloadCsv } from "@/lib/admin/csv";
-import { sessionHours } from "@/lib/admin/workTime";
+import { effectiveSessionWorkMs, sessionHours } from "@/lib/admin/workTime";
 import { DEPARTMENTS } from "@/lib/admin/constants";
 import { useUrlState } from "@/lib/admin/useUrlState";
 import { toast } from "@/lib/admin/feedback";
@@ -19,8 +19,13 @@ interface WorkSession {
   loginTime?: Timestamp | null;
   logoutTime?: Timestamp | null;
   startTime?: Timestamp | null;
+  segmentStartAt?: Timestamp | null;
+  lastLoginTime?: Timestamp | null;
+  lastUpdated?: Timestamp | null;
   totalWorkTime?: number;
+  bankedWorkTime?: number;
   isActive?: boolean;
+  isExternalMission?: boolean;
   attendanceStatus?: string;
   department?: string;
   role?: string;
@@ -183,7 +188,7 @@ export default function AdminWorkSessionsPage() {
     let idle = 0;
     let ot = 0;
     for (const s of filtered) {
-      totalMs += s.totalWorkTime || 0;
+      totalMs += effectiveSessionWorkMs(s);
       if (s.workerId) workersSet.add(s.workerId);
       if (isLateSession(s)) late += 1;
       if (s.isActive) {
