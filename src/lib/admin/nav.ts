@@ -83,6 +83,7 @@ export const ICONS = {
   activity: "M13 10V3L4 14h7v7l9-11h-7z",
   reimbursements: "M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z",
   policyLab: "M9 3v6.5L4.2 18.1A2 2 0 006 21h12a2 2 0 001.8-2.9L15 9.5V3M8 3h8M7 15h10",
+  clientPortal: "M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z",
 };
 
 export const NAV_GROUPS: NavGroup[] = [
@@ -115,6 +116,7 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     title: "Clients",
     items: [
+      { label: "Client Portal", href: "/admin/client-portal", icon: ICONS.clientPortal, description: "3-month social media rollout, calendars & client approvals", roles: ["super_admin", "ops_admin"] },
       { label: "Submissions", href: "/admin/submissions", icon: ICONS.submissions, description: "Inbound leads & meeting requests", badge: "newSubmissions", roles: ["super_admin", "ops_admin"] },
       { label: "Strapi CMS", href: STRAPI_CMS_ADMIN, icon: ICONS.cms, description: "Website content manager", external: true, roles: ["super_admin", "ops_admin"] },
     ],
