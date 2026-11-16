@@ -378,25 +378,53 @@ export default function AdminOverviewPage() {
           )}
         </div>
 
-        <div className="ui-card p-5 xl:col-span-2">
-          <SectionHeader title="Hours worked — last 7 days" subtitle={`${s.weekTotal}h total across the team`} href="/admin/work-sessions" cta="Sessions" />
-          <div className="flex h-52 items-end gap-3">
-            {s.week.map((d, i) => {
-              const pct = (d.h / s.weekMax) * 100;
-              const isToday = i === s.week.length - 1;
-              return (
-                <div key={d.date} className="group flex flex-1 flex-col items-center gap-2">
-                  <span className="text-[11px] font-semibold tabular-nums text-zinc-600 opacity-0 transition-opacity group-hover:opacity-100">{d.h}h</span>
-                  <div className="relative flex h-40 w-full items-end overflow-hidden rounded-lg bg-zinc-100">
-                    <div
-                      className={`w-full rounded-lg transition-all duration-700 ${isToday ? "bg-gradient-to-t from-red-600 to-red-400" : "bg-gradient-to-t from-zinc-800 to-zinc-500 group-hover:from-red-600 group-hover:to-red-400"}`}
-                      style={{ height: `${Math.max(pct, d.h > 0 ? 4 : 0)}%` }}
-                    />
+        <div className="ui-card p-5 xl:col-span-2 flex flex-col justify-between">
+          <SectionHeader
+            title="Hours worked — last 7 days"
+            subtitle={`${s.weekTotal}h total · Avg ${Math.round((s.weekTotal / 7) * 10) / 10}h/day`}
+            href="/admin/work-sessions"
+            cta="Sessions"
+          />
+          <div className="relative pt-4">
+            {/* Subtle horizontal reference gridlines */}
+            <div className="pointer-events-none absolute inset-x-0 top-4 bottom-7 flex flex-col justify-between">
+              {[100, 66, 33, 0].map((g) => (
+                <div key={g} className="w-full border-b border-dashed border-zinc-100" />
+              ))}
+            </div>
+
+            <div className="relative flex h-48 items-end gap-3">
+              {s.week.map((d, i) => {
+                const pct = (d.h / s.weekMax) * 100;
+                const isToday = i === s.week.length - 1;
+                return (
+                  <div key={d.date} className="group flex flex-1 flex-col items-center gap-2">
+                    <span
+                      className={`rounded-md px-1.5 py-0.5 text-[11px] font-bold tabular-nums transition-all ${
+                        isToday
+                          ? "bg-red-50 text-red-600"
+                          : "text-zinc-600 group-hover:bg-zinc-900 group-hover:text-white"
+                      }`}
+                    >
+                      {d.h}h
+                    </span>
+                    <div className="relative flex h-36 w-full max-w-[48px] items-end overflow-hidden rounded-xl bg-zinc-100/80 p-1">
+                      <div
+                        className={`w-full rounded-lg transition-all duration-700 ${
+                          isToday
+                            ? "bg-gradient-to-t from-red-600 via-red-500 to-amber-400 shadow-sm shadow-red-500/30"
+                            : "bg-gradient-to-t from-zinc-800 to-zinc-500 group-hover:from-red-600 group-hover:to-red-400"
+                        }`}
+                        style={{ height: `${Math.max(pct, d.h > 0 ? 8 : 3)}%` }}
+                      />
+                    </div>
+                    <span className={`text-[11px] font-semibold ${isToday ? "text-red-600" : "text-zinc-500"}`}>
+                      {d.label}
+                    </span>
                   </div>
-                  <span className={`text-[11px] font-medium ${isToday ? "text-red-600" : "text-zinc-500"}`}>{d.label}</span>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
         </div>
       </section>
@@ -479,21 +507,63 @@ export default function AdminOverviewPage() {
 
         <div className="ui-card p-5">
           <SectionHeader title="Task pipeline" subtitle={`${tasks.length} tasks overall`} href="/admin/tasks" />
-          <div className="flex items-center gap-6">
-            <div className="relative h-32 w-32 shrink-0 rounded-full" style={{ background: tasks.length ? `conic-gradient(${s.conic})` : "#f4f4f5" }}>
-              <div className="absolute inset-3 flex flex-col items-center justify-center rounded-full bg-white">
-                <span className="text-2xl font-bold tabular-nums text-zinc-900">{tasks.length ? Math.round((s.completedTasks.length / tasks.length) * 100) : 0}%</span>
-                <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">done</span>
+          <div className="flex flex-col sm:flex-row items-center gap-6">
+            <div className="relative h-36 w-36 shrink-0">
+              <svg viewBox="0 0 120 120" className="h-36 w-36 -rotate-90">
+                <circle cx="60" cy="60" r="48" fill="none" stroke="#e4e4e7" strokeWidth="14" className="opacity-40" />
+                {(() => {
+                  const total = Math.max(1, tasks.length);
+                  const circumference = 2 * Math.PI * 48;
+                  let cum = 0;
+                  return s.statusDist.map((x) => {
+                    if (x.n <= 0) return null;
+                    const dash = (x.n / total) * circumference;
+                    const offset = -(cum / total) * circumference;
+                    cum += x.n;
+                    return (
+                      <circle
+                        key={x.key}
+                        cx="60"
+                        cy="60"
+                        r="48"
+                        fill="none"
+                        stroke={x.color}
+                        strokeWidth="14"
+                        strokeDasharray={`${dash} ${circumference - dash}`}
+                        strokeDashoffset={offset}
+                        className="transition-all duration-700"
+                      />
+                    );
+                  });
+                })()}
+              </svg>
+              <div className="absolute inset-0 flex flex-col items-center justify-center">
+                <span className="text-2xl font-bold tabular-nums text-zinc-900">
+                  {tasks.length ? Math.round((s.completedTasks.length / tasks.length) * 100) : 0}%
+                </span>
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">done</span>
               </div>
             </div>
-            <ul className="flex-1 space-y-2.5">
-              {s.statusDist.map((x) => (
-                <li key={x.key} className="flex items-center gap-2 text-[13px]">
-                  <span className="h-2.5 w-2.5 rounded-full" style={{ background: x.color }} />
-                  <span className="flex-1 text-zinc-600">{x.label}</span>
-                  <span className="font-semibold tabular-nums text-zinc-900">{x.n}</span>
-                </li>
-              ))}
+            <ul className="flex-1 w-full space-y-2.5">
+              {s.statusDist.map((x) => {
+                const pct = tasks.length ? Math.round((x.n / tasks.length) * 100) : 0;
+                return (
+                  <li key={x.key} className="space-y-1 text-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="h-2.5 w-2.5 rounded-full" style={{ background: x.color }} />
+                      <span className="flex-1 font-medium text-zinc-600">{x.label}</span>
+                      <span className="font-bold tabular-nums text-zinc-900">{x.n}</span>
+                      <span className="w-8 text-right text-[10px] tabular-nums text-zinc-400">{pct}%</span>
+                    </div>
+                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-100">
+                      <div
+                        className="h-full rounded-full transition-all duration-700"
+                        style={{ width: `${pct}%`, backgroundColor: x.color }}
+                      />
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           </div>
         </div>

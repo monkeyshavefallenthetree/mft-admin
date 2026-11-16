@@ -43,6 +43,94 @@ const PUBLISH_STATUSES: PublishStatus[] = [
   "Published",
 ];
 
+function Icon({ d, className = "h-[18px] w-[18px]" }: { d: string; className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
+      <path strokeLinecap="round" strokeLinejoin="round" d={d} />
+    </svg>
+  );
+}
+
+function statusPillClass(status: string): string {
+  const s = status.toLowerCase();
+  if (s === "done" || s === "published" || s === "approved" || s === "completed") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+  if (s.includes("progress") || s === "scheduled" || s === "active") {
+    return "border-blue-200 bg-blue-50 text-blue-700";
+  }
+  if (s.includes("wait") || s.includes("review")) {
+    return "border-amber-200 bg-amber-50 text-amber-700";
+  }
+  if (s.includes("revision") || s.includes("delay")) {
+    return "border-red-200 bg-red-50 text-red-700";
+  }
+  return "border-zinc-200 bg-zinc-100 text-zinc-600";
+}
+
+function SvgDonutChart({
+  segments,
+  centerValue,
+  centerLabel,
+}: {
+  segments: Array<{ label: string; value: number; color: string }>;
+  centerValue: string;
+  centerLabel: string;
+}) {
+  const total = Math.max(1, segments.reduce((acc, s) => acc + s.value, 0));
+  const radius = 48;
+  const circumference = 2 * Math.PI * radius;
+  let cumulative = 0;
+
+  return (
+    <div className="flex flex-col sm:flex-row items-center gap-6">
+      <div className="relative h-36 w-36 shrink-0">
+        <svg viewBox="0 0 120 120" className="h-36 w-36 -rotate-90">
+          <circle cx="60" cy="60" r={radius} fill="none" stroke="#e4e4e7" strokeWidth="14" className="opacity-40" />
+          {segments.map((seg) => {
+            if (seg.value <= 0) return null;
+            const dash = (seg.value / total) * circumference;
+            const offset = -(cumulative / total) * circumference;
+            cumulative += seg.value;
+            return (
+              <circle
+                key={seg.label}
+                cx="60"
+                cy="60"
+                r={radius}
+                fill="none"
+                stroke={seg.color}
+                strokeWidth="14"
+                strokeDasharray={`${dash} ${circumference - dash}`}
+                strokeDashoffset={offset}
+                className="transition-all duration-700"
+              />
+            );
+          })}
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
+          <span className="text-2xl font-bold tabular-nums text-zinc-900">{centerValue}</span>
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">{centerLabel}</span>
+        </div>
+      </div>
+
+      <ul className="flex-1 w-full space-y-2">
+        {segments.map((seg) => {
+          const pct = Math.round((seg.value / total) * 100);
+          return (
+            <li key={seg.label} className="flex items-center gap-2.5 text-xs">
+              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: seg.color }} />
+              <span className="flex-1 font-medium text-zinc-600">{seg.label}</span>
+              <span className="font-bold tabular-nums text-zinc-900">{seg.value}</span>
+              <span className="w-9 text-right text-[11px] tabular-nums text-zinc-400">({pct}%)</span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 export default function AdminClientPortalPage() {
   const [adminEmail, setAdminEmail] = useState("admin@mft.com");
   const [portalsMap, setPortalsMap] = useState<Record<string, ClientRolloutPortal>>({
@@ -55,9 +143,14 @@ export default function AdminClientPortalPage() {
   const [saving, setSaving] = useState(false);
   const [importingSheet, setImportingSheet] = useState(false);
 
-  // UI Navigation
+  // Navigation & Filters
   const [activeTab, setActiveTab] = useState<AdminPortalTab>("overview");
   const [cycleFilter, setCycleFilter] = useState<string>("all");
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // Quick Drawer / Modal Editor for Post or Milestone
+  const [editingPost, setEditingPost] = useState<FeedPostItem | null>(null);
+  const [editingMilestone, setEditingMilestone] = useState<MilestoneItem | null>(null);
 
   // New Client Modal
   const [newClientModal, setNewClientModal] = useState(false);
@@ -88,7 +181,6 @@ export default function AdminClientPortalPage() {
     return applyClientInteractionsToPortal(base, interactions);
   }, [portalsMap, selectedPortalId, interactions]);
 
-  // Keep draft synced with livePortal when not dirty or when switching client
   useEffect(() => {
     if (!dirty || draft.id !== livePortal.id) {
       setDraft(livePortal);
@@ -101,16 +193,17 @@ export default function AdminClientPortalPage() {
     setDirty(true);
   };
 
-  const handleSavePortal = async () => {
+  const handleSavePortal = async (nextPortal?: ClientRolloutPortal) => {
+    const toSave = nextPortal ?? draft;
     setSaving(true);
     try {
-      await saveClientPortalToFirestore(draft, adminEmail);
+      await saveClientPortalToFirestore(toSave, adminEmail);
       setDirty(false);
-      toast.success(`Saved "${draft.clientName}" Client Portal ✓`, {
-        description: "All changes are now live on the Client Portal.",
+      toast.success(`تم حفظ ومزامنة بوابة "${toSave.clientName}" ✓`, {
+        description: "التعديلات ظاهرة الآن للعميل لحظياً.",
       });
     } catch (err) {
-      toast.error("Failed to save Client Portal", {
+      toast.error("تعذر حفظ التعديلات", {
         description: err instanceof Error ? err.message : String(err),
       });
     } finally {
@@ -121,7 +214,7 @@ export default function AdminClientPortalPage() {
   const handleImportGoogleSheet = async (targetUrl?: string) => {
     const urlToUse = (targetUrl ?? draft.googleSheetUrl ?? "").trim();
     if (!urlToUse) {
-      toast.warning("Please enter a Google Sheets URL first");
+      toast.warning("يرجى إدخال رابط Google Sheet أولاً");
       return;
     }
     setImportingSheet(true);
@@ -130,11 +223,11 @@ export default function AdminClientPortalPage() {
       setDraft(imported);
       await saveClientPortalToFirestore(imported, adminEmail);
       setDirty(false);
-      toast.success("Synced from Google Sheet ✓", {
-        description: `Loaded ${imported.milestones.length} milestones, ${imported.feedCalendar.length} feed posts, and ${imported.dailyStories.length} daily stories.`,
+      toast.success("تمت المزامنة من Google Sheet بنجاح ✓", {
+        description: `تم سحب ${imported.milestones.length} مرحلة، ${imported.feedCalendar.length} بوست، و ${imported.dailyStories.length} ستوري.`,
       });
     } catch (err) {
-      toast.error("Google Sheet Sync Failed", {
+      toast.error("فشل سحب البيانات من Google Sheet", {
         description: err instanceof Error ? err.message : String(err),
       });
     } finally {
@@ -147,7 +240,7 @@ export default function AdminClientPortalPage() {
     const code = newClientCode.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, "");
     const name = newClientName.trim() || code;
     if (!code) {
-      toast.warning("Please enter a short Client Code (e.g. ARC, NIKE)");
+      toast.warning("يرجى إدخال كود العميل (مثال: ARC)");
       return;
     }
     const id = code.toLowerCase();
@@ -171,7 +264,7 @@ export default function AdminClientPortalPage() {
         try {
           created = await importPortalFromGoogleSheetUrl(newClientSheetUrl.trim(), created);
         } catch {
-          /* keep default template if sheet import fails */
+          /* keep default template */
         }
       }
       await saveClientPortalToFirestore(created, adminEmail);
@@ -182,7 +275,7 @@ export default function AdminClientPortalPage() {
       setNewClientCode("");
       setNewClientName("");
       setNewClientSheetUrl("");
-      toast.success(`Created Client Portal for ${name} (${code}) ✓`);
+      toast.success(`تم إنشاء بوابة العميل ${name} (${code}) ✓`);
     } finally {
       setSaving(false);
     }
@@ -192,51 +285,131 @@ export default function AdminClientPortalPage() {
     const origin = typeof window !== "undefined" ? window.location.origin : "";
     const url = `${origin}/client?code=${encodeURIComponent(draft.clientCode)}&pin=${encodeURIComponent(draft.accessPin)}`;
     navigator.clipboard?.writeText(url);
-    toast.success("Copied Client Magic Login Link ✓", {
+    toast.success("تم نسخ رابط دخول العميل السريع ✓", {
       description: url,
     });
   };
 
+  // Analytics & Metrics
+  const stats = useMemo(() => {
+    const msDone = draft.milestones.filter((m) => m.status === "Done").length;
+    const msWaiting = draft.milestones.filter((m) => m.status === "Waiting Client").length;
+    const feedApproved = draft.feedCalendar.filter((f) =>
+      ["Approved", "Scheduled", "Published"].includes(f.publishStatus),
+    ).length;
+    const feedReview = draft.feedCalendar.filter((f) => f.publishStatus === "Ready for Review").length;
+    const feedRevision = draft.feedCalendar.filter((f) => f.publishStatus === "Revision Requested").length;
+    const feedDraft = draft.feedCalendar.filter((f) => f.publishStatus === "Draft").length;
+    const storiesDone = draft.dailyStories.filter((s) =>
+      ["Approved", "Scheduled", "Published"].includes(s.publishStatus),
+    ).length;
+
+    const total = draft.milestones.length + draft.feedCalendar.length + draft.dailyStories.length;
+    const done = msDone + feedApproved + storiesDone;
+    const overallPct = total > 0 ? Math.round((done / total) * 100) : 0;
+
+    const byCycle = draft.cycles.map((c) => {
+      const cMs = draft.milestones.filter((m) => m.cycle === c.name);
+      const cMsDone = cMs.filter((m) => m.status === "Done").length;
+      const cFeed = draft.feedCalendar.filter((f) => f.cycle === c.name);
+      const cFeedDone = cFeed.filter((f) =>
+        ["Approved", "Scheduled", "Published"].includes(f.publishStatus),
+      ).length;
+      const cStories = draft.dailyStories.filter((s) => s.cycle === c.name);
+      const cStoriesDone = cStories.filter((s) =>
+        ["Approved", "Scheduled", "Published"].includes(s.publishStatus),
+      ).length;
+      return {
+        ...c,
+        msPct: cMs.length ? Math.round((cMsDone / cMs.length) * 100) : 0,
+        feedPct: cFeed.length ? Math.round((cFeedDone / cFeed.length) * 100) : 0,
+        storyPct: cStories.length ? Math.round((cStoriesDone / cStories.length) * 100) : 0,
+        msDone: cMsDone,
+        msTotal: cMs.length,
+        feedDone: cFeedDone,
+        feedTotal: cFeed.length,
+        storyDone: cStoriesDone,
+        storyTotal: cStories.length,
+      };
+    });
+
+    return {
+      msDone,
+      msWaiting,
+      feedApproved,
+      feedReview,
+      feedRevision,
+      feedDraft,
+      storiesDone,
+      overallPct,
+      byCycle,
+    };
+  }, [draft]);
+
   const filteredMilestones = useMemo(() => {
-    return draft.milestones.filter((m) => cycleFilter === "all" || m.cycle === cycleFilter);
-  }, [draft.milestones, cycleFilter]);
+    const q = searchQuery.trim().toLowerCase();
+    return draft.milestones.filter((m) => {
+      if (cycleFilter !== "all" && m.cycle !== cycleFilter) return false;
+      if (q && !`${m.milestone} ${m.owner} ${m.notes}`.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [draft.milestones, cycleFilter, searchQuery]);
 
   const filteredFeed = useMemo(() => {
-    return draft.feedCalendar.filter((f) => cycleFilter === "all" || f.cycle === cycleFilter);
-  }, [draft.feedCalendar, cycleFilter]);
+    const q = searchQuery.trim().toLowerCase();
+    return draft.feedCalendar.filter((f) => {
+      if (cycleFilter !== "all" && f.cycle !== cycleFilter) return false;
+      if (q && !`${f.contentName} ${f.publishDate} ${f.topicTitle || ""} ${f.captionText || ""}`.toLowerCase().includes(q)) {
+        return false;
+      }
+      return true;
+    });
+  }, [draft.feedCalendar, cycleFilter, searchQuery]);
 
   const filteredStories = useMemo(() => {
-    return draft.dailyStories.filter((s) => cycleFilter === "all" || s.cycle === cycleFilter);
-  }, [draft.dailyStories, cycleFilter]);
+    const q = searchQuery.trim().toLowerCase();
+    return draft.dailyStories.filter((s) => {
+      if (cycleFilter !== "all" && s.cycle !== cycleFilter) return false;
+      if (q && !`${s.storyId} ${s.publishDate} ${s.topicAssetLink}`.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [draft.dailyStories, cycleFilter, searchQuery]);
 
   return (
     <div className="space-y-6">
-      {/* ── Top Control Header ── */}
-      <div className="rounded-2xl border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-900 p-5 shadow-[3px_3px_0px_0px_#09090b]">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 border-b border-zinc-200 dark:border-zinc-800 pb-4">
+      {/* ── Signature MFT Admin Hero Banner ── */}
+      <section
+        className="relative overflow-hidden rounded-2xl border border-zinc-200 bg-gradient-to-br from-zinc-900 via-zinc-900 to-red-950 p-6 text-white md:p-8"
+        style={{ boxShadow: "var(--mft-shadow-lg)" }}
+      >
+        <div className="pointer-events-none absolute -right-20 -top-20 h-72 w-72 rounded-full bg-red-600/30 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-24 left-1/3 h-56 w-56 rounded-full bg-red-500/10 blur-3xl" />
+
+        <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-red-600">
-                // CLIENT ROLLOUT & APPROVALS PORTAL CONTROL
-              </span>
-              <span className="rounded bg-amber-100 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 px-2 py-0.5 text-[10px] font-mono font-bold text-amber-800 dark:text-amber-300">
+              <span className="rounded-full bg-white/10 px-3 py-0.5 text-[11px] font-semibold text-zinc-200 ring-1 ring-white/15">
                 Client Code: {draft.clientCode} · PIN: {draft.accessPin}
               </span>
-              {draft.contractSigned && (
-                <span className="rounded bg-emerald-100 dark:bg-emerald-950/60 border border-emerald-300 px-2 py-0.5 text-[10px] font-bold text-emerald-800 dark:text-emerald-300">
-                  ✓ Signed by {draft.contractSignedBy}
+              {draft.contractSigned ? (
+                <span className="rounded-full bg-emerald-500/20 px-3 py-0.5 text-[11px] font-semibold text-emerald-300 ring-1 ring-emerald-400/30">
+                  ✓ موقّع بواسطة {draft.contractSignedBy}
+                </span>
+              ) : (
+                <span className="rounded-full bg-amber-500/20 px-3 py-0.5 text-[11px] font-semibold text-amber-300 ring-1 ring-amber-400/30">
+                  ● بانتظار توقيع العميل
                 </span>
               )}
             </div>
-            <h1 className="text-2xl font-bold tracking-tight text-zinc-950 dark:text-white mt-1">
-              إدارة بوابة العملاء وخطة السوشيال ميديا ({draft.clientName})
+            <h1 className="mt-2 text-2xl font-semibold tracking-tight md:text-3xl">
+              {draft.projectTitle}
             </h1>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-              تحكم كامل في الجداول الزمنية، بوستات الـ Feed والـ Reels، الـ Stories اليومية، واستلام اعتمادات العميل لحظياً.
+            <p className="mt-1.5 max-w-2xl text-sm text-zinc-300">
+              لوحة التحكم الكاملة في بوابة العميل، الجداول الزمنية، كالندر البوستات والـ Stories، ومزامنة Google Sheets.
             </p>
           </div>
 
-          {/* Client Switcher & Top Actions */}
+          {/* Client Switcher & Primary Action Buttons */}
           <div className="flex flex-wrap items-center gap-2">
             <select
               value={selectedPortalId}
@@ -244,10 +417,10 @@ export default function AdminClientPortalPage() {
                 setSelectedPortalId(e.target.value);
                 setDirty(false);
               }}
-              className="rounded-lg border-2 border-zinc-900 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-2 text-xs font-bold text-zinc-900 dark:text-white"
+              className="rounded-lg bg-white/10 px-3 py-2 text-xs font-semibold text-white ring-1 ring-white/15 backdrop-blur focus:outline-none cursor-pointer"
             >
               {Object.values(portalsMap).map((p) => (
-                <option key={p.id} value={p.id}>
+                <option key={p.id} value={p.id} className="text-zinc-900">
                   🏢 {p.clientName} ({p.clientCode})
                 </option>
               ))}
@@ -256,7 +429,7 @@ export default function AdminClientPortalPage() {
             <button
               type="button"
               onClick={() => setNewClientModal(true)}
-              className="px-3 py-2 rounded-lg border-2 border-zinc-900 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 text-xs font-bold text-zinc-900 dark:text-white cursor-pointer"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-white/10 px-3.5 py-2 text-xs font-semibold text-white ring-1 ring-white/15 backdrop-blur hover:bg-white/15 cursor-pointer"
             >
               + عميل جديد
             </button>
@@ -264,73 +437,94 @@ export default function AdminClientPortalPage() {
             <button
               type="button"
               onClick={handleCopyMagicLink}
-              className="px-3 py-2 rounded-lg border-2 border-zinc-900 bg-amber-400 hover:bg-amber-300 text-zinc-950 text-xs font-black cursor-pointer shadow-[2px_2px_0px_0px_#09090b]"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-white/10 px-3.5 py-2 text-xs font-semibold text-white ring-1 ring-white/15 backdrop-blur hover:bg-white/15 cursor-pointer"
             >
-              🔗 نسخ رابط دخول العميل
+              🔗 نسخ رابط العميل
             </button>
 
             <a
               href={`/client?code=${encodeURIComponent(draft.clientCode)}&pin=${encodeURIComponent(draft.accessPin)}`}
               target="_blank"
               rel="noreferrer"
-              className="px-3 py-2 rounded-lg border-2 border-zinc-900 dark:border-zinc-700 bg-zinc-900 text-white hover:bg-zinc-800 text-xs font-bold"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-white/10 px-3.5 py-2 text-xs font-semibold text-white ring-1 ring-white/15 backdrop-blur hover:bg-white/15"
             >
-              ↗ معاينة شاشة العميل
+              ↗ شاشة العميل
             </a>
 
             <button
               type="button"
-              onClick={handleSavePortal}
+              onClick={() => void handleSavePortal()}
               disabled={saving}
-              className={`px-4 py-2 rounded-lg border-2 border-zinc-900 text-xs font-black cursor-pointer shadow-[2px_2px_0px_0px_#09090b] transition ${
+              className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-xs font-semibold text-white shadow-lg transition cursor-pointer ${
                 dirty
-                  ? "bg-emerald-500 hover:bg-emerald-400 text-zinc-950 animate-pulse"
-                  : "bg-emerald-600 hover:bg-emerald-500 text-white"
+                  ? "bg-emerald-500 hover:bg-emerald-400 animate-pulse"
+                  : "bg-red-600 hover:bg-red-500 shadow-red-900/40"
               }`}
             >
-              {saving ? "جاري الحفظ..." : dirty ? "💾 حفظ التعديلات الآن *" : "💾 حفظ ومزامنة"}
+              {saving ? "جاري الحفظ…" : dirty ? "💾 حفظ التعديلات *" : "💾 حفظ ومزامنة"}
             </button>
           </div>
         </div>
 
-        {/* Sub-bar: Cycle Filter + Section Tabs */}
-        <div className="pt-4 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-1.5">
-            {(
-              [
-                { id: "overview", label: "١. الإعدادات والقواعد والدورات" },
-                { id: "timeline", label: `٢. الجدول الزمني (${draft.milestones.length})` },
-                { id: "feed", label: `٣. كالندر البوستات (${draft.feedCalendar.length})` },
-                { id: "stories", label: `٤. الـ Stories اليومية (${draft.dailyStories.length})` },
-                { id: "ads", label: `٥. الإعلانات وسجل اعتمادات العميل (${interactions.length})` },
-              ] as const
-            ).map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                onClick={() => setActiveTab(t.id)}
-                className={`px-3.5 py-2 rounded-lg text-xs font-bold cursor-pointer border transition ${
-                  activeTab === t.id
-                    ? "bg-zinc-950 text-white dark:bg-white dark:text-zinc-950 border-zinc-950"
-                    : "bg-zinc-50 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700"
-                }`}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
+        {/* Mini Strip */}
+        <div className="relative mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {[
+            ["إجمالي تقدم الخطة", `${stats.overallPct}%`],
+            ["المراحل المكتملة", `${stats.msDone}/${draft.milestones.length}`],
+            ["بوستات معتمدة / منشورة", `${stats.feedApproved}/${draft.feedCalendar.length}`],
+            ["حركات واعتمادات العميل", `${interactions.length}`],
+          ].map(([l, v]) => (
+            <div key={l} className="rounded-xl bg-white/5 px-4 py-3 ring-1 ring-white/10">
+              <p className="text-[11px] text-zinc-400">{l}</p>
+              <p className="text-xl font-semibold tabular-nums mt-0.5">{v}</p>
+            </div>
+          ))}
+        </div>
+      </section>
 
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs font-bold text-zinc-500">تصفية الدورة:</span>
+      {/* ── Navigation & Cycle Filter Bar ── */}
+      <div className="ui-card p-3.5 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {(
+            [
+              { id: "overview", label: "١. الإحصائيات والإعدادات" },
+              { id: "timeline", label: `٢. الجدول الزمني (${draft.milestones.length})` },
+              { id: "feed", label: `٣. كالندر البوستات (${draft.feedCalendar.length})` },
+              { id: "stories", label: `٤. الـ Stories اليومية (${draft.dailyStories.length})` },
+              { id: "ads", label: `٥. الإعلانات وسجل العميل (${interactions.length})` },
+            ] as const
+          ).map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setActiveTab(t.id)}
+              className={`px-3.5 py-2 rounded-lg text-xs font-semibold cursor-pointer transition ${
+                activeTab === t.id
+                  ? "bg-red-600 text-white shadow-xs"
+                  : "bg-zinc-50 text-zinc-700 hover:bg-zinc-100"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="🔍 بحث سريع في المراحل أو البوستات..."
+            className="brutal-input w-56 py-1.5 text-xs"
+          />
+          <div className="flex items-center gap-1 rounded-lg border border-zinc-200 bg-zinc-50 p-1">
             {["all", ...draft.cycles.map((c) => c.name)].map((c) => (
               <button
                 key={c}
                 type="button"
                 onClick={() => setCycleFilter(c)}
-                className={`px-2.5 py-1 rounded text-xs font-mono font-bold cursor-pointer border ${
-                  cycleFilter === c
-                    ? "bg-amber-400 text-zinc-950 border-zinc-900"
-                    : "bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700"
+                className={`px-2.5 py-1 rounded-md text-xs font-semibold cursor-pointer transition ${
+                  cycleFilter === c ? "bg-zinc-900 text-white" : "text-zinc-600 hover:text-zinc-900"
                 }`}
               >
                 {c === "all" ? "الكل" : c}
@@ -340,89 +534,157 @@ export default function AdminClientPortalPage() {
         </div>
       </div>
 
-      {/* ── TAB 1: OVERVIEW, CREDENTIALS, GOOGLE SHEET SYNC & CYCLES ── */}
+      {/* ── TAB 1: ANALYTICS CHARTS, GOOGLE SHEET SYNC & SETTINGS ── */}
       {activeTab === "overview" && (
         <div className="space-y-6">
-          {/* Credentials & Google Sheet Live Sync */}
-          <div className="rounded-2xl border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-900 p-5 space-y-4">
+          {/* Analytics Charts Row */}
+          <section className="grid gap-6 xl:grid-cols-3">
+            {/* Multi-Cycle Progress Chart */}
+            <div className="ui-card p-5 xl:col-span-2">
+              <div className="mb-4 flex items-end justify-between">
+                <div>
+                  <h2 className="text-[15px] font-semibold text-zinc-900">
+                    مؤشر إنجاز الدورات الثلاث (Cycle 01 – Cycle 03)
+                  </h2>
+                  <p className="text-xs text-zinc-500">
+                    مقارنة حية بين المراحل، بوستات الـ Feed، والـ Stories اليومية لكل دورة
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {stats.byCycle.map((c) => (
+                  <div key={c.id} className="rounded-xl border border-zinc-200 bg-zinc-50/60 p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="rounded-md bg-zinc-900 px-2.5 py-1 text-xs font-bold text-white">
+                        {c.name}
+                      </span>
+                      <span className="text-[11px] text-zinc-500" dir="ltr">
+                        {c.startDate} – {c.endDate}
+                      </span>
+                    </div>
+
+                    <div className="flex h-32 items-end justify-around gap-3 pt-2 px-2">
+                      {[
+                        { label: "Timeline", pct: c.msPct, sub: `${c.msDone}/${c.msTotal}`, color: "from-red-600 to-red-400" },
+                        { label: "Feed", pct: c.feedPct, sub: `${c.feedDone}/${c.feedTotal}`, color: "from-blue-600 to-sky-400" },
+                        { label: "Stories", pct: c.storyPct, sub: `${c.storyDone}/${c.storyTotal}`, color: "from-emerald-600 to-emerald-400" },
+                      ].map((b) => (
+                        <div key={b.label} className="flex flex-1 flex-col items-center gap-1.5">
+                          <span className="text-[10px] font-bold tabular-nums text-zinc-700">{b.pct}%</span>
+                          <div className="relative flex h-20 w-full max-w-[36px] items-end overflow-hidden rounded-lg bg-zinc-200/80">
+                            <div
+                              className={`w-full rounded-lg bg-gradient-to-t ${b.color} transition-all duration-700`}
+                              style={{ height: `${Math.max(b.pct, 6)}%` }}
+                            />
+                          </div>
+                          <span className="text-[10px] font-semibold text-zinc-600">{b.label}</span>
+                          <span className="text-[9px] font-mono text-zinc-400">{b.sub}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Content Approval Pipeline Donut Chart */}
+            <div className="ui-card p-5 flex flex-col justify-between">
+              <div className="mb-4">
+                <h2 className="text-[15px] font-semibold text-zinc-900">حالة اعتمادات المحتوى</h2>
+                <p className="text-xs text-zinc-500">توزيع الـ {draft.feedCalendar.length} بوست و Reel</p>
+              </div>
+
+              <SvgDonutChart
+                centerValue={`${Math.round((stats.feedApproved / Math.max(1, draft.feedCalendar.length)) * 100)}%`}
+                centerLabel="Approved"
+                segments={[
+                  { label: "معتمد / منشور", value: stats.feedApproved, color: "#10b981" },
+                  { label: "جاهز للمراجعة", value: stats.feedReview, color: "#f59e0b" },
+                  { label: "مطلوب تعديل", value: stats.feedRevision, color: "#ef4444" },
+                  { label: "مسودة (Draft)", value: stats.feedDraft, color: "#71717a" },
+                ]}
+              />
+            </div>
+          </section>
+
+          {/* Client Credentials & Live Google Sheets Sync */}
+          <div className="ui-card p-6 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-base font-bold text-zinc-950 dark:text-white">
-                بيانات دخول العميل والربط مع Google Sheets
-              </h2>
+              <div>
+                <h2 className="text-[15px] font-semibold text-zinc-900">
+                  إعدادات دخول العميل والمزامنة التلقائية مع Google Sheets
+                </h2>
+                <p className="text-xs text-zinc-500">
+                  يمكنك تعديل كود العميل أو سحب التحديثات مباشرة من شيت جوجل بضغطة واحدة
+                </p>
+              </div>
               {draft.id !== "arc" && (
                 <button
                   type="button"
                   onClick={async () => {
                     const ok = await confirmDialog({
-                      title: `Delete ${draft.clientName} Portal?`,
-                      message: "This will remove this client portal configuration.",
-                      confirmLabel: "Delete",
+                      title: `حذف بوابة ${draft.clientName}؟`,
+                      message: "سيتم حذف إعدادات بوابة هذا العميل.",
+                      confirmLabel: "حذف",
                       tone: "danger",
                     });
                     if (!ok) return;
                     await deleteClientPortalFromFirestore(draft.id, adminEmail);
                     setSelectedPortalId("arc");
                   }}
-                  className="px-3 py-1 rounded bg-rose-100 text-rose-700 text-xs font-bold cursor-pointer"
+                  className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 cursor-pointer"
                 >
-                  حذف بوابة هذا العميل
+                  حذف هذا العميل
                 </button>
               )}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               <div>
-                <label className="block text-xs font-bold text-zinc-600 dark:text-zinc-300 mb-1">
-                  اسم العميل (Client Name)
-                </label>
+                <label className="block text-xs font-medium text-zinc-700 mb-1">اسم العميل (Client Name)</label>
                 <input
                   type="text"
                   value={draft.clientName}
                   onChange={(e) => updateDraft((p) => ({ ...p, clientName: e.target.value }))}
-                  className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-2 text-xs font-bold"
+                  className="brutal-input text-xs"
                 />
               </div>
               <div>
-                <label className="block text-xs font-bold text-zinc-600 dark:text-zinc-300 mb-1">
-                  كود دخول العميل (Client Code)
-                </label>
+                <label className="block text-xs font-medium text-zinc-700 mb-1">كود الدخول (Client Code)</label>
                 <input
                   type="text"
                   value={draft.clientCode}
                   onChange={(e) => updateDraft((p) => ({ ...p, clientCode: e.target.value.toUpperCase() }))}
                   dir="ltr"
-                  className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-2 text-xs font-mono font-bold uppercase"
+                  className="brutal-input text-xs font-code font-bold uppercase"
                 />
               </div>
               <div>
-                <label className="block text-xs font-bold text-zinc-600 dark:text-zinc-300 mb-1">
-                  الرقم السري (Access PIN)
-                </label>
+                <label className="block text-xs font-medium text-zinc-700 mb-1">الرقم السري (Access PIN)</label>
                 <input
                   type="text"
                   value={draft.accessPin}
                   onChange={(e) => updateDraft((p) => ({ ...p, accessPin: e.target.value }))}
                   dir="ltr"
-                  className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-2 text-xs font-mono font-bold"
+                  className="brutal-input text-xs font-code font-bold"
                 />
               </div>
               <div>
-                <label className="block text-xs font-bold text-zinc-600 dark:text-zinc-300 mb-1">
-                  عنوان الخطة (Project Title)
-                </label>
+                <label className="block text-xs font-medium text-zinc-700 mb-1">عنوان الخطة (Project Title)</label>
                 <input
                   type="text"
                   value={draft.projectTitle}
                   onChange={(e) => updateDraft((p) => ({ ...p, projectTitle: e.target.value }))}
-                  className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-2 text-xs font-bold"
+                  className="brutal-input text-xs"
                 />
               </div>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-end pt-2">
               <div className="lg:col-span-2">
-                <label className="block text-xs font-bold text-zinc-600 dark:text-zinc-300 mb-1">
-                  رابط شيت جوجل (Google Sheets Rollout URL) — للمزامنة التلقائية
+                <label className="block text-xs font-medium text-zinc-700 mb-1">
+                  رابط Google Sheet (للمزامنة التلقائية للـ 4 تابات)
                 </label>
                 <input
                   type="url"
@@ -430,311 +692,85 @@ export default function AdminClientPortalPage() {
                   onChange={(e) => updateDraft((p) => ({ ...p, googleSheetUrl: e.target.value }))}
                   placeholder="https://docs.google.com/spreadsheets/d/..."
                   dir="ltr"
-                  className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-2 text-xs font-mono"
+                  className="brutal-input text-xs font-code"
                 />
               </div>
               <button
                 type="button"
                 onClick={() => void handleImportGoogleSheet()}
                 disabled={importingSheet}
-                className="px-4 py-2 rounded-lg border-2 border-zinc-900 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold cursor-pointer shadow-[2px_2px_0px_0px_#09090b]"
+                className="brutal-btn h-10 text-xs normal-case"
               >
-                {importingSheet ? "⏳ جاري سحب البيانات من Google Sheet..." : "🔄 سحب ومزامنة الجداول من Google Sheet"}
+                {importingSheet ? "⏳ جاري سحب الجداول…" : "🔄 سحب ومزامنة من Google Sheet"}
               </button>
-            </div>
-          </div>
-
-          {/* Cycles Editor */}
-          <div className="rounded-2xl border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-900 p-5 space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-base font-bold text-zinc-950 dark:text-white">
-                دورات العمل والنشر (Rollout Cycles)
-              </h2>
-              <button
-                type="button"
-                onClick={() =>
-                  updateDraft((p) => ({
-                    ...p,
-                    cycles: [
-                      ...p.cycles,
-                      {
-                        id: `cycle_0${p.cycles.length + 1}`,
-                        name: `Cycle 0${p.cycles.length + 1}`,
-                        startDate: "05 Feb 2027",
-                        endDate: "04 Mar 2027",
-                        feedPostsTarget: 12,
-                        storiesTarget: 30,
-                      },
-                    ],
-                  }))
-                }
-                className="px-3 py-1.5 rounded-lg bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-950 text-xs font-bold cursor-pointer"
-              >
-                + إضافة دورة جديدة
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {draft.cycles.map((c, idx) => (
-                <div
-                  key={c.id}
-                  className="rounded-xl border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/50 p-4 space-y-2.5"
-                >
-                  <div className="flex items-center justify-between">
-                    <input
-                      type="text"
-                      value={c.name}
-                      onChange={(e) =>
-                        updateDraft((p) => {
-                          const next = [...p.cycles];
-                          next[idx] = { ...c, name: e.target.value };
-                          return { ...p, cycles: next };
-                        })
-                      }
-                      className="font-mono font-bold text-sm bg-transparent border-b border-zinc-400 focus:outline-none"
-                    />
-                    {draft.cycles.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          updateDraft((p) => ({
-                            ...p,
-                            cycles: p.cycles.filter((_, i) => i !== idx),
-                          }))
-                        }
-                        className="text-xs text-rose-600 font-bold cursor-pointer"
-                      >
-                        حذف
-                      </button>
-                    )}
-                  </div>
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div>
-                      <span className="text-[10px] text-zinc-500">تاريخ البدء</span>
-                      <input
-                        type="text"
-                        value={c.startDate}
-                        onChange={(e) =>
-                          updateDraft((p) => {
-                            const next = [...p.cycles];
-                            next[idx] = { ...c, startDate: e.target.value };
-                            return { ...p, cycles: next };
-                          })
-                        }
-                        dir="ltr"
-                        className="w-full rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-xs font-mono"
-                      />
-                    </div>
-                    <div>
-                      <span className="text-[10px] text-zinc-500">تاريخ الانتهاء</span>
-                      <input
-                        type="text"
-                        value={c.endDate}
-                        onChange={(e) =>
-                          updateDraft((p) => {
-                            const next = [...p.cycles];
-                            next[idx] = { ...c, endDate: e.target.value };
-                            return { ...p, cycles: next };
-                          })
-                        }
-                        dir="ltr"
-                        className="w-full rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-xs font-mono"
-                      />
-                    </div>
-                    <div>
-                      <span className="text-[10px] text-zinc-500">عدد البوستات</span>
-                      <input
-                        type="number"
-                        value={c.feedPostsTarget}
-                        onChange={(e) =>
-                          updateDraft((p) => {
-                            const next = [...p.cycles];
-                            next[idx] = { ...c, feedPostsTarget: parseInt(e.target.value || "12", 10) };
-                            return { ...p, cycles: next };
-                          })
-                        }
-                        className="w-full rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-xs font-mono"
-                      />
-                    </div>
-                    <div>
-                      <span className="text-[10px] text-zinc-500">عدد الـ Stories</span>
-                      <input
-                        type="number"
-                        value={c.storiesTarget}
-                        onChange={(e) =>
-                          updateDraft((p) => {
-                            const next = [...p.cycles];
-                            next[idx] = { ...c, storiesTarget: parseInt(e.target.value || "30", 10) };
-                            return { ...p, cycles: next };
-                          })
-                        }
-                        className="w-full rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-xs font-mono"
-                      />
-                    </div>
-                  </div>
-                </div>
-              ))}
             </div>
           </div>
         </div>
       )}
 
-      {/* ── TAB 2: MASTER TIMELINE EDITOR ── */}
+      {/* ── TAB 2: MASTER TIMELINE (Clean Rows + Quick Status & Drawer Edit) ── */}
       {activeTab === "timeline" && (
-        <div className="rounded-2xl border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-900 p-5 space-y-4">
+        <div className="ui-card p-6 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <h2 className="text-base font-bold text-zinc-950 dark:text-white">
-                إدارة الجدول الزمني الرئيسي (Master Timeline)
+              <h2 className="text-[15px] font-semibold text-zinc-900">
+                الجدول الزمني الرئيسي ({filteredMilestones.length} مرحلة)
               </h2>
               <p className="text-xs text-zinc-500">
-                عدّل المواعيد أو الحالات أو أضف روابط الـ References والكالندر ليراها العميل ويعتمدها مباشرة.
+                غيّر الحالة بضغطة واحدة أو اضغط «تعديل» لإضافة روابط الـ References والملفات
               </p>
             </div>
             <button
               type="button"
-              onClick={() =>
-                updateDraft((p) => ({
-                  ...p,
-                  milestones: [
-                    ...p.milestones,
-                    {
-                      id: `ms_${Date.now()}`,
-                      cycle: cycleFilter === "all" ? "Cycle 01" : cycleFilter,
-                      milestone: "New Milestone",
-                      owner: "ARC",
-                      startDate: "15 Nov 2026",
-                      endDate: "16 Nov 2026",
-                      actualDate: "",
-                      status: "Pending",
-                      linkEvidence: "",
-                      notes: "",
-                    },
-                  ],
-                }))
-              }
-              className="px-3.5 py-2 rounded-lg bg-zinc-900 text-white dark:bg-white dark:text-zinc-950 text-xs font-bold cursor-pointer"
+              onClick={() => {
+                const newMs: MilestoneItem = {
+                  id: `ms_${Date.now()}`,
+                  cycle: cycleFilter === "all" ? "Cycle 01" : cycleFilter,
+                  milestone: "مرحلة جديدة",
+                  owner: "ARC",
+                  startDate: "15 Nov 2026",
+                  endDate: "16 Nov 2026",
+                  actualDate: "",
+                  status: "Pending",
+                  linkEvidence: "",
+                  notes: "",
+                };
+                updateDraft((p) => ({ ...p, milestones: [...p.milestones, newMs] }));
+                setEditingMilestone(newMs);
+              }}
+              className="brutal-btn text-xs normal-case"
             >
               + إضافة مرحلة جديدة
             </button>
           </div>
 
-          <div className="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
-            <table className="w-full text-xs text-left">
-              <thead className="bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 uppercase text-[10px]">
+          <div className="overflow-x-auto rounded-xl border border-zinc-200">
+            <table className="w-full text-xs text-left rtl:text-right">
+              <thead className="bg-zinc-50 text-zinc-500 uppercase text-[11px] border-b border-zinc-200">
                 <tr>
-                  <th className="p-2.5">Cycle</th>
-                  <th className="p-2.5">Milestone</th>
-                  <th className="p-2.5">Owner</th>
-                  <th className="p-2.5">Start Date</th>
-                  <th className="p-2.5">End Date</th>
-                  <th className="p-2.5">Actual Date</th>
-                  <th className="p-2.5">Status</th>
-                  <th className="p-2.5">Link / Evidence</th>
-                  <th className="p-2.5">Notes</th>
-                  <th className="p-2.5"></th>
+                  <th className="px-4 py-3">Cycle</th>
+                  <th className="px-4 py-3">Milestone</th>
+                  <th className="px-4 py-3">Owner</th>
+                  <th className="px-4 py-3">Planned Dates</th>
+                  <th className="px-4 py-3">Status (تغيير سريع)</th>
+                  <th className="px-4 py-3">Notes & Links</th>
+                  <th className="px-4 py-3">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+              <tbody className="divide-y divide-zinc-100">
                 {filteredMilestones.map((m) => (
-                  <tr key={m.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/40">
-                    <td className="p-2">
-                      <select
-                        value={m.cycle}
-                        onChange={(e) =>
-                          updateDraft((p) => ({
-                            ...p,
-                            milestones: p.milestones.map((x) =>
-                              x.id === m.id ? { ...x, cycle: e.target.value } : x,
-                            ),
-                          }))
-                        }
-                        className="rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-xs font-mono"
-                      >
-                        {draft.cycles.map((c) => (
-                          <option key={c.id} value={c.name}>{c.name}</option>
-                        ))}
-                      </select>
+                  <tr key={m.id} className="hover:bg-zinc-50/80 transition">
+                    <td className="px-4 py-3 font-semibold text-zinc-900">{m.cycle}</td>
+                    <td className="px-4 py-3 font-semibold text-zinc-900">{m.milestone}</td>
+                    <td className="px-4 py-3">
+                      <span className="rounded-md bg-zinc-100 px-2 py-0.5 font-medium text-zinc-700">
+                        {m.owner}
+                      </span>
                     </td>
-                    <td className="p-2">
-                      <input
-                        type="text"
-                        value={m.milestone}
-                        onChange={(e) =>
-                          updateDraft((p) => ({
-                            ...p,
-                            milestones: p.milestones.map((x) =>
-                              x.id === m.id ? { ...x, milestone: e.target.value } : x,
-                            ),
-                          }))
-                        }
-                        className="w-44 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-xs font-bold"
-                      />
+                    <td className="px-4 py-3 text-zinc-600" dir="ltr">
+                      {m.startDate} {m.endDate && m.endDate !== m.startDate ? `→ ${m.endDate}` : ""}
                     </td>
-                    <td className="p-2">
-                      <input
-                        type="text"
-                        value={m.owner}
-                        onChange={(e) =>
-                          updateDraft((p) => ({
-                            ...p,
-                            milestones: p.milestones.map((x) =>
-                              x.id === m.id ? { ...x, owner: e.target.value } : x,
-                            ),
-                          }))
-                        }
-                        className="w-28 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-xs font-bold"
-                      />
-                    </td>
-                    <td className="p-2">
-                      <input
-                        type="text"
-                        value={m.startDate}
-                        onChange={(e) =>
-                          updateDraft((p) => ({
-                            ...p,
-                            milestones: p.milestones.map((x) =>
-                              x.id === m.id ? { ...x, startDate: e.target.value } : x,
-                            ),
-                          }))
-                        }
-                        dir="ltr"
-                        className="w-28 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-xs font-mono"
-                      />
-                    </td>
-                    <td className="p-2">
-                      <input
-                        type="text"
-                        value={m.endDate}
-                        onChange={(e) =>
-                          updateDraft((p) => ({
-                            ...p,
-                            milestones: p.milestones.map((x) =>
-                              x.id === m.id ? { ...x, endDate: e.target.value } : x,
-                            ),
-                          }))
-                        }
-                        dir="ltr"
-                        className="w-28 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-xs font-mono"
-                      />
-                    </td>
-                    <td className="p-2">
-                      <input
-                        type="text"
-                        value={m.actualDate}
-                        onChange={(e) =>
-                          updateDraft((p) => ({
-                            ...p,
-                            milestones: p.milestones.map((x) =>
-                              x.id === m.id ? { ...x, actualDate: e.target.value } : x,
-                            ),
-                          }))
-                        }
-                        dir="ltr"
-                        className="w-28 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-xs font-mono"
-                      />
-                    </td>
-                    <td className="p-2">
+                    <td className="px-4 py-3">
                       <select
                         value={m.status}
                         onChange={(e) =>
@@ -745,58 +781,53 @@ export default function AdminClientPortalPage() {
                             ),
                           }))
                         }
-                        className="rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-xs font-bold"
+                        className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold cursor-pointer ${statusPillClass(m.status)}`}
                       >
                         {MILESTONE_STATUSES.map((st) => (
-                          <option key={st} value={st}>{st}</option>
+                          <option key={st} value={st} className="bg-white text-zinc-900">
+                            {st}
+                          </option>
                         ))}
                       </select>
                     </td>
-                    <td className="p-2">
-                      <input
-                        type="url"
-                        value={m.linkEvidence}
-                        onChange={(e) =>
-                          updateDraft((p) => ({
-                            ...p,
-                            milestones: p.milestones.map((x) =>
-                              x.id === m.id ? { ...x, linkEvidence: e.target.value } : x,
-                            ),
-                          }))
-                        }
-                        placeholder="https://drive..."
-                        dir="ltr"
-                        className="w-40 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-xs font-mono"
-                      />
+                    <td className="px-4 py-3 max-w-xs">
+                      <p className="truncate text-zinc-600">{m.notes || "—"}</p>
+                      {m.linkEvidence && (
+                        <a
+                          href={m.linkEvidence}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[11px] font-semibold text-red-600 hover:underline"
+                        >
+                          🔗 فتح الرابط ↗
+                        </a>
+                      )}
+                      {m.clientComment && (
+                        <p className="text-[11px] text-emerald-700 mt-0.5">💬 العميل: {m.clientComment}</p>
+                      )}
                     </td>
-                    <td className="p-2">
-                      <input
-                        type="text"
-                        value={m.notes}
-                        onChange={(e) =>
-                          updateDraft((p) => ({
-                            ...p,
-                            milestones: p.milestones.map((x) =>
-                              x.id === m.id ? { ...x, notes: e.target.value } : x,
-                            ),
-                          }))
-                        }
-                        className="w-56 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-xs"
-                      />
-                    </td>
-                    <td className="p-2">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          updateDraft((p) => ({
-                            ...p,
-                            milestones: p.milestones.filter((x) => x.id !== m.id),
-                          }))
-                        }
-                        className="text-rose-600 hover:underline font-bold cursor-pointer"
-                      >
-                        ×
-                      </button>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setEditingMilestone(m)}
+                          className="brutal-btn-outline px-2.5 py-1 text-[11px] normal-case"
+                        >
+                          ✏️ تعديل
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updateDraft((p) => ({
+                              ...p,
+                              milestones: p.milestones.filter((x) => x.id !== m.id),
+                            }))
+                          }
+                          className="rounded-md px-2 py-1 text-xs text-zinc-400 hover:bg-red-50 hover:text-red-600 cursor-pointer"
+                        >
+                          حذف
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -806,19 +837,19 @@ export default function AdminClientPortalPage() {
         </div>
       )}
 
-      {/* ── TAB 3: FEED CALENDAR EDITOR ── */}
+      {/* ── TAB 3: FEED CALENDAR (Visual Cards + Quick Status & Drawer Edit) ── */}
       {activeTab === "feed" && (
-        <div className="rounded-2xl border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-900 p-5 space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="space-y-4">
+          <div className="ui-card p-5 flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="text-base font-bold text-zinc-950 dark:text-white">
-                إدارة كالندر البوستات والـ Reels ({filteredFeed.length})
+              <h2 className="text-[15px] font-semibold text-zinc-900">
+                كالندر البوستات والـ Reels ({filteredFeed.length})
               </h2>
               <p className="text-xs text-zinc-500">
-                أضف عنوان البوست، الكابشن، رابط التصميم/الفيديو، وغيّر الحالة إلى Ready for Review ليعتمدها العميل.
+                اضغط على أي كارت لتعديل الكابشن أو إرفاق رابط التصميم، أو غيّر الحالة بضغطة واحدة
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {cycleFilter !== "all" && (
                 <button
                   type="button"
@@ -832,176 +863,59 @@ export default function AdminClientPortalPage() {
                       ),
                     }))
                   }
-                  className="px-3 py-2 rounded-lg bg-amber-400 text-zinc-950 text-xs font-black cursor-pointer"
+                  className="brutal-btn-outline text-xs normal-case"
                 >
-                  🔔 تحويل كل مسودات {cycleFilter} إلى جاهز للمراجعة
+                  🔔 تحويل مسودات {cycleFilter} إلى جاهز للمراجعة
                 </button>
               )}
               <button
                 type="button"
-                onClick={() =>
-                  updateDraft((p) => ({
-                    ...p,
-                    feedCalendar: [
-                      ...p.feedCalendar,
-                      {
-                        id: `fp_${Date.now()}`,
-                        cycle: cycleFilter === "all" ? "Cycle 01" : cycleFilter,
-                        contentName: `Post ${filteredFeed.length + 1}`,
-                        publishDate: "15 Nov 2026",
-                        day: "Sun",
-                        cairoTime: "7:00 PM",
-                        format: "Post",
-                        platforms: "FB + IG",
-                        actualPublish: "",
-                        postType: "Organic",
-                        publishStatus: "Draft",
-                      },
-                    ],
-                  }))
-                }
-                className="px-3.5 py-2 rounded-lg bg-zinc-900 text-white dark:bg-white dark:text-zinc-950 text-xs font-bold cursor-pointer"
+                onClick={() => {
+                  const newPost: FeedPostItem = {
+                    id: `fp_${Date.now()}`,
+                    cycle: cycleFilter === "all" ? "Cycle 01" : cycleFilter,
+                    contentName: `Post ${filteredFeed.length + 1}`,
+                    publishDate: "15 Nov 2026",
+                    day: "Sun",
+                    cairoTime: "7:00 PM",
+                    format: "Post",
+                    platforms: "FB + IG",
+                    actualPublish: "",
+                    postType: "Organic",
+                    publishStatus: "Draft",
+                  };
+                  updateDraft((p) => ({ ...p, feedCalendar: [...p.feedCalendar, newPost] }));
+                  setEditingPost(newPost);
+                }}
+                className="brutal-btn text-xs normal-case"
               >
                 + إضافة بوست / Reel
               </button>
             </div>
           </div>
 
-          <div className="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
-            <table className="w-full text-xs text-left">
-              <thead className="bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 uppercase text-[10px]">
-                <tr>
-                  <th className="p-2.5">Cycle</th>
-                  <th className="p-2.5">Post #</th>
-                  <th className="p-2.5">Date & Day</th>
-                  <th className="p-2.5">Time</th>
-                  <th className="p-2.5">Format</th>
-                  <th className="p-2.5">Topic / Caption</th>
-                  <th className="p-2.5">Creative URL</th>
-                  <th className="p-2.5">Status</th>
-                  <th className="p-2.5">Client Feedback</th>
-                  <th className="p-2.5"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
-                {filteredFeed.map((p) => (
-                  <tr key={p.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/40">
-                    <td className="p-2 font-mono font-bold">{p.cycle}</td>
-                    <td className="p-2">
-                      <input
-                        type="text"
-                        value={p.contentName}
-                        onChange={(e) =>
-                          updateDraft((prev) => ({
-                            ...prev,
-                            feedCalendar: prev.feedCalendar.map((x) =>
-                              x.id === p.id ? { ...x, contentName: e.target.value } : x,
-                            ),
-                          }))
-                        }
-                        className="w-20 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-xs font-bold"
-                      />
-                    </td>
-                    <td className="p-2 whitespace-nowrap">
-                      <input
-                        type="text"
-                        value={p.publishDate}
-                        onChange={(e) =>
-                          updateDraft((prev) => ({
-                            ...prev,
-                            feedCalendar: prev.feedCalendar.map((x) =>
-                              x.id === p.id ? { ...x, publishDate: e.target.value } : x,
-                            ),
-                          }))
-                        }
-                        dir="ltr"
-                        className="w-28 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-xs font-mono"
-                      />
-                      <span className="ms-1 text-[10px] font-mono text-zinc-500">{p.day}</span>
-                    </td>
-                    <td className="p-2">
-                      <input
-                        type="text"
-                        value={p.cairoTime}
-                        onChange={(e) =>
-                          updateDraft((prev) => ({
-                            ...prev,
-                            feedCalendar: prev.feedCalendar.map((x) =>
-                              x.id === p.id ? { ...x, cairoTime: e.target.value } : x,
-                            ),
-                          }))
-                        }
-                        dir="ltr"
-                        className="w-20 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-xs font-mono"
-                      />
-                    </td>
-                    <td className="p-2">
-                      <select
-                        value={p.format}
-                        onChange={(e) =>
-                          updateDraft((prev) => ({
-                            ...prev,
-                            feedCalendar: prev.feedCalendar.map((x) =>
-                              x.id === p.id ? { ...x, format: e.target.value as FeedPostItem["format"] } : x,
-                            ),
-                          }))
-                        }
-                        className="rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-xs font-bold"
-                      >
-                        <option value="Post">Post</option>
-                        <option value="Reel">Reel</option>
-                        <option value="Carousel">Carousel</option>
-                        <option value="Video">Video</option>
-                      </select>
-                    </td>
-                    <td className="p-2 space-y-1">
-                      <input
-                        type="text"
-                        value={p.topicTitle || ""}
-                        onChange={(e) =>
-                          updateDraft((prev) => ({
-                            ...prev,
-                            feedCalendar: prev.feedCalendar.map((x) =>
-                              x.id === p.id ? { ...x, topicTitle: e.target.value } : x,
-                            ),
-                          }))
-                        }
-                        placeholder="عنوان الفكرة / الموضوع..."
-                        className="w-48 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-xs font-bold block"
-                      />
-                      <input
-                        type="text"
-                        value={p.captionText || ""}
-                        onChange={(e) =>
-                          updateDraft((prev) => ({
-                            ...prev,
-                            feedCalendar: prev.feedCalendar.map((x) =>
-                              x.id === p.id ? { ...x, captionText: e.target.value } : x,
-                            ),
-                          }))
-                        }
-                        placeholder="الكابشن / السكريبت..."
-                        className="w-48 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-[11px] block"
-                      />
-                    </td>
-                    <td className="p-2">
-                      <input
-                        type="url"
-                        value={p.assetLink || ""}
-                        onChange={(e) =>
-                          updateDraft((prev) => ({
-                            ...prev,
-                            feedCalendar: prev.feedCalendar.map((x) =>
-                              x.id === p.id ? { ...x, assetLink: e.target.value } : x,
-                            ),
-                          }))
-                        }
-                        placeholder="https://drive..."
-                        dir="ltr"
-                        className="w-36 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-xs font-mono"
-                      />
-                    </td>
-                    <td className="p-2">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filteredFeed.map((p) => {
+              const isReel = p.format === "Reel";
+              return (
+                <div key={p.id} className="ui-card ui-card-hover p-5 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-md bg-zinc-100 px-2.5 py-1 text-xs font-bold text-zinc-900">
+                          {p.cycle} · {p.contentName}
+                        </span>
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[11px] font-semibold border ${
+                            isReel
+                              ? "border-violet-200 bg-violet-50 text-violet-700"
+                              : "border-sky-200 bg-sky-50 text-sky-700"
+                          }`}
+                        >
+                          {isReel ? "🎬 Reel" : "🖼️ Post"}
+                        </span>
+                      </div>
+
                       <select
                         value={p.publishStatus}
                         onChange={(e) =>
@@ -1012,76 +926,96 @@ export default function AdminClientPortalPage() {
                             ),
                           }))
                         }
-                        className="rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-xs font-bold"
+                        className={`rounded-full border px-2.5 py-0.5 text-[11px] font-semibold cursor-pointer ${statusPillClass(p.publishStatus)}`}
                       >
                         {PUBLISH_STATUSES.map((st) => (
-                          <option key={st} value={st}>{st}</option>
+                          <option key={st} value={st} className="bg-white text-zinc-900">
+                            {st}
+                          </option>
                         ))}
                       </select>
-                    </td>
-                    <td className="p-2 max-w-xs text-[11px] text-amber-700 dark:text-amber-300">
-                      {p.clientComment || "—"}
-                    </td>
-                    <td className="p-2">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          updateDraft((prev) => ({
-                            ...prev,
-                            feedCalendar: prev.feedCalendar.filter((x) => x.id !== p.id),
-                          }))
-                        }
-                        className="text-rose-600 font-bold cursor-pointer"
+                    </div>
+
+                    <div className="mt-3 flex items-center justify-between text-xs text-zinc-500" dir="ltr">
+                      <span>📅 {p.day}, {p.publishDate}</span>
+                      <span>🕖 {p.cairoTime}</span>
+                    </div>
+
+                    <p className="mt-3 text-sm font-semibold text-zinc-900">
+                      {p.topicTitle || "بدون عنوان (اضغط تعديل لإضافة فكرة البوست)"}
+                    </p>
+                    {p.captionText && (
+                      <p className="mt-1 text-xs text-zinc-500 line-clamp-2">{p.captionText}</p>
+                    )}
+
+                    {p.clientComment && (
+                      <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-800">
+                        💬 ملاحظة العميل: {p.clientComment}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mt-4 pt-3 border-t border-zinc-100 flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setEditingPost(p)}
+                      className="brutal-btn-outline flex-1 py-1.5 text-xs normal-case"
+                    >
+                      ✏️ تعديل المحتوى والروابط
+                    </button>
+                    {p.assetLink && (
+                      <a
+                        href={p.assetLink}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50"
                       >
-                        ×
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                        🎨 معاينة ↗
+                      </a>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
 
-      {/* ── TAB 4: DAILY STORIES EDITOR ── */}
+      {/* ── TAB 4: DAILY STORIES ── */}
       {activeTab === "stories" && (
-        <div className="rounded-2xl border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-900 p-5 space-y-4">
+        <div className="ui-card p-6 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <h2 className="text-base font-bold text-zinc-950 dark:text-white">
-                إدارة الـ Stories اليومية ({filteredStories.length})
+              <h2 className="text-[15px] font-semibold text-zinc-900">
+                الـ Stories اليومية ({filteredStories.length} ستوري)
               </h2>
               <p className="text-xs text-zinc-500">
-                جدول الاستوريهات اليومية الساعة 6:00 مساءً بتوقيت القاهرة شاملة الجمعة والسبت.
+                تُنشر يومياً الساعة 6:00 مساءً بتوقيت القاهرة شاملة الجمعة والسبت
               </p>
             </div>
           </div>
 
-          <div className="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800 max-h-[600px]">
-            <table className="w-full text-xs text-left">
-              <thead className="sticky top-0 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 uppercase text-[10px]">
+          <div className="overflow-x-auto rounded-xl border border-zinc-200 max-h-[600px]">
+            <table className="w-full text-xs text-left rtl:text-right">
+              <thead className="sticky top-0 bg-zinc-50 text-zinc-500 uppercase text-[11px] border-b border-zinc-200 z-10">
                 <tr>
-                  <th className="p-2.5">Cycle</th>
-                  <th className="p-2.5">Story ID</th>
-                  <th className="p-2.5">Publish Date</th>
-                  <th className="p-2.5">Day</th>
-                  <th className="p-2.5">Time</th>
-                  <th className="p-2.5">Topic / Asset Link</th>
-                  <th className="p-2.5">Actual Publish</th>
-                  <th className="p-2.5">Status</th>
-                  <th className="p-2.5">Client Comment</th>
+                  <th className="px-4 py-3">Cycle</th>
+                  <th className="px-4 py-3">Story ID</th>
+                  <th className="px-4 py-3">Date & Day</th>
+                  <th className="px-4 py-3">Topic / Asset Link</th>
+                  <th className="px-4 py-3">Status</th>
+                  <th className="px-4 py-3">Client Note</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+              <tbody className="divide-y divide-zinc-100">
                 {filteredStories.map((s: DailyStoryItem) => (
-                  <tr key={s.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/40">
-                    <td className="p-2 font-mono font-bold">{s.cycle}</td>
-                    <td className="p-2 font-bold">{s.storyId}</td>
-                    <td className="p-2 font-mono" dir="ltr">{s.publishDate}</td>
-                    <td className="p-2 font-mono">{s.day}</td>
-                    <td className="p-2 font-mono" dir="ltr">{s.cairoTime}</td>
-                    <td className="p-2">
+                  <tr key={s.id} className="hover:bg-zinc-50/80">
+                    <td className="px-4 py-2.5 font-semibold text-zinc-900">{s.cycle}</td>
+                    <td className="px-4 py-2.5 font-semibold text-zinc-900">{s.storyId}</td>
+                    <td className="px-4 py-2.5 text-zinc-600" dir="ltr">
+                      {s.publishDate} ({s.day})
+                    </td>
+                    <td className="px-4 py-2.5">
                       <input
                         type="text"
                         value={s.topicAssetLink}
@@ -1093,27 +1027,11 @@ export default function AdminClientPortalPage() {
                             ),
                           }))
                         }
-                        placeholder="Topic or Drive Link..."
-                        className="w-56 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-xs"
+                        placeholder="أضف موضوع الاستوري أو رابط التصميم..."
+                        className="brutal-input py-1 text-xs max-w-xs"
                       />
                     </td>
-                    <td className="p-2">
-                      <input
-                        type="text"
-                        value={s.actualPublish}
-                        onChange={(e) =>
-                          updateDraft((prev) => ({
-                            ...prev,
-                            dailyStories: prev.dailyStories.map((x) =>
-                              x.id === s.id ? { ...x, actualPublish: e.target.value } : x,
-                            ),
-                          }))
-                        }
-                        dir="ltr"
-                        className="w-28 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-xs font-mono"
-                      />
-                    </td>
-                    <td className="p-2">
+                    <td className="px-4 py-2.5">
                       <select
                         value={s.publishStatus}
                         onChange={(e) =>
@@ -1124,16 +1042,16 @@ export default function AdminClientPortalPage() {
                             ),
                           }))
                         }
-                        className="rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-xs font-bold"
+                        className={`rounded-full border px-2.5 py-0.5 text-[11px] font-semibold cursor-pointer ${statusPillClass(s.publishStatus)}`}
                       >
                         {PUBLISH_STATUSES.map((st) => (
-                          <option key={st} value={st}>{st}</option>
+                          <option key={st} value={st} className="bg-white text-zinc-900">
+                            {st}
+                          </option>
                         ))}
                       </select>
                     </td>
-                    <td className="p-2 text-[11px] text-amber-700 dark:text-amber-300">
-                      {s.clientComment || "—"}
-                    </td>
+                    <td className="px-4 py-2.5 text-amber-700">{s.clientComment || "—"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1142,12 +1060,12 @@ export default function AdminClientPortalPage() {
         </div>
       )}
 
-      {/* ── TAB 5: PAID MEDIA & CLIENT INTERACTIONS LOG ── */}
+      {/* ── TAB 5: PAID MEDIA & CLIENT ACTIVITY LOG ── */}
       {activeTab === "ads" && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="rounded-2xl border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-900 p-5 space-y-4">
+          <div className="ui-card p-6 space-y-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-base font-bold text-zinc-950 dark:text-white">
+              <h2 className="text-[15px] font-semibold text-zinc-900">
                 حملات الإعلانات الممولة وتقارير الأداء (Meta Ads)
               </h2>
               <button
@@ -1160,8 +1078,8 @@ export default function AdminClientPortalPage() {
                       {
                         id: `paid_${Date.now()}`,
                         cycle: "Cycle 01",
-                        campaignName: "New Meta Ads Campaign",
-                        objective: "Lead Generation & Messages",
+                        campaignName: "New Meta Campaign",
+                        objective: "Messages & Lead Generation",
                         budgetEgp: 20000,
                         platforms: "Facebook + Instagram",
                         creativeLink: "",
@@ -1171,7 +1089,7 @@ export default function AdminClientPortalPage() {
                     ],
                   }))
                 }
-                className="px-3 py-1.5 rounded-lg bg-zinc-900 text-white text-xs font-bold cursor-pointer"
+                className="brutal-btn text-xs normal-case"
               >
                 + إضافة حملة
               </button>
@@ -1179,10 +1097,7 @@ export default function AdminClientPortalPage() {
 
             <div className="space-y-3">
               {draft.paidCampaigns.map((c: PaidMediaCampaignItem) => (
-                <div
-                  key={c.id}
-                  className="rounded-xl border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/50 p-4 space-y-2.5 text-xs"
-                >
+                <div key={c.id} className="rounded-xl border border-zinc-200 bg-zinc-50/50 p-4 space-y-2.5 text-xs">
                   <div className="grid grid-cols-2 gap-2">
                     <input
                       type="text"
@@ -1195,7 +1110,7 @@ export default function AdminClientPortalPage() {
                           ),
                         }))
                       }
-                      className="rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2.5 py-1.5 font-bold"
+                      className="brutal-input py-1.5 text-xs font-semibold"
                     />
                     <select
                       value={c.status}
@@ -1207,7 +1122,7 @@ export default function AdminClientPortalPage() {
                           ),
                         }))
                       }
-                      className="rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2.5 py-1.5 font-bold"
+                      className="brutal-input py-1.5 text-xs font-semibold"
                     >
                       <option value="Draft">Draft</option>
                       <option value="Waiting Approval">Waiting Approval</option>
@@ -1230,7 +1145,7 @@ export default function AdminClientPortalPage() {
                             ),
                           }))
                         }
-                        className="w-full rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1"
+                        className="brutal-input py-1 text-xs"
                       />
                     </div>
                     <div>
@@ -1246,12 +1161,12 @@ export default function AdminClientPortalPage() {
                             ),
                           }))
                         }
-                        className="w-full rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 font-mono"
+                        className="brutal-input py-1 text-xs"
                       />
                     </div>
                   </div>
                   <div>
-                    <span className="text-[10px] text-zinc-500">Performance Report Link (Drive / PDF)</span>
+                    <span className="text-[10px] text-zinc-500">رابط تقرير الأداء الشهري (Performance Report URL)</span>
                     <input
                       type="url"
                       value={c.reportLink || ""}
@@ -1265,7 +1180,7 @@ export default function AdminClientPortalPage() {
                       }
                       placeholder="https://drive.google.com/..."
                       dir="ltr"
-                      className="w-full rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 font-mono"
+                      className="brutal-input py-1 text-xs"
                     />
                   </div>
                 </div>
@@ -1273,36 +1188,32 @@ export default function AdminClientPortalPage() {
             </div>
           </div>
 
-          {/* Client Interactions Feed */}
-          <div className="rounded-2xl border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-900 p-5 space-y-4">
-            <h2 className="text-base font-bold text-zinc-950 dark:text-white">
+          <div className="ui-card p-6 space-y-4">
+            <h2 className="text-[15px] font-semibold text-zinc-900">
               سجل اعتمادات وملاحظات العميل اللحظي ({interactions.length})
             </h2>
             {interactions.length === 0 ? (
               <p className="text-xs text-zinc-500">لا توجد حركات مسجلة من العميل حتى الآن.</p>
             ) : (
-              <div className="space-y-2.5 max-h-[520px] overflow-y-auto">
+              <div className="space-y-2.5 max-h-[500px] overflow-y-auto">
                 {[...interactions].reverse().map((ev) => (
-                  <div
-                    key={ev.id}
-                    className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-800/50 p-3.5 text-xs space-y-1"
-                  >
+                  <div key={ev.id} className="rounded-xl border border-zinc-200 bg-zinc-50/70 p-3.5 text-xs space-y-1">
                     <div className="flex items-center justify-between text-[11px] text-zinc-500">
-                      <strong className="text-zinc-900 dark:text-white">{ev.actorName}</strong>
+                      <strong className="text-zinc-900">{ev.actorName}</strong>
                       <span dir="ltr">{new Date(ev.createdAtIso).toLocaleString()}</span>
                     </div>
-                    <p className="font-bold text-emerald-700 dark:text-emerald-400">
+                    <p className="font-semibold text-red-600">
                       [{ev.actionType.toUpperCase()}] {ev.targetLabel}
                     </p>
-                    {ev.comment && <p className="text-zinc-700 dark:text-zinc-300">{ev.comment}</p>}
+                    {ev.comment && <p className="text-zinc-700">{ev.comment}</p>}
                     {ev.linkUrl && (
                       <a
                         href={ev.linkUrl}
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-block text-indigo-600 dark:text-amber-400 font-bold hover:underline"
+                        className="inline-block text-red-600 font-semibold hover:underline"
                       >
-                        🔗 فتح الرابط المرفق من العميل ↗
+                        🔗 فتح الرابط المرفق ↗
                       </a>
                     )}
                   </div>
@@ -1313,34 +1224,263 @@ export default function AdminClientPortalPage() {
         </div>
       )}
 
+      {/* ── MODAL: EDIT FEED POST ── */}
+      {editingPost && (
+        <div
+          className="fixed inset-0 z-50 bg-zinc-950/50 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => setEditingPost(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-lg rounded-2xl border border-zinc-200 bg-white p-6 shadow-2xl space-y-4"
+          >
+            <h3 className="text-base font-semibold text-zinc-900">
+              تعديل البوست: {editingPost.cycle} · {editingPost.contentName}
+            </h3>
+            <div className="grid grid-cols-2 gap-3 text-xs">
+              <div>
+                <label className="block font-medium text-zinc-700 mb-1">اسم المحتوى</label>
+                <input
+                  type="text"
+                  value={editingPost.contentName}
+                  onChange={(e) => setEditingPost({ ...editingPost, contentName: e.target.value })}
+                  className="brutal-input text-xs"
+                />
+              </div>
+              <div>
+                <label className="block font-medium text-zinc-700 mb-1">النوع (Format)</label>
+                <select
+                  value={editingPost.format}
+                  onChange={(e) =>
+                    setEditingPost({ ...editingPost, format: e.target.value as FeedPostItem["format"] })
+                  }
+                  className="brutal-input text-xs"
+                >
+                  <option value="Post">Post</option>
+                  <option value="Reel">Reel</option>
+                  <option value="Carousel">Carousel</option>
+                  <option value="Video">Video</option>
+                </select>
+              </div>
+              <div>
+                <label className="block font-medium text-zinc-700 mb-1">تاريخ النشر</label>
+                <input
+                  type="text"
+                  value={editingPost.publishDate}
+                  onChange={(e) => setEditingPost({ ...editingPost, publishDate: e.target.value })}
+                  dir="ltr"
+                  className="brutal-input text-xs"
+                />
+              </div>
+              <div>
+                <label className="block font-medium text-zinc-700 mb-1">الحالة</label>
+                <select
+                  value={editingPost.publishStatus}
+                  onChange={(e) =>
+                    setEditingPost({ ...editingPost, publishStatus: e.target.value as PublishStatus })
+                  }
+                  className="brutal-input text-xs"
+                >
+                  {PUBLISH_STATUSES.map((st) => (
+                    <option key={st} value={st}>{st}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-zinc-700 mb-1">عنوان الفكرة / الموضوع</label>
+              <input
+                type="text"
+                value={editingPost.topicTitle || ""}
+                onChange={(e) => setEditingPost({ ...editingPost, topicTitle: e.target.value })}
+                placeholder="مثال: إطلاق المرحلة الأولى لمشروع ARC..."
+                className="brutal-input text-xs"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-zinc-700 mb-1">الكابشن / السكريبت</label>
+              <textarea
+                rows={3}
+                value={editingPost.captionText || ""}
+                onChange={(e) => setEditingPost({ ...editingPost, captionText: e.target.value })}
+                placeholder="اكتب نص البوست أو سكريبت الـ Reel..."
+                className="brutal-input text-xs"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-zinc-700 mb-1">
+                رابط التصميم / الفيديو للمعاينة (Google Drive / Canva)
+              </label>
+              <input
+                type="url"
+                value={editingPost.assetLink || ""}
+                onChange={(e) => setEditingPost({ ...editingPost, assetLink: e.target.value })}
+                placeholder="https://drive.google.com/..."
+                dir="ltr"
+                className="brutal-input text-xs"
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setEditingPost(null)}
+                className="brutal-btn-outline px-4 py-2 text-xs normal-case"
+              >
+                إغلاق
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const next = {
+                    ...draft,
+                    feedCalendar: draft.feedCalendar.map((x) =>
+                      x.id === editingPost.id ? editingPost : x,
+                    ),
+                  };
+                  setDraft(next);
+                  setEditingPost(null);
+                  void handleSavePortal(next);
+                }}
+                className="brutal-btn px-5 py-2 text-xs normal-case"
+              >
+                حفظ ومزامنة للعميل
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL: EDIT MILESTONE ── */}
+      {editingMilestone && (
+        <div
+          className="fixed inset-0 z-50 bg-zinc-950/50 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => setEditingMilestone(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-lg rounded-2xl border border-zinc-200 bg-white p-6 shadow-2xl space-y-4"
+          >
+            <h3 className="text-base font-semibold text-zinc-900">
+              تعديل المرحلة: {editingMilestone.milestone}
+            </h3>
+            <div className="grid grid-cols-2 gap-3 text-xs">
+              <div>
+                <label className="block font-medium text-zinc-700 mb-1">اسم المرحلة</label>
+                <input
+                  type="text"
+                  value={editingMilestone.milestone}
+                  onChange={(e) => setEditingMilestone({ ...editingMilestone, milestone: e.target.value })}
+                  className="brutal-input text-xs"
+                />
+              </div>
+              <div>
+                <label className="block font-medium text-zinc-700 mb-1">المسؤول (Owner)</label>
+                <input
+                  type="text"
+                  value={editingMilestone.owner}
+                  onChange={(e) => setEditingMilestone({ ...editingMilestone, owner: e.target.value })}
+                  className="brutal-input text-xs"
+                />
+              </div>
+              <div>
+                <label className="block font-medium text-zinc-700 mb-1">تاريخ البدء</label>
+                <input
+                  type="text"
+                  value={editingMilestone.startDate}
+                  onChange={(e) => setEditingMilestone({ ...editingMilestone, startDate: e.target.value })}
+                  dir="ltr"
+                  className="brutal-input text-xs"
+                />
+              </div>
+              <div>
+                <label className="block font-medium text-zinc-700 mb-1">تاريخ الانتهاء</label>
+                <input
+                  type="text"
+                  value={editingMilestone.endDate}
+                  onChange={(e) => setEditingMilestone({ ...editingMilestone, endDate: e.target.value })}
+                  dir="ltr"
+                  className="brutal-input text-xs"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-zinc-700 mb-1">رابط الملفات / الإثبات (Link / Evidence)</label>
+              <input
+                type="url"
+                value={editingMilestone.linkEvidence}
+                onChange={(e) => setEditingMilestone({ ...editingMilestone, linkEvidence: e.target.value })}
+                placeholder="https://drive.google.com/..."
+                dir="ltr"
+                className="brutal-input text-xs"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-zinc-700 mb-1">الملاحظات والشرح</label>
+              <textarea
+                rows={3}
+                value={editingMilestone.notes}
+                onChange={(e) => setEditingMilestone({ ...editingMilestone, notes: e.target.value })}
+                className="brutal-input text-xs"
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setEditingMilestone(null)}
+                className="brutal-btn-outline px-4 py-2 text-xs normal-case"
+              >
+                إغلاق
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const next = {
+                    ...draft,
+                    milestones: draft.milestones.map((x) =>
+                      x.id === editingMilestone.id ? editingMilestone : x,
+                    ),
+                  };
+                  setDraft(next);
+                  setEditingMilestone(null);
+                  void handleSavePortal(next);
+                }}
+                className="brutal-btn px-5 py-2 text-xs normal-case"
+              >
+                حفظ ومزامنة للعميل
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── MODAL: CREATE NEW CLIENT PORTAL ── */}
       {newClientModal && (
         <div
-          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4"
+          className="fixed inset-0 z-50 bg-zinc-950/50 backdrop-blur-xs flex items-center justify-center p-4"
           onClick={() => setNewClientModal(false)}
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md rounded-2xl border-2 border-zinc-900 bg-white dark:bg-zinc-900 p-6 shadow-2xl space-y-4"
+            className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-6 shadow-2xl space-y-4"
           >
-            <h3 className="text-lg font-bold text-zinc-950 dark:text-white">
-              إضافة بوابة عميل جديدة (New Client Rollout Portal)
+            <h3 className="text-base font-semibold text-zinc-900">
+              إضافة بوابة عميل جديدة (New Client Portal)
             </h3>
             <form onSubmit={handleCreateNewClient} className="space-y-3 text-xs">
               <div>
-                <label className="block font-bold mb-1">اسم العميل / الشركة</label>
+                <label className="block font-medium text-zinc-700 mb-1">اسم العميل / الشركة</label>
                 <input
                   type="text"
                   required
                   value={newClientName}
                   onChange={(e) => setNewClientName(e.target.value)}
                   placeholder="مثال: ARC Developments"
-                  className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-2"
+                  className="brutal-input text-xs"
                 />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-bold mb-1">كود الدخول (Client Code)</label>
+                  <label className="block font-medium text-zinc-700 mb-1">كود الدخول (Client Code)</label>
                   <input
                     type="text"
                     required
@@ -1348,11 +1488,11 @@ export default function AdminClientPortalPage() {
                     onChange={(e) => setNewClientCode(e.target.value.toUpperCase())}
                     placeholder="ARC2"
                     dir="ltr"
-                    className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-2 font-mono uppercase"
+                    className="brutal-input text-xs font-code uppercase"
                   />
                 </div>
                 <div>
-                  <label className="block font-bold mb-1">الرقم السري (PIN)</label>
+                  <label className="block font-medium text-zinc-700 mb-1">الرقم السري (PIN)</label>
                   <input
                     type="text"
                     required
@@ -1360,34 +1500,30 @@ export default function AdminClientPortalPage() {
                     onChange={(e) => setNewClientPin(e.target.value)}
                     placeholder="2026"
                     dir="ltr"
-                    className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-2 font-mono"
+                    className="brutal-input text-xs font-code"
                   />
                 </div>
               </div>
               <div>
-                <label className="block font-bold mb-1">رابط Google Sheet للاستيراد التلقائي (اختياري)</label>
+                <label className="block font-medium text-zinc-700 mb-1">رابط Google Sheet للاستيراد التلقائي (اختياري)</label>
                 <input
                   type="url"
                   value={newClientSheetUrl}
                   onChange={(e) => setNewClientSheetUrl(e.target.value)}
                   placeholder="https://docs.google.com/spreadsheets/d/..."
                   dir="ltr"
-                  className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 px-3 py-2 font-mono"
+                  className="brutal-input text-xs font-code"
                 />
               </div>
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
                   onClick={() => setNewClientModal(false)}
-                  className="px-4 py-2 rounded-lg bg-zinc-200 dark:bg-zinc-800 font-bold cursor-pointer"
+                  className="brutal-btn-outline px-4 py-2 text-xs normal-case"
                 >
                   إلغاء
                 </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="px-5 py-2 rounded-lg bg-emerald-600 text-white font-bold cursor-pointer"
-                >
+                <button type="submit" disabled={saving} className="brutal-btn px-5 py-2 text-xs normal-case">
                   إنشاء البوابة
                 </button>
               </div>
