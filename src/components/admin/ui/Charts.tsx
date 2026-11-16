@@ -1,16 +1,16 @@
 "use client";
 
-import React, { useId, useMemo, useState } from "react";
+import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   MFT Studio Analytics & Charting Kit
-   Inspired by 21st.dev Layro System (Charts & KPI Cards) + Linear Analytics:
-   - Fixed semantic series palette (--chart-1 .. --chart-5)
-   - Smooth monotone cubic-bezier SVG paths + vertical linear gradient wash
-   - Interactive crosshair + multi-series glass popover tooltip
-   - KPI cards with directional delta semantics (good: "up" | "down") & sparklines
-   - Visually hidden <table> fallback (sr-only) on every chart for accessibility
+   MFT Studio Executive Analytics & Charting Kit
+   Combines:
+   1. 21st.dev CellColumnTrend (id: 44655) — Stacked LED cell matrix where
+      clicking KPI tabs flips the board in a 3D diagonal spring wave.
+   2. 21st.dev Layro System (id: 33507) — AreaTrend, BarCompare, DonutBreakdown,
+      Sparkline & KpiStatCard with directional delta semantics + sr-only tables.
+   3. ConcentricRingsChart — Multi-ring radial velocity & compliance gauge.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 export interface ChartSeries {
@@ -30,6 +30,7 @@ export interface ChartCardProps {
   footer?: React.ReactNode;
   children: React.ReactNode;
   className?: string;
+  noPadding?: boolean;
 }
 
 export function ChartCard({
@@ -41,6 +42,7 @@ export function ChartCard({
   footer,
   children,
   className = "",
+  noPadding = false,
 }: ChartCardProps) {
   const subText = subtitle ?? description;
   return (
@@ -48,14 +50,14 @@ export function ChartCard({
       <figcaption className="flex flex-wrap items-start justify-between gap-3 border-b border-zinc-100 px-5 py-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h3 className="text-[14px] font-semibold tracking-tight text-zinc-900">{title}</h3>
+            <h3 className="text-[14px] font-bold tracking-tight text-zinc-900">{title}</h3>
             {badge}
           </div>
           {subText && <p className="mt-0.5 text-xs text-zinc-500">{subText}</p>}
         </div>
         {actions && <div className="mft-no-print flex shrink-0 items-center gap-2">{actions}</div>}
       </figcaption>
-      <div className="flex-1 p-5">{children}</div>
+      <div className={`flex-1 ${noPadding ? "" : "p-5"}`}>{children}</div>
       {footer && (
         <div className="border-t border-zinc-100 bg-zinc-50/60 px-5 py-3 text-xs text-zinc-500">
           {footer}
@@ -104,6 +106,483 @@ function DataTableFallback<T extends Record<string, unknown>>({
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   1. 21st.dev CellColumnTrend (3D Diagonal Wave Flipping Matrix Chart)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+export type TrendMetric = {
+  key: string;
+  label: string;
+  values: number[];
+  summary: string;
+  delta?: number | null;
+  deltaLabel?: string;
+  higherIsBetter?: boolean;
+  accent?: string;
+  format?: (n: number) => string;
+  icon?: string;
+};
+
+function niceAxisMax(max: number) {
+  if (!(max > 0)) return 4;
+  const p = Math.pow(10, Math.floor(Math.log10(max)));
+  for (const m of [1, 1.2, 1.6, 2, 2.4, 3, 4, 5, 6, 8, 10]) {
+    if (m * p >= max) return m * p;
+  }
+  return 10 * p;
+}
+
+function fillCells(values: number[], top: number, rows: number) {
+  return values.map((v) =>
+    v <= 0 ? 0 : Math.min(rows, Math.max(1, Math.round((v / top) * rows))),
+  );
+}
+
+const SPRING_EASE =
+  "linear(0,0.009,0.035 2.1%,0.141,0.281 6.7%,0.723 12.9%,0.938 16.7%,1.017,1.077,1.121,1.149 24.3%,1.159,1.163,1.161,1.154 29.9%,1.129 32.8%,1.051 39.6%,1.017 43.1%,0.991,0.977 51%,0.974 53.8%,0.975 57.1%,0.997 69.8%,1.003 76.9%,1)";
+
+export function CellColumnTrend({
+  metrics,
+  labels,
+  ticks,
+  rows = 11,
+}: {
+  metrics: TrendMetric[];
+  labels: string[];
+  ticks?: string[];
+  rows?: number;
+}) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [seen, setSeen] = useState(true);
+  const [k, setK] = useState(0);
+  const [active, setActive] = useState(-1);
+
+  const m = metrics[Math.min(k, metrics.length - 1)];
+  const n = m ? m.values.length : 0;
+  const fmt = m?.format || ((v: number) => Math.round(v * 10) / 10 + "");
+  const top = useMemo(() => niceAxisMax(Math.max(0, ...(m ? m.values : [0]))), [m]);
+  const lv = useMemo(() => (m ? fillCells(m.values, top, rows) : []), [m, top, rows]);
+  const xs = useMemo(() => {
+    if (ticks && ticks.length) return ticks;
+    if (labels.length <= 7) return labels;
+    const step = Math.max(1, Math.floor(labels.length / 6));
+    return labels.filter((_, i) => i % step === 0 || i === labels.length - 1);
+  }, [ticks, labels]);
+
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(
+      ([e]) => {
+        if (e.isIntersecting) {
+          setSeen(true);
+          io.disconnect();
+        }
+      },
+      { threshold: 0.15 },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+
+  if (!m) return null;
+  const accentColor = m.accent || "#dc2626";
+  const pct = n > 0 ? ((Math.max(active, 0) + 0.5) / n) * 100 : 0;
+  const tipTop = (1 - (active >= 0 ? lv[active] : 0) / rows) * 100;
+
+  return (
+    <div
+      ref={rootRef}
+      className="relative w-full overflow-hidden select-none"
+      style={
+        {
+          "--cct-accent": accentColor,
+          "--cct-spring": SPRING_EASE,
+        } as React.CSSProperties
+      }
+    >
+      <style>{`
+        @keyframes mft-cct-flip-a {
+          0% { transform: scaleY(0.15) rotateX(80deg); opacity: 0; }
+          100% { transform: none; opacity: 1; }
+        }
+        @keyframes mft-cct-flip-b {
+          0% { transform: scaleY(0.15) rotateX(80deg); opacity: 0; }
+          100% { transform: none; opacity: 1; }
+        }
+        .mft-cct-cell {
+          flex: 1;
+          border-radius: 3.5px;
+          background: rgba(113, 113, 122, 0.11);
+          transform-origin: 50% 100%;
+          animation: var(--flip) 0.52s var(--cct-spring) both;
+          animation-delay: calc(var(--c) * 11ms + var(--r) * 15ms);
+          transition: background-color 0.22s ease, opacity 0.22s ease;
+        }
+        .mft-cct-cell.is-on {
+          background: color-mix(in oklab, var(--cct-accent) 84%, #ffffff);
+        }
+        .mft-cct-cell.is-cap {
+          background: color-mix(in oklab, var(--cct-accent) 50%, #ffffff);
+        }
+        html.dark .mft-cct-cell {
+          background: rgba(255, 255, 255, 0.06);
+        }
+        html.dark .mft-cct-cell.is-on {
+          background: color-mix(in oklab, var(--cct-accent) 88%, #000000);
+        }
+        html.dark .mft-cct-cell.is-cap {
+          background: color-mix(in oklab, var(--cct-accent) 62%, #ffffff);
+        }
+        .mft-cct-plot.is-hot .mft-cct-col {
+          opacity: 0.36;
+        }
+        .mft-cct-plot.is-hot .mft-cct-col.is-active {
+          opacity: 1;
+        }
+        .mft-cct-col.is-active .mft-cct-cell.is-on {
+          background: var(--cct-accent);
+        }
+      `}</style>
+
+      {/* Matrix Plot Area */}
+      <div className="grid grid-cols-[44px_minmax(0,1fr)] gap-x-2.5 px-5 pt-5 pb-2">
+        {/* Y-Axis Scale */}
+        <div className="relative h-[200px]" aria-hidden="true">
+          {[1, 0.75, 0.5, 0.25, 0].map((f) => (
+            <span
+              key={m.key + f}
+              className="absolute right-0 -translate-y-1/2 font-code text-[10px] font-medium text-zinc-400"
+              style={{ top: `${(1 - f) * 100}%` }}
+            >
+              {fmt(Math.round(top * f * 10) / 10)}
+            </span>
+          ))}
+        </div>
+
+        {/* Columns + Dashed Grid + Crosshair + Tooltip */}
+        <div
+          className={`mft-cct-plot relative flex h-[200px] gap-[3.5px] rounded-lg outline-none ${
+            active >= 0 ? "is-hot" : ""
+          }`}
+          tabIndex={0}
+          role="img"
+          aria-label={`${m.label}: ${labels.map((l, i) => `${l} ${fmt(m.values[i] ?? 0)}`).join(", ")}`}
+          onPointerLeave={() => setActive(-1)}
+          onBlur={() => setActive(-1)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setActive(-1);
+            if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+              e.preventDefault();
+              const step = e.key === "ArrowRight" ? 1 : -1;
+              setActive((i) => Math.min(n - 1, Math.max(0, i < 0 ? 0 : i + step)));
+            }
+          }}
+        >
+          {/* Subtle horizontal dashed gridlines */}
+          {[0.25, 0.5, 0.75, 1].map((f) => (
+            <span
+              key={f}
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-x-0 border-t border-dashed border-zinc-200/70"
+              style={{ top: `${(1 - f) * 100}%` }}
+            />
+          ))}
+
+          {/* Stacked Cell Columns */}
+          {seen &&
+            lv.map((level, c) => (
+              <div
+                key={c}
+                onPointerEnter={() => setActive(c)}
+                onPointerDown={() => setActive(c)}
+                className={`mft-cct-col relative flex flex-1 flex-col-reverse gap-[3px] cursor-crosshair transition-opacity duration-200 ${
+                  c === active ? "is-active" : ""
+                }`}
+              >
+                {Array.from({ length: rows }, (_, r) => (
+                  <span
+                    key={r}
+                    className={`mft-cct-cell ${r < level ? "is-on" : ""} ${
+                      r === level - 1 && level < rows ? "is-cap" : ""
+                    }`}
+                    style={
+                      {
+                        "--c": c,
+                        "--r": r,
+                        "--flip": k % 2 ? "mft-cct-flip-b" : "mft-cct-flip-a",
+                      } as React.CSSProperties
+                    }
+                  />
+                ))}
+              </div>
+            ))}
+
+          {/* Hairline & Floating Tooltip */}
+          {active >= 0 && (
+            <>
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute -top-1.5 -bottom-1.5 w-0 border-l border-dashed border-zinc-500 transition-all duration-150"
+                style={{ left: `${pct}%` }}
+              />
+              <div
+                aria-live="polite"
+                className="pointer-events-none absolute z-20 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs whitespace-nowrap transition-all duration-150"
+                style={{
+                  boxShadow: "var(--mft-shadow-lg)",
+                  left: `${pct}%`,
+                  top: `clamp(22px, ${tipTop}%, calc(100% - 28px))`,
+                  transform:
+                    pct > 66 ? "translate(calc(-100% - 12px), -50%)" : "translate(12px, -50%)",
+                }}
+              >
+                <div className="text-[11px] font-medium text-zinc-400">{labels[active]}</div>
+                <div className="mt-0.5 flex items-center gap-1.5 font-code text-sm font-bold text-zinc-900">
+                  <span
+                    className="h-2 w-2 rounded-[2px]"
+                    style={{ backgroundColor: accentColor }}
+                  />
+                  {fmt(m.values[active] ?? 0)}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* X-Axis Labels + Active Pin */}
+        <div className="relative col-start-2 h-7" aria-hidden="true">
+          {xs.map((t, i) => (
+            <span
+              key={t + i}
+              className="absolute top-2 -translate-x-1/2 text-[10px] font-medium text-zinc-400"
+              style={{ left: `${((i + 0.5) / xs.length) * 100}%` }}
+            >
+              {t}
+            </span>
+          ))}
+          {active >= 0 && (
+            <span
+              className="absolute top-1 z-10 -translate-x-1/2 rounded-full bg-zinc-900 px-2.5 py-0.5 font-code text-[10px] font-semibold text-white shadow-xs transition-all duration-150"
+              style={{ left: `${pct}%` }}
+            >
+              {labels[active]}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Bottom Interactive KPI Metric Tabs (Clicking flips the board!) */}
+      <div
+        role="tablist"
+        aria-label="Telemetry metrics"
+        className="relative grid grid-cols-2 border-t border-zinc-100 sm:grid-cols-4"
+      >
+        {metrics.map((item, i) => {
+          const isSelected = i === k;
+          const hasDelta = typeof item.delta === "number" && Number.isFinite(item.delta);
+          const isZero = !hasDelta || Math.abs(item.delta ?? 0) < 0.005;
+          const isGood =
+            !isZero &&
+            ((item.delta! > 0 && item.higherIsBetter !== false) ||
+              (item.delta! < 0 && item.higherIsBetter === false));
+
+          return (
+            <button
+              key={item.key}
+              type="button"
+              role="tab"
+              aria-selected={isSelected}
+              onClick={() => setK(i)}
+              className={`mft-tab-btn group relative flex flex-col justify-between border-r border-zinc-100 p-4 text-left transition-colors last:border-r-0 cursor-pointer ${
+                isSelected ? "bg-zinc-50/90" : "hover:bg-zinc-50/50"
+              }`}
+            >
+              <div className="flex items-center gap-2 text-xs font-semibold text-zinc-500">
+                <span
+                  className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors"
+                  style={{
+                    backgroundColor: isSelected ? item.accent || "#dc2626" : "rgba(113,113,122,0.1)",
+                    color: isSelected ? "#ffffff" : "#71717a",
+                  }}
+                >
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d={
+                        item.icon ||
+                        "M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10"
+                      }
+                    />
+                  </svg>
+                </span>
+                <span className="truncate">{item.label}</span>
+              </div>
+
+              <div
+                className={`mt-2.5 font-code text-2xl font-bold tracking-tight tabular-nums transition-colors ${
+                  isSelected ? "text-zinc-900" : "text-zinc-400 group-hover:text-zinc-700"
+                }`}
+              >
+                {item.summary}
+              </div>
+
+              <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-zinc-400">
+                {!isZero ? (
+                  <span
+                    className={`font-code font-semibold tabular-nums ${
+                      isGood ? "text-emerald-600" : "text-red-600"
+                    }`}
+                  >
+                    {item.delta! > 0 ? "+" : "−"}
+                    {Math.min(999, Math.round(Math.abs(item.delta! * 100)))}%
+                  </span>
+                ) : null}
+                <span className="truncate">{item.deltaLabel || "click to plot"}</span>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Screen-reader data table */}
+      <div className="sr-only">
+        <table>
+          <caption>{m.label}</caption>
+          <thead>
+            <tr>
+              <th scope="col">Period</th>
+              <th scope="col">{m.label}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {labels.map((l, idx) => (
+              <tr key={idx}>
+                <th scope="row">{l}</th>
+                <td>{fmt(m.values[idx] ?? 0)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   2. Concentric Rings Radial Gauge (Attendance · Velocity · Client Sign-Off)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+export interface RadialRingItem {
+  key: string;
+  label: string;
+  sublabel: string;
+  pct: number;
+  color: string;
+  href?: string;
+}
+
+export function ConcentricRingsChart({ rings }: { rings: RadialRingItem[] }) {
+  const [hovered, setHovered] = useState<string | null>(null);
+  const radii = [50, 38, 26];
+  const activeRing = rings.find((r) => r.key === hovered) ?? rings[0];
+
+  return (
+    <div className="flex flex-col items-center gap-5 sm:flex-row">
+      <div
+        className="relative h-40 w-40 shrink-0"
+        onMouseLeave={() => setHovered(null)}
+      >
+        <svg viewBox="0 0 120 120" className="h-full w-full -rotate-90">
+          {rings.slice(0, 3).map((ring, idx) => {
+            const r = radii[idx] ?? 26;
+            const c = 2 * Math.PI * r;
+            const clamped = Math.max(0, Math.min(100, ring.pct));
+            const offset = c - (clamped / 100) * c;
+            const isHot = hovered === ring.key;
+            return (
+              <g key={ring.key}>
+                <circle
+                  cx="60"
+                  cy="60"
+                  r={r}
+                  fill="none"
+                  stroke="currentColor"
+                  className="text-zinc-100"
+                  strokeWidth={8}
+                />
+                <circle
+                  cx="60"
+                  cy="60"
+                  r={r}
+                  fill="none"
+                  stroke={ring.color}
+                  strokeWidth={isHot ? 9.5 : 8}
+                  strokeLinecap="round"
+                  strokeDasharray={c}
+                  strokeDashoffset={offset}
+                  className="cursor-pointer transition-all duration-500"
+                  style={{ opacity: hovered === null || isHot ? 1 : 0.35 }}
+                  onMouseEnter={() => setHovered(ring.key)}
+                />
+              </g>
+            );
+          })}
+        </svg>
+        {activeRing && (
+          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
+            <span className="font-code text-lg font-bold tabular-nums text-zinc-900">
+              {activeRing.pct}%
+            </span>
+            <span className="max-w-[72px] truncate text-[9px] font-semibold uppercase tracking-wider text-zinc-400">
+              {activeRing.label}
+            </span>
+          </div>
+        )}
+      </div>
+
+      <div className="w-full flex-1 space-y-2.5">
+        {rings.map((ring) => {
+          const isHot = hovered === ring.key;
+          const row = (
+            <div
+              onMouseEnter={() => setHovered(ring.key)}
+              onMouseLeave={() => setHovered(null)}
+              className={`rounded-xl border p-2.5 transition-all ${
+                isHot
+                  ? "border-zinc-300 bg-zinc-50"
+                  : "border-zinc-100 bg-zinc-50/40 hover:bg-zinc-50"
+              }`}
+            >
+              <div className="flex items-center justify-between text-xs">
+                <span className="flex items-center gap-2 font-semibold text-zinc-800">
+                  <span
+                    className="h-2.5 w-2.5 rounded-full"
+                    style={{ backgroundColor: ring.color }}
+                  />
+                  {ring.label}
+                </span>
+                <span className="font-code font-bold tabular-nums text-zinc-900">
+                  {ring.pct}%
+                </span>
+              </div>
+              <p className="mt-0.5 pl-4.5 text-[11px] text-zinc-500">{ring.sublabel}</p>
+            </div>
+          );
+          return ring.href ? (
+            <Link key={ring.key} href={ring.href} className="block">
+              {row}
+            </Link>
+          ) : (
+            <div key={ring.key}>{row}</div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -163,7 +642,7 @@ export function Sparkline({
       width={width}
       height={height}
       viewBox={`0 0 ${width} ${height}`}
-      className={` shrink-0 overflow-visible ${className}`}
+      className={`shrink-0 overflow-visible ${className}`}
       aria-hidden="true"
     >
       <defs>
@@ -182,13 +661,7 @@ export function Sparkline({
         strokeLinejoin="round"
       />
       {lastPt && (
-        <circle
-          cx={lastPt.x}
-          cy={lastPt.y}
-          r={2.5}
-          fill={color}
-          className="ring-2 ring-white"
-        />
+        <circle cx={lastPt.x} cy={lastPt.y} r={2.5} fill={color} className="ring-2 ring-white" />
       )}
     </svg>
   );
@@ -216,9 +689,7 @@ export interface KpiStatCardProps {
   tone?: KpiTone;
   href?: string;
   alert?: boolean;
-  /** Fractional change vs prior period: e.g. 0.14 = +14% */
   delta?: number | null;
-  /** Whether an increase is good ("up") or bad ("down", e.g. overdue/late) */
   good?: "up" | "down";
   period?: string;
   trend?: number[];
@@ -249,11 +720,10 @@ export function KpiStatCard({
         href ? "ui-card-hover group" : ""
       } ${alert ? "ring-1 ring-amber-400/70" : ""}`}
     >
-      {/* Top bar: label + icon/alert */}
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="truncate text-[12px] font-medium text-zinc-500">{label}</p>
-          <p className="mt-1.5 text-2xl font-bold tracking-tight tabular-nums text-zinc-900">
+          <p className="mt-1.5 font-code text-2xl font-bold tracking-tight tabular-nums text-zinc-900">
             {value}
           </p>
         </div>
@@ -274,16 +744,13 @@ export function KpiStatCard({
         </div>
       </div>
 
-      {/* Middle/Bottom: Sparkline + Delta / Sub */}
       <div className="mt-3 flex items-end justify-between gap-2 pt-1">
         <div className="min-w-0 flex-1 space-y-1">
           {hasDelta && !isZero ? (
             <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
               <span
-                className={`inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 font-semibold tabular-nums ${
-                  isPositive
-                    ? "bg-emerald-50 text-emerald-700"
-                    : "bg-red-50 text-red-700"
+                className={`inline-flex items-center gap-0.5 rounded-md px-1.5 py-0.5 font-code font-semibold tabular-nums ${
+                  isPositive ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"
                 }`}
               >
                 <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}>
@@ -301,9 +768,7 @@ export function KpiStatCard({
           {sub && <p className="truncate text-[11px] font-medium text-zinc-500">{sub}</p>}
         </div>
 
-        {trend && trend.length > 1 && (
-          <Sparkline data={trend} color={t.hex} width={82} height={30} />
-        )}
+        {trend && trend.length > 1 && <Sparkline data={trend} color={t.hex} width={82} height={30} />}
       </div>
     </div>
   );
@@ -388,49 +853,40 @@ export function InteractiveAreaChart<T extends Record<string, unknown>>({
 
   return (
     <div className="space-y-3">
-      {/* Legend */}
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
         <div className="flex flex-wrap items-center gap-4">
           {series.map((s) => (
             <span key={s.key} className="inline-flex items-center gap-1.5 font-medium text-zinc-600">
-              <span
-                className="h-2.5 w-2.5 rounded-[3px]"
-                style={{ backgroundColor: s.color }}
-              />
+              <span className="h-2.5 w-2.5 rounded-[3px]" style={{ backgroundColor: s.color }} />
               {s.label}
             </span>
           ))}
           {referenceValue !== undefined && referenceValue > 0 && (
             <span className="inline-flex items-center gap-1.5 text-zinc-400">
               <span className="h-0 w-3.5 border-t border-dashed border-zinc-400" />
-              {referenceLabel ?? "Avg"}: <strong className="font-semibold text-zinc-600">{format(referenceValue)}</strong>
+              {referenceLabel ?? "Avg"}:{" "}
+              <strong className="font-code font-semibold text-zinc-600">{format(referenceValue)}</strong>
             </span>
           )}
         </div>
       </div>
 
-      {/* SVG Canvas */}
       <div
         role="img"
         aria-label={description}
         className="relative select-none"
         onMouseLeave={() => setHoverIdx(null)}
       >
-        <svg
-          viewBox={`0 0 ${W} ${H}`}
-          className="w-full overflow-visible"
-          style={{ height }}
-        >
+        <svg viewBox={`0 0 ${W} ${H}`} className="w-full overflow-visible" style={{ height }}>
           <defs>
             {series.map((s) => (
               <linearGradient key={s.key} id={`area-${chartId}-${s.key}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={s.color} stopOpacity={s.fillOpacity ?? 0.2} />
+                <stop offset="0%" stopColor={s.color} stopOpacity={s.fillOpacity ?? 0.22} />
                 <stop offset="100%" stopColor={s.color} stopOpacity={0.01} />
               </linearGradient>
             ))}
           </defs>
 
-          {/* Horizontal Y-axis gridlines + labels */}
           {yTicks.map((t, idx) => {
             const y = padT + innerH - (t / maxVal) * innerH;
             return (
@@ -444,19 +900,13 @@ export function InteractiveAreaChart<T extends Record<string, unknown>>({
                   className="text-zinc-100"
                   strokeWidth={1}
                 />
-                <text
-                  x={padL - 8}
-                  y={y + 3.5}
-                  textAnchor="end"
-                  className="fill-zinc-400 font-code text-[10px]"
-                >
+                <text x={padL - 8} y={y + 3.5} textAnchor="end" className="fill-zinc-400 font-code text-[10px]">
                   {format(t)}
                 </text>
               </g>
             );
           })}
 
-          {/* Optional Reference Line */}
           {referenceValue !== undefined && referenceValue > 0 && referenceValue <= maxVal && (
             <line
               x1={padL}
@@ -469,7 +919,6 @@ export function InteractiveAreaChart<T extends Record<string, unknown>>({
             />
           )}
 
-          {/* Series Area + Stroke */}
           {seriesPaths.map(({ series: s, line, area }) => (
             <g key={s.key}>
               {!s.dashed && <path d={area} fill={`url(#area-${chartId}-${s.key})`} />}
@@ -485,7 +934,6 @@ export function InteractiveAreaChart<T extends Record<string, unknown>>({
             </g>
           ))}
 
-          {/* X-axis labels */}
           {data.map((row, i) => {
             const stride = data.length > 20 ? Math.ceil(data.length / 7) : data.length > 10 ? 2 : 1;
             if (i % stride !== 0 && i !== data.length - 1) return null;
@@ -505,7 +953,6 @@ export function InteractiveAreaChart<T extends Record<string, unknown>>({
             );
           })}
 
-          {/* Active Crosshair & Points */}
           {activeX !== null && hoverIdx !== null && (
             <g>
               <line
@@ -523,21 +970,13 @@ export function InteractiveAreaChart<T extends Record<string, unknown>>({
                 return (
                   <g key={s.key}>
                     <circle cx={pt.x} cy={pt.y} r={6} fill={s.color} fillOpacity={0.18} />
-                    <circle
-                      cx={pt.x}
-                      cy={pt.y}
-                      r={3.5}
-                      fill={s.color}
-                      stroke="#ffffff"
-                      strokeWidth={1.75}
-                    />
+                    <circle cx={pt.x} cy={pt.y} r={3.5} fill={s.color} stroke="#ffffff" strokeWidth={1.75} />
                   </g>
                 );
               })}
             </g>
           )}
 
-          {/* Invisible hover columns for smooth pointer tracking */}
           {data.map((_, i) => {
             const colW = innerW / Math.max(1, data.length);
             const x = padL + i * colW;
@@ -556,7 +995,6 @@ export function InteractiveAreaChart<T extends Record<string, unknown>>({
           })}
         </svg>
 
-        {/* Floating Tooltip */}
         {activeRow && hoverIdx !== null && (
           <div
             className="pointer-events-none absolute top-2 z-20 min-w-[165px] rounded-xl border border-zinc-200 bg-white/95 px-3 py-2.5 text-xs backdrop-blur-md"
@@ -643,7 +1081,6 @@ export function InteractiveBarChart<T extends Record<string, unknown>>({
 
   return (
     <div className="space-y-3">
-      {/* Legend */}
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
         <div className="flex flex-wrap items-center gap-4">
           {series.map((s) => (
@@ -656,7 +1093,8 @@ export function InteractiveBarChart<T extends Record<string, unknown>>({
         {referenceValue !== undefined && referenceValue > 0 && (
           <span className="inline-flex items-center gap-1.5 text-zinc-400">
             <span className="h-0 w-3.5 border-t border-dashed border-zinc-400" />
-            {referenceLabel ?? "Target"}: <strong className="font-semibold text-zinc-600">{format(referenceValue)}</strong>
+            {referenceLabel ?? "Target"}:{" "}
+            <strong className="font-code font-semibold text-zinc-600">{format(referenceValue)}</strong>
           </span>
         )}
       </div>
@@ -668,7 +1106,6 @@ export function InteractiveBarChart<T extends Record<string, unknown>>({
         style={{ height }}
         onMouseLeave={() => setHoverIdx(null)}
       >
-        {/* Background horizontal reference gridlines */}
         <div className="pointer-events-none absolute inset-x-0 top-4 bottom-7 flex flex-col justify-between">
           {[1, 0.66, 0.33, 0].map((ratio) => (
             <div key={ratio} className="flex items-center gap-2">
@@ -680,7 +1117,6 @@ export function InteractiveBarChart<T extends Record<string, unknown>>({
           ))}
         </div>
 
-        {/* Optional Reference Line */}
         {refPct !== null && (
           <div
             className="pointer-events-none absolute right-0 left-11 z-10 border-t border-dashed border-red-400/70"
@@ -688,7 +1124,6 @@ export function InteractiveBarChart<T extends Record<string, unknown>>({
           />
         )}
 
-        {/* Bars container */}
         <div className="relative ml-11 flex h-[calc(100%-28px)] items-end gap-1.5 sm:gap-2.5">
           {data.map((row, idx) => {
             const isHovered = hoverIdx === idx;
@@ -699,7 +1134,6 @@ export function InteractiveBarChart<T extends Record<string, unknown>>({
                 className="group relative flex h-full flex-1 flex-col items-center justify-end"
                 onMouseEnter={() => setHoverIdx(idx)}
               >
-                {/* Bar stack or group */}
                 <div className="relative flex h-full w-full max-w-[38px] flex-col justify-end overflow-hidden rounded-t-lg bg-zinc-100/70 p-[2px]">
                   {stacked ? (
                     <div className="flex h-full w-full flex-col-reverse justify-start overflow-hidden rounded-t-md">
@@ -741,7 +1175,6 @@ export function InteractiveBarChart<T extends Record<string, unknown>>({
                   )}
                 </div>
 
-                {/* Hover Popover */}
                 {isHovered && (
                   <div
                     className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 min-w-[145px] -translate-x-1/2 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs"
@@ -774,7 +1207,6 @@ export function InteractiveBarChart<T extends Record<string, unknown>>({
           })}
         </div>
 
-        {/* X-Axis Labels */}
         <div className="ml-11 mt-2 flex items-center justify-between text-[10px] font-medium text-zinc-400">
           {data.map((row, idx) => {
             const stride = data.length > 16 ? Math.ceil(data.length / 6) : 1;
@@ -834,7 +1266,6 @@ export function DonutBreakdownChart({
 
   return (
     <div className="flex flex-col items-center gap-6 sm:flex-row">
-      {/* SVG Ring */}
       <div
         role="img"
         aria-label={description}
@@ -880,10 +1311,10 @@ export function DonutBreakdownChart({
           })()}
         </svg>
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-3 text-center">
-          <span className="truncate max-w-full text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+          <span className="max-w-full truncate text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
             {hoveredSlice ? hoveredSlice.label : centerLabel}
           </span>
-          <span className="mt-0.5 text-xl font-bold tracking-tight tabular-nums text-zinc-900">
+          <span className="mt-0.5 font-code text-xl font-bold tracking-tight tabular-nums text-zinc-900">
             {hoveredSlice
               ? format(hoveredSlice.value)
               : centerValue !== undefined
@@ -891,14 +1322,13 @@ export function DonutBreakdownChart({
                 : format(total)}
           </span>
           {hoveredSlice && (
-            <span className="text-[10px] font-semibold tabular-nums text-zinc-500">
+            <span className="font-code text-[10px] font-semibold tabular-nums text-zinc-500">
               {Math.round((hoveredSlice.value / safeTotal) * 100)}% share
             </span>
           )}
         </div>
       </div>
 
-      {/* Breakdown Legend Table */}
       <ul className="w-full flex-1 space-y-2.5">
         {slices.map((s) => {
           const pct = total > 0 ? Math.round((s.value / total) * 100) : 0;
@@ -913,14 +1343,9 @@ export function DonutBreakdownChart({
               }`}
             >
               <div className="flex items-center gap-2">
-                <span
-                  className="h-2.5 w-2.5 shrink-0 rounded-[3px]"
-                  style={{ backgroundColor: s.color }}
-                />
+                <span className="h-2.5 w-2.5 shrink-0 rounded-[3px]" style={{ backgroundColor: s.color }} />
                 <span className="flex-1 truncate font-medium text-zinc-700">{s.label}</span>
-                <span className="font-code font-bold tabular-nums text-zinc-900">
-                  {format(s.value)}
-                </span>
+                <span className="font-code font-bold tabular-nums text-zinc-900">{format(s.value)}</span>
                 <span className="w-9 text-right font-code text-[11px] tabular-nums text-zinc-400">
                   {pct}%
                 </span>
@@ -966,7 +1391,7 @@ export function AttendanceHeatmap({ days }: { days: HeatmapDay[] }) {
         <span>Daily workspace hours intensity — last {days.length} days</span>
         <div className="flex items-center gap-1.5 text-[11px]">
           <span>Less</span>
-          <span className="h-3 w-3 rounded-[3px] bg-zinc-100 border border-zinc-200" />
+          <span className="h-3 w-3 rounded-[3px] border border-zinc-200 bg-zinc-100" />
           <span className="h-3 w-3 rounded-[3px] bg-red-100" />
           <span className="h-3 w-3 rounded-[3px] bg-red-300" />
           <span className="h-3 w-3 rounded-[3px] bg-red-500" />
@@ -980,7 +1405,7 @@ export function AttendanceHeatmap({ days }: { days: HeatmapDay[] }) {
           <div
             key={d.date}
             className={`group relative flex flex-col justify-between rounded-xl border p-2.5 transition-transform hover:-translate-y-0.5 ${getIntensityClass(
-              d.hours
+              d.hours,
             )}`}
           >
             <div className="flex items-center justify-between gap-1">

@@ -11,7 +11,9 @@ import { subscribeClientPortals } from "@/lib/admin/clientPortalStore";
 import { ARC_DEFAULT_PORTAL, type ClientRolloutPortal } from "@/lib/admin/clientPortalTypes";
 import {
   AttendanceHeatmap,
+  CellColumnTrend,
   ChartCard,
+  ConcentricRingsChart,
   DonutBreakdownChart,
   InteractiveAreaChart,
   InteractiveBarChart,
@@ -192,7 +194,7 @@ export default function AdminOverviewPage() {
 
   const [now, setNow] = useState(() => new Date());
   const [chartDays, setChartDays] = useState<7 | 14 | 28>(14);
-  const [chartMode, setChartMode] = useState<"area" | "bar" | "heatmap">("area");
+  const [chartMode, setChartMode] = useState<"matrix" | "area" | "bar" | "heatmap">("matrix");
 
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 60_000);
@@ -868,6 +870,7 @@ export default function AdminOverviewPage() {
           title="Workforce & Output Telemetry"
           subtitle={`${chartSlice.reduce((a, d) => Math.round((a + d.totalH) * 10) / 10, 0)}h logged across ${chartDays} days · Daily avg ${chartAvgHours}h`}
           className="xl:col-span-2"
+          noPadding={chartMode === "matrix"}
           actions={
             <div className="flex flex-wrap items-center gap-2">
               {/* View mode tablist */}
@@ -878,9 +881,10 @@ export default function AdminOverviewPage() {
               >
                 {(
                   [
-                    ["area", "Area Trend"],
+                    ["matrix", "Cell Matrix"],
+                    ["area", "Area Spline"],
                     ["bar", "Stacked Bar"],
-                    ["heatmap", "28d Matrix"],
+                    ["heatmap", "28d Grid"],
                   ] as const
                 ).map(([key, label]) => (
                   <button
@@ -934,7 +938,59 @@ export default function AdminOverviewPage() {
             </div>
           }
         >
-          {chartMode === "area" ? (
+          {chartMode === "matrix" ? (
+            <CellColumnTrend
+              labels={chartSlice.map((d) => d.label)}
+              metrics={[
+                {
+                  key: "hours",
+                  label: "Logged Hours",
+                  values: chartSlice.map((d) => d.totalH),
+                  summary: `${Math.round(chartSlice.reduce((a, d) => a + d.totalH, 0) * 10) / 10}h`,
+                  delta: s.hoursDelta,
+                  deltaLabel: `avg ${chartAvgHours}h/day`,
+                  higherIsBetter: true,
+                  accent: "#dc2626",
+                  format: (v) => `${v}h`,
+                  icon: ICONS.sessions,
+                },
+                {
+                  key: "tasks",
+                  label: "Tasks Completed",
+                  values: chartSlice.map((d) => d.tasksDone),
+                  summary: `${chartSlice.reduce((a, d) => a + d.tasksDone, 0)}`,
+                  delta: s.tasksDelta,
+                  deltaLabel: `${s.openTasks.length} open now`,
+                  higherIsBetter: true,
+                  accent: "#2563eb",
+                  format: (v) => `${Math.round(v)}`,
+                  icon: ICONS.tasks,
+                },
+                {
+                  key: "sessions",
+                  label: "Shift Sessions",
+                  values: chartSlice.map((d) => d.sessions),
+                  summary: `${chartSlice.reduce((a, d) => a + d.sessions, 0)}`,
+                  deltaLabel: `${s.onlineWorkers.length} online today`,
+                  higherIsBetter: true,
+                  accent: "#059669",
+                  format: (v) => `${Math.round(v)}`,
+                  icon: ICONS.workers,
+                },
+                {
+                  key: "late",
+                  label: "Late Arrivals",
+                  values: chartSlice.map((d) => d.late),
+                  summary: `${chartSlice.reduce((a, d) => a + d.late, 0)}`,
+                  deltaLabel: "clock-in > 11:00",
+                  higherIsBetter: false,
+                  accent: "#d97706",
+                  format: (v) => `${Math.round(v)}`,
+                  icon: ICONS.exceptions,
+                },
+              ]}
+            />
+          ) : chartMode === "area" ? (
             <InteractiveAreaChart
               data={chartSlice}
               xKey="label"
@@ -1086,69 +1142,52 @@ export default function AdminOverviewPage() {
         </ChartCard>
 
         <ChartCard
-          title="Client Rollout Studio"
-          subtitle={`${portalData.clientName} · ${portalData.projectTitle}`}
+          title="Workspace Health Rings"
+          subtitle="Real-time completion, client sign-off & shift presence"
           badge={
             <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-code text-[10px] font-semibold text-emerald-700">
-              3-Month Rollout
+              Live Rings
             </span>
           }
           actions={
             <Link
-              href="/client"
-              target="_blank"
+              href="/admin/client-portal"
               className="rounded-lg border border-zinc-200 px-2.5 py-1 text-[11px] font-semibold text-zinc-700 hover:bg-zinc-50"
             >
-              Client View ↗
+              Client Studio →
             </Link>
           }
         >
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs font-medium text-zinc-500">Feed &amp; Reels Sign-Off Progress</p>
-                <p className="mt-0.5 font-code text-2xl font-bold text-zinc-900">
-                  {portalStats.approvedPosts} / {portalStats.totalPosts}{" "}
-                  <span className="text-xs font-medium text-zinc-500">approved ({portalStats.pct}%)</span>
-                </p>
-              </div>
-              <span className="rounded-xl bg-red-50 px-3 py-1.5 font-code text-xs font-bold text-red-600">
-                {portalStats.readyPosts} in review
-              </span>
-            </div>
-
-            <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-100">
-              <div
-                className="h-full rounded-full bg-gradient-to-r from-red-600 to-emerald-500 transition-all duration-500"
-                style={{ width: `${portalStats.pct}%` }}
-              />
-            </div>
-
-            <div className="grid grid-cols-3 gap-2 pt-1 text-center">
-              <div className="rounded-xl border border-zinc-200/70 bg-zinc-50/70 p-2.5">
-                <p className="font-code text-base font-bold text-zinc-900">
-                  {portalStats.approvedStories}/{portalStats.totalStories}
-                </p>
-                <p className="text-[10px] font-medium text-zinc-500">Stories Approved</p>
-              </div>
-              <div className="rounded-xl border border-zinc-200/70 bg-zinc-50/70 p-2.5">
-                <p className="font-code text-base font-bold text-amber-600">{portalStats.pendingMilestones}</p>
-                <p className="text-[10px] font-medium text-zinc-500">Pending Sign-Offs</p>
-              </div>
-              <div className="rounded-xl border border-zinc-200/70 bg-zinc-50/70 p-2.5">
-                <p className="font-code text-base font-bold text-red-600">{portalStats.revisionPosts}</p>
-                <p className="text-[10px] font-medium text-zinc-500">Edits Requested</p>
-              </div>
-            </div>
-
-            <Link
-              href="/admin/client-portal"
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-zinc-900 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-zinc-800"
-            >
-              Open Content Rollout Studio
-              <Icon d="M9 5l7 7-7 7" className="h-3.5 w-3.5" />
-            </Link>
-          </div>
+          <ConcentricRingsChart
+            rings={[
+              {
+                key: "tasks",
+                label: "Task Velocity",
+                sublabel: `${s.completedTasks.length} of ${tasks.length} directives done`,
+                pct: tasks.length ? Math.round((s.completedTasks.length / tasks.length) * 100) : 0,
+                color: "#059669",
+                href: "/admin/tasks",
+              },
+              {
+                key: "rollout",
+                label: "Client Rollout",
+                sublabel: `${portalStats.approvedPosts}/${portalStats.totalPosts} posts · ${portalStats.readyPosts} in review`,
+                pct: portalStats.pct,
+                color: "#dc2626",
+                href: "/admin/client-portal",
+              },
+              {
+                key: "presence",
+                label: "Shift Presence",
+                sublabel: `${s.onlineWorkers.length} of ${s.approvedWorkers.length} team online`,
+                pct: s.approvedWorkers.length
+                  ? Math.round((s.onlineWorkers.length / s.approvedWorkers.length) * 100)
+                  : 0,
+                color: "#2563eb",
+                href: "/admin/work-sessions",
+              },
+            ]}
+          />
         </ChartCard>
       </section>
 

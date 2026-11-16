@@ -20,6 +20,7 @@ import { getAssigneeIds, parseDate } from "@/components/admin/projects/types";
 import { EmptyState, PageHeader, Skeleton, STATE_ICONS } from "@/components/admin/ui/States";
 import { ICONS } from "@/lib/admin/nav";
 import {
+  CellColumnTrend,
   ChartCard,
   DonutBreakdownChart,
   InteractiveAreaChart,
@@ -242,7 +243,7 @@ export default function ReportsPage() {
   const [to, setTo] = useUrlState("to");
   const [dept, setDept] = useUrlState("dept");
   const [workerSearch, setWorkerSearch] = useState("");
-  const [chartType, setChartType] = useState<"area" | "bar">("area");
+  const [chartType, setChartType] = useState<"matrix" | "area" | "bar">("matrix");
   const [workerSort, setWorkerSort] = useState<{ key: WorkerRowKey; dir: SortDir }>({
     key: "hours",
     dir: "desc",
@@ -776,6 +777,7 @@ export default function ReportsPage() {
           title={trend.weekly ? "Weekly Hours & Overtime Telemetry" : "Daily Hours & Overtime Telemetry"}
           subtitle={`Total logged hours vs overtime · Active day average ${fmt(trendAvg)}h`}
           className="xl:col-span-2"
+          noPadding={chartType === "matrix"}
           actions={
             <div className="flex items-center gap-2">
               <div
@@ -785,7 +787,8 @@ export default function ReportsPage() {
               >
                 {(
                   [
-                    ["area", "Area Trend"],
+                    ["matrix", "Cell Matrix"],
+                    ["area", "Area Spline"],
                     ["bar", "Stacked Bar"],
                   ] as const
                 ).map(([k, l]) => (
@@ -808,13 +811,65 @@ export default function ReportsPage() {
           }
         >
           {loading ? (
-            <Skeleton className="h-56 w-full" />
+            <div className="p-5">
+              <Skeleton className="h-56 w-full" />
+            </div>
           ) : trend.days.every((d) => d.hours === 0) ? (
             <EmptyState
               compact
               icon={STATE_ICONS.chart}
               title="No hours logged in this period"
               description="Pick a different date range or department."
+            />
+          ) : chartType === "matrix" ? (
+            <CellColumnTrend
+              labels={trend.days.slice(-28).map((d) => d.label)}
+              metrics={[
+                {
+                  key: "hours",
+                  label: "Total Hours",
+                  values: trend.days.slice(-28).map((d) => d.hours),
+                  summary: `${fmt(kpis.totalHours)}h`,
+                  deltaLabel: `avg ${fmt(trendAvg)}h/day`,
+                  higherIsBetter: true,
+                  accent: "#dc2626",
+                  format: (v) => `${v}h`,
+                  icon: ICONS.sessions,
+                },
+                {
+                  key: "regular",
+                  label: "Regular Hours",
+                  values: trend.days.slice(-28).map((d) => d.regular),
+                  summary: `${fmt(Math.max(0, kpis.totalHours - kpis.overtime))}h`,
+                  deltaLabel: `${kpis.workerDays} worker-days`,
+                  higherIsBetter: true,
+                  accent: "#2563eb",
+                  format: (v) => `${v}h`,
+                  icon: ICONS.reports,
+                },
+                {
+                  key: "overtime",
+                  label: "Overtime (>8h)",
+                  values: trend.days.slice(-28).map((d) => d.overtime),
+                  summary: `${fmt(kpis.overtime)}h`,
+                  deltaLabel: "overtime hours",
+                  higherIsBetter: true,
+                  accent: "#059669",
+                  format: (v) => `${v}h`,
+                  icon: ICONS.tasks,
+                },
+                {
+                  key: "late",
+                  label: "Late Arrivals",
+                  values: trend.days.slice(-28).map((d) => d.late),
+                  summary: `${kpis.late}`,
+                  deltaLabel: "after 11:00 AM",
+                  higherIsBetter: false,
+                  accent: "#d97706",
+                  format: (v) => `${Math.round(v)}`,
+                  icon: ICONS.exceptions,
+                },
+              ]}
             />
           ) : chartType === "area" ? (
             <InteractiveAreaChart

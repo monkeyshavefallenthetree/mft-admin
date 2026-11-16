@@ -64,8 +64,10 @@ export default function TodayTab({
     });
   }, [approved, todayFilter, todaySearch, presentWorkerIds, lateWorkerIds, overtimeWorkerIds]);
 
+  const stdHours = settings.standardHours || 8;
+
   return (
-    <div className="space-y-5 animate-fade-in font-mono">
+    <div className="space-y-5 animate-fade-in">
       {/* Top KPI Metrics Strip */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
         {[
@@ -77,47 +79,49 @@ export default function TodayTab({
             bar: "bg-amber-500",
           },
           {
-            label: t(`عمل إضافي (>${settings.standardHours || 8}س)`, `Overtime (>${settings.standardHours || 8}h)`),
+            label: t(`عمل إضافي (>${stdHours}س)`, `Overtime (>${stdHours}h)`),
             value: hrSummary.overtimeToday,
             bar: "bg-violet-500",
           },
           { label: t("نسبة الحضور", "Attendance Rate"), value: `${hrSummary.attendanceRate}%`, bar: "bg-blue-500" },
-          { label: t("إجمالي ساعات اليوم", "Hours Today"), value: `${hrSummary.payrollHoursToday}h`, bar: "bg-zinc-400" },
+          { label: t("إجمالي ساعات اليوم", "Hours Today"), value: `${hrSummary.payrollHoursToday}h`, bar: "bg-zinc-500" },
         ].map((s) => (
-          <div
-            key={s.label}
-            className="p-4 bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 shadow-[3px_3px_0px_0px_#09090b] relative overflow-hidden rounded-lg"
-          >
-            <span className={`absolute start-0 top-0 h-full w-1.5 ${s.bar}`} />
-            <p className="text-[10px] font-bold uppercase text-zinc-500">{s.label}</p>
-            <p className="text-2xl font-bold font-oswald text-zinc-950 dark:text-white mt-1">{s.value}</p>
+          <div key={s.label} className="ui-card relative overflow-hidden p-4">
+            <span className={`absolute inset-x-0 top-0 h-1 ${s.bar}`} />
+            <p className="text-[11px] font-medium text-zinc-500">{s.label}</p>
+            <p className="mt-1.5 font-code text-2xl font-bold tracking-tight tabular-nums text-zinc-900">
+              {s.value}
+            </p>
           </div>
         ))}
       </div>
 
-      {/* Live Roster Filter Pills & Search */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 p-3.5 bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 shadow-[2px_2px_0px_0px_#09090b] rounded-lg">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-[10px] font-bold uppercase text-zinc-400 me-1">
-            {t("تصفية الموظفين:", "Filter Roster:")}
-          </span>
+      {/* Live Roster Filter Tablist & Search */}
+      <div className="ui-card flex flex-col justify-between gap-3 p-3.5 lg:flex-row lg:items-center">
+        <div
+          role="tablist"
+          aria-label={t("تصفية الموظفين", "Filter Roster")}
+          className="flex items-center gap-1 overflow-x-auto rounded-xl bg-zinc-100 p-1"
+        >
           {(
             [
-              { id: "all", label: t(`الكل (${approved.length})`, `All Workers (${approved.length})`) },
+              { id: "all", label: t(`الكل (${approved.length})`, `All (${approved.length})`) },
               { id: "present", label: t(`الحاضرون (${hrSummary.presentToday})`, `Present (${hrSummary.presentToday})`) },
               { id: "absent", label: t(`الغائبون (${hrSummary.absentToday})`, `Absent (${hrSummary.absentToday})`) },
               { id: "late", label: t(`المتأخرون (${hrSummary.lateToday})`, `Late (${hrSummary.lateToday})`) },
-              { id: "overtime", label: t(`في وقت إضافي (${hrSummary.overtimeToday})`, `Overtime (${hrSummary.overtimeToday})`) },
+              { id: "overtime", label: t(`وقت إضافي (${hrSummary.overtimeToday})`, `Overtime (${hrSummary.overtimeToday})`) },
             ] as const
           ).map((pill) => (
             <button
               key={pill.id}
               type="button"
+              role="tab"
+              aria-selected={todayFilter === pill.id}
               onClick={() => setTodayFilter(pill.id)}
-              className={`px-3 py-1.5 rounded text-xs font-bold cursor-pointer border transition-all ${
+              className={`mft-tab-btn rounded-lg px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer ${
                 todayFilter === pill.id
-                  ? "bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950 border-zinc-950 shadow-sm"
-                  : "bg-zinc-50 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100"
+                  ? "bg-white text-zinc-900 shadow-2xs"
+                  : "text-zinc-500 hover:text-zinc-800"
               }`}
             >
               {pill.label}
@@ -125,15 +129,15 @@ export default function TodayTab({
           ))}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2.5">
           <input
-            type="text"
+            type="search"
             value={todaySearch}
             onChange={(e) => setTodaySearch(e.target.value)}
-            placeholder={t("🔍 ابحث باسم الموظف أو القسم...", "🔍 Search worker or dept...")}
-            className="bg-zinc-50 dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 px-3 py-1.5 text-xs font-bold rounded text-zinc-950 dark:text-zinc-100 w-full sm:w-64 focus:outline-none focus:ring-2 focus:ring-red-600"
+            placeholder={t("ابحث باسم الموظف أو القسم…", "Search worker or dept…")}
+            className="brutal-input h-9 w-full sm:w-64 text-xs"
           />
-          <span className="text-[11px] text-zinc-500">
+          <span className="rounded-lg bg-zinc-100 px-2.5 py-1.5 font-code text-[11px] font-medium text-zinc-600">
             {t(
               `الوردية: ${settings.shiftStartTime || "10:00"} + سماح ${settings.gracePeriodMinutes || 60}د`,
               `Shift: ${settings.shiftStartTime || "10:00"} + ${settings.gracePeriodMinutes || 60}m Grace`,
@@ -143,57 +147,85 @@ export default function TodayTab({
       </div>
 
       {/* Live Workers Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
         {filteredTodayWorkers.map((w) => {
           const workerTodaySessions = todaysSessions.filter((s) => s.workerId === w.id);
           const sortedByStart = [...workerTodaySessions].sort((a, b) => {
-            const aMs = (a.startTime?.toDate?.() ?? a.loginTime?.toDate?.())?.getTime() ?? Number.MAX_SAFE_INTEGER;
-            const bMs = (b.startTime?.toDate?.() ?? b.loginTime?.toDate?.())?.getTime() ?? Number.MAX_SAFE_INTEGER;
+            const aMs =
+              (a.startTime?.toDate?.() ?? a.loginTime?.toDate?.())?.getTime() ?? Number.MAX_SAFE_INTEGER;
+            const bMs =
+              (b.startTime?.toDate?.() ?? b.loginTime?.toDate?.())?.getTime() ?? Number.MAX_SAFE_INTEGER;
             return aMs - bMs;
           });
           const workerSession =
-            sortedByStart.find((s) => !s.isExternalMission && (s.startTime?.toDate || s.loginTime?.toDate)) ||
-            sortedByStart[0];
+            sortedByStart.find(
+              (s) => !s.isExternalMission && (s.startTime?.toDate || s.loginTime?.toDate),
+            ) || sortedByStart[0];
           const isPresent = workerTodaySessions.length > 0 && presentWorkerIds.has(w.id);
           const isActiveInShift = workerTodaySessions.some((s) => Boolean(s.isActive));
           const isLate = isPresent && lateWorkerIds.has(w.id);
           const workedHours =
             Math.round(workerTodaySessions.reduce((sum, s) => sum + sessionHours(s), 0) * 10) / 10;
+          const shiftPct = Math.min(100, Math.round((workedHours / stdHours) * 100));
           const clockInTs = workerSession?.startTime?.toDate
             ? workerSession.startTime
             : workerSession?.loginTime?.toDate
               ? workerSession.loginTime
               : null;
 
+          const initials = workerName(w)
+            .split(" ")
+            .map((p) => p[0])
+            .join("")
+            .slice(0, 2)
+            .toUpperCase();
+
           return (
             <div
               key={w.id}
-              className={`p-4 border-2 border-zinc-900 dark:border-zinc-700 rounded-lg flex flex-col justify-between transition-all ${
+              className={`ui-card ui-card-hover relative flex flex-col justify-between overflow-hidden p-4 ${
                 !isPresent
-                  ? "bg-red-50/40 dark:bg-red-950/20 border-red-300 dark:border-red-900 shadow-[2px_2px_0px_0px_#dc2626]"
+                  ? "border-red-200/80"
                   : isLate
-                    ? "bg-amber-50/40 dark:bg-amber-950/20 border-amber-300 shadow-[2px_2px_0px_0px_#d97706]"
-                    : "bg-white dark:bg-zinc-900 shadow-[2px_2px_0px_0px_#09090b]"
+                    ? "border-amber-200/80"
+                    : ""
               }`}
             >
+              <span
+                className={`absolute inset-x-0 top-0 h-1 ${
+                  !isPresent ? "bg-red-500" : isLate ? "bg-amber-500" : "bg-emerald-500"
+                }`}
+              />
               <div>
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <h4 className="font-bold text-sm text-zinc-950 dark:text-white font-heading">
-                      {workerName(w)}
-                    </h4>
-                    <p className="text-[11px] text-zinc-500">
-                      {formatDepartment(w.department)} · {w.role || "Operator"}
-                    </p>
+                <div className="flex items-start justify-between gap-2 pt-1">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-zinc-900 font-code text-xs font-bold text-white">
+                      {initials}
+                      <span
+                        className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-white ${
+                          isActiveInShift
+                            ? "bg-emerald-500"
+                            : isPresent
+                              ? "bg-blue-500"
+                              : "bg-zinc-300"
+                        }`}
+                      />
+                    </span>
+                    <div className="min-w-0">
+                      <h4 className="truncate text-sm font-bold text-zinc-900">{workerName(w)}</h4>
+                      <p className="truncate text-[11px] text-zinc-500">
+                        {formatDepartment(w.department)} · {w.role || "Operator"}
+                      </p>
+                    </div>
                   </div>
 
                   <span
-                    className={`px-2 py-0.5 text-[10px] font-bold uppercase rounded border ${
+                    className={`shrink-0 rounded-lg border px-2 py-0.5 text-[10px] font-bold uppercase ${
                       !isPresent
-                        ? "bg-red-100 text-red-800 border-red-300 dark:bg-red-900/60 dark:text-red-300"
+                        ? "border-red-200 bg-red-50 text-red-700"
                         : isLate
-                          ? "bg-amber-100 text-amber-800 border-amber-300"
-                          : "bg-emerald-100 text-emerald-800 border-emerald-300"
+                          ? "border-amber-200 bg-amber-50 text-amber-700"
+                          : "border-emerald-200 bg-emerald-50 text-emerald-700"
                     }`}
                   >
                     {!isPresent
@@ -204,48 +236,63 @@ export default function TodayTab({
                   </span>
                 </div>
 
-                <div className="mt-3 pt-2 border-t border-zinc-200 dark:border-zinc-800 text-xs space-y-1">
-                  <div className="flex justify-between">
-                    <span className="text-zinc-500">{t("الحالة الآن:", "Status:")}</span>
-                    <strong
-                      className={
+                {/* Visual Shift Progress Bar */}
+                <div className="mt-3.5 rounded-xl border border-zinc-100 bg-zinc-50/70 p-2.5">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span
+                      className={`font-semibold ${
                         isActiveInShift
                           ? "text-emerald-600"
                           : isPresent
-                            ? "text-blue-600 dark:text-blue-400"
-                            : "text-zinc-500"
-                      }
+                            ? "text-blue-600"
+                            : "text-zinc-400"
+                      }`}
                     >
                       {isActiveInShift
-                        ? t("🟢 متصل بالوردية الآن", "🟢 Online in shift")
+                        ? t("متصل بالوردية الآن", "Active in shift")
                         : isPresent
-                          ? t("🔵 أنهى الشيفت / استراحة", "🔵 Clocked out")
-                          : t("⚪ لم يسجل حضور اليوم", "⚪ Not clocked in")}
-                    </strong>
+                          ? t("أنهى الشيفت / استراحة", "Clocked out")
+                          : t("لم يسجل حضور اليوم", "Not clocked in")}
+                    </span>
+                    <span className="font-code font-bold tabular-nums text-zinc-900">
+                      {workedHours}h / {stdHours}h
+                    </span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-zinc-500">{t("ساعات اليوم:", "Today Hours:")}</span>
-                    <strong>
-                      {workedHours}h / {settings.standardHours || 8}h
-                    </strong>
+                  <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-zinc-200/70">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${
+                        workedHours > stdHours
+                          ? "bg-violet-500"
+                          : isActiveInShift
+                            ? "bg-emerald-500"
+                            : "bg-blue-500"
+                      }`}
+                      style={{ width: `${shiftPct}%` }}
+                    />
                   </div>
-                  <div className="flex justify-between">
+                </div>
+
+                <div className="mt-3 space-y-1.5 text-xs">
+                  <div className="flex items-center justify-between">
                     <span className="text-zinc-500">{t("تاريخ التعيين:", "Joined Company:")}</span>
                     <button
                       type="button"
                       onClick={() => setOnboardModalWorker(w)}
-                      className={`font-bold underline cursor-pointer ${
-                        w.hireDate ? "text-zinc-900 dark:text-zinc-100" : "text-amber-600"
+                      className={`font-code font-semibold underline cursor-pointer ${
+                        w.hireDate ? "text-zinc-800" : "text-amber-600"
                       }`}
                     >
-                      {w.hireDate || t("⚠ حدد تاريخ التعيين", "⚠ Set join date")}
+                      {w.hireDate || t("حدد تاريخ التعيين", "Set join date")}
                     </button>
                   </div>
                   {clockInTs?.toDate && (
-                    <div className="flex justify-between">
+                    <div className="flex items-center justify-between">
                       <span className="text-zinc-500">{t("وقت الحضور:", "Clock-in Time:")}</span>
-                      <strong>
-                        {clockInTs.toDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      <strong className="font-code text-zinc-900">
+                        {clockInTs.toDate().toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
                       </strong>
                     </div>
                   )}
@@ -253,14 +300,14 @@ export default function TodayTab({
               </div>
 
               {/* Actions Bar */}
-              <div className="mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800 flex flex-wrap items-center justify-between gap-1.5">
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-1.5 border-t border-zinc-100 pt-3">
                 <div className="flex flex-wrap items-center gap-1">
                   {w.phone && (
                     <a
                       href={`https://wa.me/${w.phone.replace(/\D/g, "")}`}
                       target="_blank"
                       rel="noreferrer"
-                      className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[10px] font-bold cursor-pointer"
+                      className="rounded-lg bg-emerald-600 px-2 py-1 text-[10px] font-semibold text-white hover:bg-emerald-700"
                     >
                       WhatsApp
                     </a>
@@ -268,24 +315,23 @@ export default function TodayTab({
                   <button
                     type="button"
                     onClick={() => setOnboardModalWorker(w)}
-                    className="px-2 py-1 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 text-zinc-900 dark:text-zinc-200 border border-zinc-300 dark:border-zinc-700 rounded text-[10px] font-bold cursor-pointer"
+                    className="rounded-lg border border-zinc-200 bg-zinc-50 px-2 py-1 text-[10px] font-semibold text-zinc-700 hover:bg-zinc-100 cursor-pointer"
                   >
-                    {t("🗓️ التعيين والراتب", "🗓️ Join & Rate")}
+                    {t("التعيين والراتب", "Join & Rate")}
                   </button>
                   <button
                     type="button"
                     onClick={() => openAdjustmentFor(w.id, "deduction")}
-                    title={t("توقيع جزاء لائحي أو خصم على هذا الموظف", "Apply disciplinary deduction")}
-                    className="px-2 py-1 bg-red-50 dark:bg-red-950/40 hover:bg-red-600 hover:text-white text-red-700 dark:text-red-300 border border-red-300 dark:border-red-800 rounded text-[10px] font-bold cursor-pointer transition-colors"
+                    className="rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-[10px] font-semibold text-red-700 hover:bg-red-600 hover:text-white cursor-pointer transition-colors"
                   >
-                    {t("⚖️ جزاء/خصم", "⚖️ Penalty")}
+                    {t("جزاء / خصم", "Penalty")}
                   </button>
                   <button
                     type="button"
                     onClick={() => openAdjustmentFor(w.id, "bonus")}
-                    className="px-2 py-1 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-600 hover:text-white text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 rounded text-[10px] font-bold cursor-pointer transition-colors"
+                    className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-600 hover:text-white cursor-pointer transition-colors"
                   >
-                    {t("🎁 بونص", "🎁 Bonus")}
+                    {t("بونص", "Bonus")}
                   </button>
                 </div>
 
@@ -294,17 +340,17 @@ export default function TodayTab({
                     <button
                       type="button"
                       onClick={() => setExcuseModalWorker(w)}
-                      className="px-2 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded text-[10px] font-bold cursor-pointer"
+                      className="rounded-lg bg-amber-500 px-2 py-1 text-[10px] font-semibold text-white hover:bg-amber-600 cursor-pointer"
                     >
-                      {t("+ تسجيل عذر / إجازة", "+ Excuse Absence")}
+                      {t("+ تسجيل عذر", "+ Excuse")}
                     </button>
                   )}
                   <button
                     type="button"
                     onClick={() => setPayslipModalWorker(w)}
-                    className="px-2 py-1 text-emerald-700 dark:text-emerald-400 hover:underline text-[10px] font-bold cursor-pointer"
+                    className="rounded-lg border border-zinc-200 bg-white px-2 py-1 text-[10px] font-semibold text-zinc-700 hover:bg-zinc-50 cursor-pointer"
                   >
-                    {t("كشف الراتب 📄", "Payslip 📄")}
+                    {t("كشف الراتب", "Payslip")}
                   </button>
                 </div>
               </div>
