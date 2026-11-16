@@ -404,6 +404,22 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             )}
           </div>
 
+          {/* Quick Client Studio Pill */}
+          {(role === "super_admin" || role === "ops_admin") && (
+            <Link
+              href="/admin/client-portal"
+              className={`hidden items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-colors lg:flex ${
+                pathname.startsWith("/admin/client-portal")
+                  ? "border-red-200 bg-red-50 text-red-700"
+                  : "border-zinc-200 bg-zinc-50 text-zinc-700 hover:bg-zinc-100"
+              }`}
+              title="Open 3-Month Client Rollout Studio"
+            >
+              <Icon d={ICONS.clientPortal} className="h-3.5 w-3.5 text-red-600" />
+              <span>Client Studio</span>
+            </Link>
+          )}
+
           {/* Role badge */}
           <span
             className={`hidden items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold md:flex ${roleMeta.badgeClass}`}
@@ -478,7 +494,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                   <button
                     type="button"
                     onClick={async () => {
-                      toast.info("🔒 Lock your phone screen now!", {
+                      toast.info("Lock your phone screen now", {
                         description: "Sending lock-screen push alert in 4 seconds...",
                       });
                       const ok = await testAdminLockScreenPush();
@@ -524,7 +540,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 <div className="max-h-[60vh] overflow-y-auto">
                   {alertRows.length === 0 && badges.chatNotifications.length === 0 && badges.adminNotifications.length === 0 && (
                     <div className="px-4 py-10 text-center">
-                      <p className="text-sm font-medium text-zinc-700">You&apos;re all caught up 🎉</p>
+                      <p className="text-sm font-medium text-zinc-700">You&apos;re all caught up</p>
                       <p className="mt-1 text-xs text-zinc-500">Nothing needs your attention right now.</p>
                     </div>
                   )}
@@ -727,12 +743,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-red-200 bg-gradient-to-r from-red-50 via-white to-red-50 px-4 py-2.5 text-xs text-zinc-800 md:px-6">
             <div className="flex items-center gap-2.5 min-w-0">
               <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-red-600 text-xs text-white shadow-xs">
-                🔔
+                <Icon d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" className="h-3.5 w-3.5" />
               </span>
               {iosNeedsInstall ? (
                 <p className="font-medium leading-snug text-zinc-800">
                   <strong className="font-bold text-red-700">iPhone / iPad Lock-Screen Push:</strong> Tap{" "}
-                  <strong className="font-semibold">Share (⬆️)</strong> →{" "}
+                  <strong className="font-semibold">Share</strong> →{" "}
                   <strong className="font-semibold">Add to Home Screen</strong>, then open MFT Admin from your Home Screen to enable lock-screen alerts.
                 </p>
               ) : (

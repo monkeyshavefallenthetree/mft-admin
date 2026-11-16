@@ -8,10 +8,24 @@ import { useUrlState } from "@/lib/admin/useUrlState";
 import { logActivity } from "@/lib/admin/activity";
 import { toast } from "@/lib/admin/feedback";
 import { sessionHours } from "@/lib/admin/workTime";
-import { calculateAttendancePolicy, computePayrollForWorker, formatDepartment, getExpectedWorkDaysInPeriod, sessionDateYmd, type SessionForHr } from "@/lib/admin/hrReports";
+import {
+  calculateAttendancePolicy,
+  computePayrollForWorker,
+  formatDepartment,
+  getExpectedWorkDaysInPeriod,
+  sessionDateYmd,
+  type SessionForHr,
+} from "@/lib/admin/hrReports";
 import { getAssigneeIds, parseDate } from "@/components/admin/projects/types";
 import { EmptyState, PageHeader, Skeleton, STATE_ICONS } from "@/components/admin/ui/States";
 import { ICONS } from "@/lib/admin/nav";
+import {
+  ChartCard,
+  DonutBreakdownChart,
+  InteractiveAreaChart,
+  InteractiveBarChart,
+  KpiStatCard,
+} from "@/components/admin/ui/Charts";
 
 /* ───────────── Types ───────────── */
 
@@ -79,6 +93,8 @@ const RANGES: { key: RangeKey; label: string }[] = [
   { key: "custom", label: "Custom" },
 ];
 
+const DEPT_HEX = ["#dc2626", "#2563eb", "#059669", "#d97706", "#7c3aed", "#0284c7", "#52525b"];
+
 /* ───────────── Helpers ───────────── */
 
 function ymd(d: Date) {
@@ -93,7 +109,6 @@ function resolveRange(key: RangeKey, from: string, to: string): { start: Date; e
   end.setHours(23, 59, 59, 999);
   switch (key) {
     case "this-week": {
-      // Week starts Sunday (Egypt work week: Sun–Thu)
       start.setDate(now.getDate() - now.getDay());
       break;
     }
@@ -105,7 +120,7 @@ function resolveRange(key: RangeKey, from: string, to: string): { start: Date; e
       break;
     case "last-month":
       start.setMonth(now.getMonth() - 1, 1);
-      end.setDate(0); // last day of previous month
+      end.setDate(0);
       break;
     case "last-90":
       start.setDate(now.getDate() - 89);
@@ -161,58 +176,49 @@ function Svg({ d, className = "h-4 w-4" }: { d: string; className?: string }) {
 
 const DOWNLOAD = "M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4";
 
-function Kpi({ label, value, sub, tone = "zinc" }: { label: string; value: string | number; sub?: string; tone?: "zinc" | "red" | "emerald" | "amber" | "blue" }) {
-  const bar: Record<string, string> = {
-    zinc: "bg-zinc-300",
-    red: "bg-red-500",
-    emerald: "bg-emerald-500",
-    amber: "bg-amber-500",
-    blue: "bg-blue-500",
-  };
-  return (
-    <div className="ui-card relative overflow-hidden px-4 py-4">
-      <span className={`absolute left-0 top-0 h-full w-1 ${bar[tone]}`} />
-      <p className="text-[11px] font-medium text-zinc-500">{label}</p>
-      <p className="mt-1 text-2xl font-bold tracking-tight text-zinc-900">{value}</p>
-      {sub && <p className="mt-0.5 text-[11px] text-zinc-500">{sub}</p>}
-    </div>
-  );
-}
-
-function Card({ title, description, action, children, className = "" }: { title: string; description?: string; action?: React.ReactNode; children: React.ReactNode; className?: string }) {
-  return (
-    <section className={`ui-card overflow-hidden ${className}`}>
-      <div className="flex items-start justify-between gap-3 border-b border-zinc-100 px-5 py-4">
-        <div>
-          <h3 className="text-sm font-semibold text-zinc-900">{title}</h3>
-          {description && <p className="mt-0.5 text-xs text-zinc-500">{description}</p>}
-        </div>
-        {action && <div className="mft-no-print shrink-0">{action}</div>}
-      </div>
-      {children}
-    </section>
-  );
-}
-
 function CsvButton({ onClick }: { onClick: () => void }) {
   return (
-    <button type="button" onClick={onClick} className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-50 hover:text-zinc-900 cursor-pointer">
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-zinc-600 transition-colors hover:bg-zinc-50 hover:text-zinc-900 cursor-pointer"
+    >
       <Svg d={DOWNLOAD} className="h-3.5 w-3.5" /> CSV
     </button>
   );
 }
 
-function SortTh<K extends string>({ k, label, sort, setSort, align = "left" }: { k: K; label: string; sort: { key: K; dir: SortDir }; setSort: (s: { key: K; dir: SortDir }) => void; align?: "left" | "right" }) {
+function SortTh<K extends string>({
+  k,
+  label,
+  sort,
+  setSort,
+  align = "left",
+}: {
+  k: K;
+  label: string;
+  sort: { key: K; dir: SortDir };
+  setSort: (s: { key: K; dir: SortDir }) => void;
+  align?: "left" | "right";
+}) {
   const active = sort.key === k;
   return (
-    <th className={`px-4 py-2.5 text-[11px] font-semibold text-zinc-500 ${align === "right" ? "text-right" : "text-left"}`}>
+    <th
+      className={`px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-zinc-500 ${
+        align === "right" ? "text-right" : "text-left"
+      }`}
+    >
       <button
         type="button"
         onClick={() => setSort({ key: k, dir: active && sort.dir === "desc" ? "asc" : "desc" })}
-        className={`inline-flex items-center gap-1 transition-colors hover:text-zinc-900 cursor-pointer ${active ? "text-zinc-900" : ""}`}
+        className={`inline-flex items-center gap-1 transition-colors hover:text-zinc-900 cursor-pointer ${
+          active ? "text-zinc-900" : ""
+        }`}
       >
         {label}
-        <span className={`text-[9px] ${active ? "opacity-100" : "opacity-0"}`}>{sort.dir === "desc" ? "▼" : "▲"}</span>
+        <span className={`text-[9px] ${active ? "opacity-100" : "opacity-0"}`}>
+          {sort.dir === "desc" ? "▼" : "▲"}
+        </span>
       </button>
     </th>
   );
@@ -235,7 +241,12 @@ export default function ReportsPage() {
   const [from, setFrom] = useUrlState("from");
   const [to, setTo] = useUrlState("to");
   const [dept, setDept] = useUrlState("dept");
-  const [workerSort, setWorkerSort] = useState<{ key: WorkerRowKey; dir: SortDir }>({ key: "hours", dir: "desc" });
+  const [workerSearch, setWorkerSearch] = useState("");
+  const [chartType, setChartType] = useState<"area" | "bar">("area");
+  const [workerSort, setWorkerSort] = useState<{ key: WorkerRowKey; dir: SortDir }>({
+    key: "hours",
+    dir: "desc",
+  });
 
   useEffect(() => {
     const sub = <T,>(col: string, set: (v: T[]) => void) =>
@@ -260,13 +271,30 @@ export default function ReportsPage() {
 
   const loading = !loaded.workers || !loaded.workSessions || !loaded.tasks;
 
-  const { start, end } = useMemo(() => resolveRange(rangeKey as RangeKey, from, to), [rangeKey, from, to]);
-  const rangeLabel = `${start.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })} – ${end.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`;
+  const { start, end } = useMemo(
+    () => resolveRange(rangeKey as RangeKey, from, to),
+    [rangeKey, from, to],
+  );
+  const rangeLabel = `${start.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  })} – ${end.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  })}`;
 
   const workerMap = useMemo(() => new Map(workers.map((w) => [w.id, w])), [workers]);
-  const departments = useMemo(() => Array.from(new Set(workers.map((w) => w.department).filter(Boolean))) as string[], [workers]);
+  const departments = useMemo(
+    () => Array.from(new Set(workers.map((w) => w.department).filter(Boolean))) as string[],
+    [workers],
+  );
 
-  const teamWorkers = useMemo(() => workers.filter((w) => w.status === "approved" && (!dept || w.department === dept)), [workers, dept]);
+  const teamWorkers = useMemo(
+    () => workers.filter((w) => w.status === "approved" && (!dept || w.department === dept)),
+    [workers, dept],
+  );
 
   const rangeSessions = useMemo(
     () =>
@@ -287,7 +315,8 @@ export default function ReportsPage() {
         if (t.status !== "completed") return false;
         const d = parseDate(t.approvedAt) ?? parseDate(t.updatedAt) ?? parseDate(t.createdAt);
         if (!inRange(d, start, end)) return false;
-        if (dept) return getAssigneeIds(t.assignedTo).some((id) => workerMap.get(id)?.department === dept);
+        if (dept)
+          return getAssigneeIds(t.assignedTo).some((id) => workerMap.get(id)?.department === dept);
         return true;
       }),
     [tasks, start, end, dept, workerMap],
@@ -305,19 +334,27 @@ export default function ReportsPage() {
     const expectedDays = getExpectedWorkDaysInPeriod(start, end > new Date() ? new Date() : end);
     const expectedSessions = expectedDays * teamWorkers.length;
     const workerDays = new Set(rangeSessions.map((s) => `${s.workerId}|${sessionDateYmd(s)}`)).size;
-    const attendance = expectedSessions > 0 ? Math.min(100, Math.round((workerDays / expectedSessions) * 100)) : 0;
+    const attendance =
+      expectedSessions > 0 ? Math.min(100, Math.round((workerDays / expectedSessions) * 100)) : 0;
     const avgPerDay = workerDays > 0 ? totalHours / workerDays : 0;
     return { totalHours, overtime, late, attendance, avgPerDay, workerDays, expectedDays };
   }, [rangeSessions, start, end, teamWorkers.length]);
 
   /* Daily trend */
   const trend = useMemo(() => {
-    const days: { key: string; label: string; hours: number; late: number }[] = [];
+    const days: {
+      key: string;
+      label: string;
+      hours: number;
+      regular: number;
+      overtime: number;
+      late: number;
+    }[] = [];
     const cursor = new Date(start);
     const last = end > new Date() ? new Date() : end;
     const totalDays = Math.round((last.getTime() - start.getTime()) / 86400000) + 1;
     const weekly = totalDays > 62;
-    const buckets = new Map<string, { hours: number; late: number }>();
+    const buckets = new Map<string, { hours: number; overtime: number; late: number }>();
     rangeSessions.forEach((s) => {
       const d = sessionDate(s);
       if (!d) return;
@@ -327,8 +364,10 @@ export default function ReportsPage() {
         w.setDate(d.getDate() - d.getDay());
         key = ymd(w);
       }
-      const b = buckets.get(key) ?? { hours: 0, late: 0 };
-      b.hours += sessionHours(s);
+      const b = buckets.get(key) ?? { hours: 0, overtime: 0, late: 0 };
+      const h = sessionHours(s);
+      b.hours += h;
+      b.overtime += Math.max(0, h - 8);
       if (calculateAttendancePolicy(s).isLate || s.isLate) b.late++;
       buckets.set(key, b);
     });
@@ -336,11 +375,17 @@ export default function ReportsPage() {
     let guard = 0;
     while (cursor <= last && guard < 400) {
       const key = ymd(cursor);
-      const b = buckets.get(key) ?? { hours: 0, late: 0 };
+      const b = buckets.get(key) ?? { hours: 0, overtime: 0, late: 0 };
+      const totalH = Math.round(b.hours * 10) / 10;
+      const otH = Math.round(b.overtime * 10) / 10;
       days.push({
         key,
-        label: weekly ? `Wk ${cursor.toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : cursor.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
-        hours: Math.round(b.hours * 10) / 10,
+        label: weekly
+          ? `Wk ${cursor.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`
+          : cursor.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+        hours: totalH,
+        regular: Math.round(Math.max(0, totalH - otH) * 10) / 10,
+        overtime: otH,
         late: b.late,
       });
       cursor.setDate(cursor.getDate() + (weekly ? 7 : 1));
@@ -348,7 +393,12 @@ export default function ReportsPage() {
     }
     return { days, weekly };
   }, [rangeSessions, start, end]);
-  const trendMax = Math.max(1, ...trend.days.map((d) => d.hours));
+
+  const trendAvg = useMemo(() => {
+    const activeDays = trend.days.filter((d) => d.hours > 0);
+    if (!activeDays.length) return 0;
+    return Math.round((activeDays.reduce((a, d) => a + d.hours, 0) / activeDays.length) * 10) / 10;
+  }, [trend.days]);
 
   /* Per-worker table */
   const workerRows = useMemo(() => {
@@ -357,7 +407,10 @@ export default function ReportsPage() {
       const ws = rangeSessions.filter((s) => s.workerId === w.id);
       const pay = computePayrollForWorker(ws, Number(w.hourlyRate) || 0, start, payEnd);
       const done = completedInRange.filter((t) => getAssigneeIds(t.assignedTo).includes(w.id)).length;
-      const absent = Math.max(0, getExpectedWorkDaysInPeriod(start, payEnd) - new Set(ws.map((s) => sessionDateYmd(s))).size);
+      const absent = Math.max(
+        0,
+        getExpectedWorkDaysInPeriod(start, payEnd) - new Set(ws.map((s) => sessionDateYmd(s))).size,
+      );
       return {
         id: w.id,
         name: name(w),
@@ -372,13 +425,22 @@ export default function ReportsPage() {
         rate: pay.hourlyRate,
       };
     });
+    const q = workerSearch.trim().toLowerCase();
+    const filtered = q
+      ? rows.filter(
+          (r) =>
+            r.name.toLowerCase().includes(q) ||
+            formatDepartment(r.dept).toLowerCase().includes(q),
+        )
+      : rows;
     const dir = workerSort.dir === "asc" ? 1 : -1;
-    return rows.sort((a, b) => {
+    return filtered.sort((a, b) => {
       const k = workerSort.key;
       if (k === "name") return a.name.localeCompare(b.name) * dir;
       return ((a[k] as number) - (b[k] as number)) * dir;
     });
-  }, [teamWorkers, rangeSessions, completedInRange, start, end, workerSort]);
+  }, [teamWorkers, rangeSessions, completedInRange, start, end, workerSort, workerSearch]);
+
   const maxHours = Math.max(1, ...workerRows.map((r) => r.hours));
   const totalPay = workerRows.reduce((s, r) => s + Math.max(0, r.pay), 0);
 
@@ -394,11 +456,16 @@ export default function ReportsPage() {
       map.set(d, r);
     });
     return Array.from(map.entries())
-      .map(([d, r]) => ({ dept: d, hours: r.hours, people: r.people.size, late: r.late }))
+      .map(([d, r], i) => ({
+        dept: d,
+        label: formatDepartment(d),
+        hours: Math.round(r.hours * 10) / 10,
+        people: r.people.size,
+        late: r.late,
+        color: DEPT_HEX[i % DEPT_HEX.length],
+      }))
       .sort((a, b) => b.hours - a.hours);
   }, [rangeSessions, workerMap]);
-  const deptMax = Math.max(1, ...deptRows.map((d) => d.hours));
-  const DEPT_COLORS = ["bg-red-500", "bg-blue-500", "bg-emerald-500", "bg-amber-500", "bg-violet-500", "bg-sky-500", "bg-zinc-500"];
 
   /* Projects */
   const projectRows = useMemo(() => {
@@ -408,9 +475,22 @@ export default function ReportsPage() {
         const pt = tasks.filter((t) => t.projectId === p.id);
         const done = pt.filter((t) => t.status === "completed").length;
         const doneInRange = completedInRange.filter((t) => t.projectId === p.id).length;
-        const overdue = pt.filter((t) => t.status !== "completed" && (parseDate(t.dueDate)?.getTime() ?? Infinity) < now.getTime()).length;
+        const overdue = pt.filter(
+          (t) => t.status !== "completed" && (parseDate(t.dueDate)?.getTime() ?? Infinity) < now.getTime(),
+        ).length;
         const review = pt.filter((t) => t.status === "pending-approval").length;
-        return { id: p.id, name: p.name ?? "Untitled", client: p.clientName, status: p.status ?? "active", total: pt.length, done, doneInRange, overdue, review, pct: pt.length ? Math.round((done / pt.length) * 100) : 0 };
+        return {
+          id: p.id,
+          name: p.name ?? "Untitled",
+          client: p.clientName,
+          status: p.status ?? "active",
+          total: pt.length,
+          done,
+          doneInRange,
+          overdue,
+          review,
+          pct: pt.length ? Math.round((done / pt.length) * 100) : 0,
+        };
       })
       .filter((p) => p.total > 0 || p.status === "active")
       .sort((a, b) => b.doneInRange - a.doneInRange || b.total - a.total);
@@ -418,7 +498,15 @@ export default function ReportsPage() {
 
   /* Exceptions + penalties */
   const exceptionStats = useMemo(() => {
-    const list = exceptions.filter((e) => inRange(parseDate(e.createdAt) ?? parseDate(e.submittedAt) ?? (e.date ? new Date(e.date + "T12:00:00") : null), start, end));
+    const list = exceptions.filter((e) =>
+      inRange(
+        parseDate(e.createdAt) ??
+          parseDate(e.submittedAt) ??
+          (e.date ? new Date(e.date + "T12:00:00") : null),
+        start,
+        end,
+      ),
+    );
     const by = (k: "type" | "status") =>
       list.reduce<Record<string, number>>((acc, e) => {
         const v = (e[k] as string) || "other";
@@ -449,55 +537,138 @@ export default function ReportsPage() {
   const exportWorkers = () => {
     downloadCsv(
       [
-        ["Worker", "Department", "Days worked", "Hours", "Overtime hours", "Late days", "Absent days", "Tasks completed", "Hourly rate", "Estimated pay (EGP)"],
-        ...workerRows.map((r) => [r.name, formatDepartment(r.dept), r.days, r.hours, r.overtime, r.late, r.absent, r.tasks, r.rate, r.pay]),
+        [
+          "Worker",
+          "Department",
+          "Days worked",
+          "Hours",
+          "Overtime hours",
+          "Late days",
+          "Absent days",
+          "Tasks completed",
+          "Hourly rate",
+          "Estimated pay (EGP)",
+        ],
+        ...workerRows.map((r) => [
+          r.name,
+          formatDepartment(r.dept),
+          r.days,
+          r.hours,
+          r.overtime,
+          r.late,
+          r.absent,
+          r.tasks,
+          r.rate,
+          r.pay,
+        ]),
       ],
       `team-report_${stamp}.csv`,
     );
-    void logActivity({ action: "exported", entity: "hr", label: "Team hours & payroll report", detail: rangeLabel });
+    void logActivity({
+      action: "exported",
+      entity: "hr",
+      label: "Team hours & payroll report",
+      detail: rangeLabel,
+    });
     toast.success("Team report exported");
   };
   const exportProjects = () => {
     downloadCsv(
-      [["Project", "Client", "Status", "Total tasks", "Completed", "Completed in period", "In review", "Overdue", "Progress %"], ...projectRows.map((p) => [p.name, p.client ?? "", p.status, p.total, p.done, p.doneInRange, p.review, p.overdue, p.pct])],
+      [
+        [
+          "Project",
+          "Client",
+          "Status",
+          "Total tasks",
+          "Completed",
+          "Completed in period",
+          "In review",
+          "Overdue",
+          "Progress %",
+        ],
+        ...projectRows.map((p) => [
+          p.name,
+          p.client ?? "",
+          p.status,
+          p.total,
+          p.done,
+          p.doneInRange,
+          p.review,
+          p.overdue,
+          p.pct,
+        ]),
+      ],
       `project-delivery_${stamp}.csv`,
     );
-    void logActivity({ action: "exported", entity: "project", label: "Project delivery report", detail: rangeLabel });
+    void logActivity({
+      action: "exported",
+      entity: "project",
+      label: "Project delivery report",
+      detail: rangeLabel,
+    });
     toast.success("Project report exported");
   };
   const exportDaily = () => {
-    downloadCsv([[trend.weekly ? "Week of" : "Date", "Hours", "Late arrivals"], ...trend.days.map((d) => [d.key, d.hours, d.late])], `daily-hours_${stamp}.csv`);
+    downloadCsv(
+      [
+        [trend.weekly ? "Week of" : "Date", "Total Hours", "Regular Hours", "Overtime Hours", "Late arrivals"],
+        ...trend.days.map((d) => [d.key, d.hours, d.regular, d.overtime, d.late]),
+      ],
+      `daily-hours_${stamp}.csv`,
+    );
     toast.success("Trend data exported");
   };
 
   return (
-    <div>
+    <div className="space-y-6">
       <PageHeader
-        title="Reports"
-        description={`Attendance, hours, payroll and delivery · ${rangeLabel}`}
+        title="Reports & Analytics"
+        description={`Workforce attendance, hours, payroll & project delivery · ${rangeLabel}`}
         actions={
           <>
-            <button type="button" onClick={() => window.print()} className="brutal-btn-outline mft-no-print normal-case tracking-normal">
+            <button
+              type="button"
+              onClick={() => window.print()}
+              className="brutal-btn-outline mft-no-print normal-case tracking-normal"
+            >
               <Svg d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
               Print / PDF
             </button>
-            <button type="button" onClick={exportWorkers} disabled={!workerRows.length} className="brutal-btn mft-no-print normal-case tracking-normal disabled:opacity-50">
-              <Svg d={DOWNLOAD} /> Export team report
+            <button
+              type="button"
+              onClick={exportWorkers}
+              disabled={!workerRows.length}
+              className="brutal-btn mft-no-print normal-case tracking-normal disabled:opacity-50"
+            >
+              <Svg d={DOWNLOAD} /> Export Team CSV
             </button>
           </>
         }
       />
 
-      {/* Filters */}
-      <div className="ui-card mft-no-print mb-6 flex flex-col gap-3 p-3 lg:flex-row lg:items-center">
-        <div className="flex flex-wrap gap-1 rounded-lg bg-zinc-100 p-1">
+      {/* Filters Toolbar */}
+      <div className="ui-card mft-no-print flex flex-col gap-3 p-3.5 lg:flex-row lg:items-center">
+        <div
+          role="tablist"
+          aria-label="Report date range"
+          className="flex items-center gap-1 overflow-x-auto rounded-lg bg-zinc-100 p-1"
+        >
           {RANGES.map((r) => (
             <button
               key={r.key}
               type="button"
+              role="tab"
+              aria-selected={rangeKey === r.key}
               id={`range-${r.key}`}
-              onClick={() => setRangeKey(r.key)}
-              className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer ${rangeKey === r.key ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-800"}`}
+              onClick={(e) => {
+                setRangeKey(r.key);
+                e.currentTarget.scrollIntoView({ block: "nearest", inline: "nearest" });
+              }}
+              className={`mft-tab-btn rounded-md px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer ${
+                rangeKey === r.key
+                  ? "bg-white text-zinc-900 shadow-xs"
+                  : "text-zinc-500 hover:text-zinc-800"
+              }`}
             >
               {r.label}
             </button>
@@ -505,13 +676,30 @@ export default function ReportsPage() {
         </div>
         {rangeKey === "custom" && (
           <div className="flex items-center gap-2">
-            <input type="date" id="report-from" value={from} onChange={(e) => setFrom(e.target.value)} className="brutal-input w-40" />
+            <input
+              type="date"
+              id="report-from"
+              value={from}
+              onChange={(e) => setFrom(e.target.value)}
+              className="brutal-input w-40"
+            />
             <span className="text-xs text-zinc-400">to</span>
-            <input type="date" id="report-to" value={to} onChange={(e) => setTo(e.target.value)} className="brutal-input w-40" />
+            <input
+              type="date"
+              id="report-to"
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+              className="brutal-input w-40"
+            />
           </div>
         )}
         <div className="lg:ml-auto">
-          <select id="report-dept" value={dept} onChange={(e) => setDept(e.target.value)} className="brutal-input lg:w-48">
+          <select
+            id="report-dept"
+            value={dept}
+            onChange={(e) => setDept(e.target.value)}
+            className="brutal-input lg:w-52"
+          >
             <option value="">All departments</option>
             {departments.map((d) => (
               <option key={d} value={d}>
@@ -522,8 +710,8 @@ export default function ReportsPage() {
         </div>
       </div>
 
-      {/* KPIs */}
-      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+      {/* 6 KPI Stat Cards with Sparklines */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         {loading ? (
           Array.from({ length: 6 }).map((_, i) => (
             <div key={i} className="ui-card p-4">
@@ -533,58 +721,136 @@ export default function ReportsPage() {
           ))
         ) : (
           <>
-            <Kpi label="Hours logged" value={`${fmt(kpis.totalHours)}h`} sub={`${kpis.workerDays} worker-days`} tone="red" />
-            <Kpi label="Avg hours / day" value={`${fmt(kpis.avgPerDay)}h`} sub="Per worker per day" tone="blue" />
-            <Kpi label="Attendance rate" value={`${kpis.attendance}%`} sub={`${kpis.expectedDays} working days`} tone={kpis.attendance >= 90 ? "emerald" : kpis.attendance >= 75 ? "amber" : "red"} />
-            <Kpi label="Late arrivals" value={kpis.late} sub="Login after 11:00" tone="amber" />
-            <Kpi label="Tasks completed" value={completedInRange.length} sub="Approved in period" tone="emerald" />
-            <Kpi label="Est. payroll" value={egp(totalPay)} sub={`${fmt(kpis.overtime)}h overtime`} tone="zinc" />
+            <KpiStatCard
+              label="Hours Logged"
+              value={`${fmt(kpis.totalHours)}h`}
+              sub={`${kpis.workerDays} worker-days`}
+              tone="red"
+              icon={ICONS.sessions}
+              trend={trend.days.slice(-14).map((d) => d.hours)}
+            />
+            <KpiStatCard
+              label="Avg Hours / Day"
+              value={`${fmt(kpis.avgPerDay)}h`}
+              sub="Per active worker-day"
+              tone="blue"
+              icon={ICONS.reports}
+            />
+            <KpiStatCard
+              label="Attendance Rate"
+              value={`${kpis.attendance}%`}
+              sub={`${kpis.expectedDays} working days`}
+              tone={kpis.attendance >= 90 ? "emerald" : kpis.attendance >= 75 ? "amber" : "red"}
+              icon={ICONS.workers}
+            />
+            <KpiStatCard
+              label="Late Arrivals"
+              value={kpis.late}
+              sub="Clock-in after 11:00"
+              tone="amber"
+              good="down"
+              icon={ICONS.exceptions}
+              trend={trend.days.slice(-14).map((d) => d.late)}
+            />
+            <KpiStatCard
+              label="Tasks Completed"
+              value={completedInRange.length}
+              sub="Approved in period"
+              tone="emerald"
+              icon={ICONS.tasks}
+            />
+            <KpiStatCard
+              label="Estimated Payroll"
+              value={egp(totalPay)}
+              sub={`${fmt(kpis.overtime)}h overtime logged`}
+              tone="violet"
+              icon={ICONS.hr}
+            />
           </>
         )}
       </div>
 
-      {/* Trend + Departments */}
-      <div className="mb-6 grid gap-6 xl:grid-cols-3">
-        <Card title={trend.weekly ? "Weekly hours" : "Daily hours"} description="Total logged hours with late arrivals highlighted" action={<CsvButton onClick={exportDaily} />} className="xl:col-span-2">
-          {loading ? (
-            <div className="p-5">
-              <Skeleton className="h-48 w-full" />
-            </div>
-          ) : trend.days.every((d) => d.hours === 0) ? (
-            <EmptyState compact icon={STATE_ICONS.chart} title="No hours logged in this period" description="Pick a different date range or department." />
-          ) : (
-            <div className="px-5 pb-4 pt-6">
-              <div className="flex h-52 items-end gap-[3px]">
-                {trend.days.map((d) => (
-                  <div key={d.key} className="group relative flex h-full flex-1 flex-col justify-end">
-                    <div
-                      className={`w-full rounded-t-[3px] transition-all ${d.hours ? "bg-red-500/85 group-hover:bg-red-600" : "bg-zinc-100"}`}
-                      style={{ height: `${Math.max(d.hours ? 4 : 2, (d.hours / trendMax) * 100)}%` }}
-                    />
-                    {d.late > 0 && <span className="absolute -top-0 left-1/2 h-1.5 w-1.5 -translate-x-1/2 rounded-full bg-amber-500" style={{ bottom: `calc(${(d.hours / trendMax) * 100}% + 4px)`, top: "auto" }} />}
-                    <div className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 hidden -translate-x-1/2 whitespace-nowrap rounded-md bg-zinc-900 px-2 py-1 text-[11px] text-white group-hover:block">
-                      <span className="font-semibold">{d.label}</span> · {d.hours}h{d.late ? ` · ${d.late} late` : ""}
-                    </div>
-                  </div>
+      {/* Trend Chart + Department Donut Breakdown */}
+      <div className="grid gap-6 xl:grid-cols-3">
+        <ChartCard
+          title={trend.weekly ? "Weekly Hours & Overtime Telemetry" : "Daily Hours & Overtime Telemetry"}
+          subtitle={`Total logged hours vs overtime · Active day average ${fmt(trendAvg)}h`}
+          className="xl:col-span-2"
+          actions={
+            <div className="flex items-center gap-2">
+              <div
+                role="tablist"
+                aria-label="Chart style"
+                className="flex items-center rounded-lg border border-zinc-200 bg-zinc-50 p-0.5"
+              >
+                {(
+                  [
+                    ["area", "Area Trend"],
+                    ["bar", "Stacked Bar"],
+                  ] as const
+                ).map(([k, l]) => (
+                  <button
+                    key={k}
+                    type="button"
+                    role="tab"
+                    aria-selected={chartType === k}
+                    onClick={() => setChartType(k)}
+                    className={`mft-tab-btn rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors cursor-pointer ${
+                      chartType === k ? "bg-white text-zinc-900 shadow-2xs" : "text-zinc-500 hover:text-zinc-800"
+                    }`}
+                  >
+                    {l}
+                  </button>
                 ))}
               </div>
-              <div className="mt-2 flex justify-between text-[10px] text-zinc-400">
-                <span>{trend.days[0]?.label}</span>
-                {trend.days.length > 2 && <span>{trend.days[Math.floor(trend.days.length / 2)]?.label}</span>}
-                <span>{trend.days[trend.days.length - 1]?.label}</span>
-              </div>
-              <div className="mt-3 flex items-center gap-4 text-[11px] text-zinc-500">
-                <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-red-500" /> Hours</span>
-                <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-amber-500" /> Late arrivals</span>
-                <span className="ml-auto">Peak {fmt(trendMax)}h</span>
-              </div>
+              <CsvButton onClick={exportDaily} />
             </div>
-          )}
-        </Card>
-
-        <Card title="By department" description="Share of logged hours">
+          }
+        >
           {loading ? (
-            <div className="space-y-4 p-5">
+            <Skeleton className="h-56 w-full" />
+          ) : trend.days.every((d) => d.hours === 0) ? (
+            <EmptyState
+              compact
+              icon={STATE_ICONS.chart}
+              title="No hours logged in this period"
+              description="Pick a different date range or department."
+            />
+          ) : chartType === "area" ? (
+            <InteractiveAreaChart
+              data={trend.days}
+              xKey="label"
+              height={235}
+              format={(v) => `${v}h`}
+              referenceValue={trendAvg}
+              referenceLabel="Active day avg"
+              description={`Hours logged and overtime from ${rangeLabel}`}
+              series={[
+                { key: "hours", label: "Total Hours", color: "#dc2626", fillOpacity: 0.2 },
+                { key: "overtime", label: "Overtime (>8h)", color: "#f59e0b", fillOpacity: 0.14 },
+              ]}
+            />
+          ) : (
+            <InteractiveBarChart
+              data={trend.days}
+              xKey="label"
+              height={235}
+              stacked
+              format={(v) => `${v}h`}
+              referenceValue={trendAvg}
+              referenceLabel="Active day avg"
+              description={`Stacked regular and overtime hours from ${rangeLabel}`}
+              series={[
+                { key: "regular", label: "Regular Hours", color: "#18181b" },
+                { key: "overtime", label: "Overtime (>8h)", color: "#dc2626" },
+              ]}
+            />
+          )}
+        </ChartCard>
+
+        <ChartCard title="Hours by Department" description="Share of logged hours across teams">
+          {loading ? (
+            <div className="space-y-4">
               {Array.from({ length: 4 }).map((_, i) => (
                 <Skeleton key={i} className="h-8 w-full" />
               ))}
@@ -592,56 +858,96 @@ export default function ReportsPage() {
           ) : deptRows.length === 0 ? (
             <EmptyState compact icon={STATE_ICONS.users} title="No department data" />
           ) : (
-            <div className="space-y-4 p-5">
-              {deptRows.map((d, i) => (
-                <div key={d.dept}>
-                  <div className="mb-1.5 flex items-center justify-between text-xs">
-                    <span className="font-medium text-zinc-800">{formatDepartment(d.dept)}</span>
-                    <span className="text-zinc-500">
-                      <span className="font-semibold text-zinc-900">{fmt(d.hours)}h</span> · {d.people} people{d.late ? ` · ${d.late} late` : ""}
-                    </span>
-                  </div>
-                  <div className="h-2 overflow-hidden rounded-full bg-zinc-100">
-                    <div className={`h-full rounded-full ${DEPT_COLORS[i % DEPT_COLORS.length]}`} style={{ width: `${(d.hours / deptMax) * 100}%` }} />
-                  </div>
-                </div>
-              ))}
-            </div>
+            <DonutBreakdownChart
+              slices={deptRows.map((d) => ({
+                key: d.dept,
+                label: d.label,
+                value: d.hours,
+                color: d.color,
+              }))}
+              centerLabel="Total Hours"
+              format={(v) => `${fmt(v)}h`}
+              description={`Logged hours by department for ${rangeLabel}`}
+            />
           )}
-        </Card>
+        </ChartCard>
       </div>
 
-      {/* Team table */}
-      <Card title="Team hours & payroll" description="Estimated pay uses each worker's hourly rate with overtime, late and absence policy applied" action={<CsvButton onClick={exportWorkers} />} className="mb-6">
+      {/* Team Hours & Payroll Table */}
+      <ChartCard
+        title="Team Hours & Payroll Ledger"
+        subtitle="Estimated pay uses each worker's hourly rate with overtime, late and absence policy applied"
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="search"
+              value={workerSearch}
+              onChange={(e) => setWorkerSearch(e.target.value)}
+              placeholder="Filter worker or dept…"
+              className="brutal-input h-8 w-48 py-1 text-xs"
+            />
+            <CsvButton onClick={exportWorkers} />
+          </div>
+        }
+      >
         {loading ? (
-          <div className="space-y-3 p-5">
+          <div className="space-y-3">
             {Array.from({ length: 5 }).map((_, i) => (
-              <Skeleton key={i} className="h-6 w-full" />
+              <Skeleton key={i} className="h-7 w-full" />
             ))}
           </div>
         ) : workerRows.length === 0 ? (
-          <EmptyState compact icon={STATE_ICONS.users} title="No approved workers" description={dept ? "No one in this department yet." : "Approve workers to include them in reports."} />
+          <EmptyState
+            compact
+            icon={STATE_ICONS.users}
+            title="No matching workers"
+            description={
+              workerSearch
+                ? "Try clearing the search filter."
+                : dept
+                  ? "No one in this department yet."
+                  : "Approve workers to include them in reports."
+            }
+          />
         ) : (
-          <div className="overflow-x-auto">
+          <div className="mft-table-wrapper -mx-5 -mb-5">
             <table className="w-full min-w-[860px] text-sm">
-              <thead className="border-b border-zinc-100 bg-zinc-50">
+              <thead className="border-b border-zinc-100 bg-zinc-50/95">
                 <tr>
                   <SortTh k="name" label="Worker" sort={workerSort} setSort={setWorkerSort} />
                   <SortTh k="days" label="Days" sort={workerSort} setSort={setWorkerSort} align="right" />
                   <SortTh k="hours" label="Hours" sort={workerSort} setSort={setWorkerSort} />
-                  <SortTh k="overtime" label="Overtime" sort={workerSort} setSort={setWorkerSort} align="right" />
+                  <SortTh
+                    k="overtime"
+                    label="Overtime"
+                    sort={workerSort}
+                    setSort={setWorkerSort}
+                    align="right"
+                  />
                   <SortTh k="late" label="Late" sort={workerSort} setSort={setWorkerSort} align="right" />
-                  <SortTh k="absent" label="Absent" sort={workerSort} setSort={setWorkerSort} align="right" />
-                  <SortTh k="tasks" label="Tasks done" sort={workerSort} setSort={setWorkerSort} align="right" />
-                  <SortTh k="pay" label="Est. pay" sort={workerSort} setSort={setWorkerSort} align="right" />
+                  <SortTh
+                    k="absent"
+                    label="Absent"
+                    sort={workerSort}
+                    setSort={setWorkerSort}
+                    align="right"
+                  />
+                  <SortTh
+                    k="tasks"
+                    label="Tasks Done"
+                    sort={workerSort}
+                    setSort={setWorkerSort}
+                    align="right"
+                  />
+                  <SortTh k="pay" label="Est. Pay" sort={workerSort} setSort={setWorkerSort} align="right" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100">
                 {workerRows.map((r) => (
-                  <tr key={r.id} className="transition-colors hover:bg-zinc-50">
+                  <tr key={r.id} className="transition-colors hover:bg-zinc-50/80">
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
-                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-[11px] font-bold text-zinc-600">
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-900 font-code text-[11px] font-bold text-white">
                           {r.name
                             .split(" ")
                             .map((p) => p[0])
@@ -650,54 +956,96 @@ export default function ReportsPage() {
                             .toUpperCase()}
                         </span>
                         <div className="min-w-0">
-                          <p className="truncate font-medium text-zinc-900">{r.name}</p>
+                          <p className="truncate font-semibold text-zinc-900">{r.name}</p>
                           <p className="text-[11px] text-zinc-500">{formatDepartment(r.dept)}</p>
                         </div>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-zinc-700">{r.days}</td>
+                    <td className="px-4 py-3 text-right font-code tabular-nums text-zinc-700">{r.days}</td>
                     <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2.5">
                         <div className="h-1.5 w-24 overflow-hidden rounded-full bg-zinc-100">
-                          <div className="h-full rounded-full bg-red-500" style={{ width: `${(r.hours / maxHours) * 100}%` }} />
+                          <div
+                            className="h-full rounded-full bg-red-500"
+                            style={{ width: `${(r.hours / maxHours) * 100}%` }}
+                          />
                         </div>
-                        <span className="tabular-nums font-semibold text-zinc-900">{fmt(r.hours)}h</span>
+                        <span className="font-code font-semibold tabular-nums text-zinc-900">
+                          {fmt(r.hours)}h
+                        </span>
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-zinc-700">{r.overtime ? `${fmt(r.overtime)}h` : "—"}</td>
-                    <td className="px-4 py-3 text-right">
-                      {r.late ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">{r.late}</span> : <span className="text-zinc-400">0</span>}
+                    <td className="px-4 py-3 text-right font-code tabular-nums text-zinc-700">
+                      {r.overtime ? `${fmt(r.overtime)}h` : "—"}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      {r.absent ? <span className="rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700">{r.absent}</span> : <span className="text-zinc-400">0</span>}
+                      {r.late ? (
+                        <span className="rounded-md bg-amber-50 px-2 py-0.5 font-code text-[11px] font-semibold text-amber-700">
+                          {r.late}
+                        </span>
+                      ) : (
+                        <span className="text-zinc-400">0</span>
+                      )}
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-zinc-700">{r.tasks}</td>
-                    <td className={`px-4 py-3 text-right tabular-nums font-semibold ${r.pay < 0 ? "text-red-600" : "text-zinc-900"}`}>{egp(r.pay)}</td>
+                    <td className="px-4 py-3 text-right">
+                      {r.absent ? (
+                        <span className="rounded-md bg-red-50 px-2 py-0.5 font-code text-[11px] font-semibold text-red-700">
+                          {r.absent}
+                        </span>
+                      ) : (
+                        <span className="text-zinc-400">0</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right font-code tabular-nums text-zinc-700">{r.tasks}</td>
+                    <td
+                      className={`px-4 py-3 text-right font-code font-semibold tabular-nums ${
+                        r.pay < 0 ? "text-red-600" : "text-zinc-900"
+                      }`}
+                    >
+                      {egp(r.pay)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
               <tfoot className="border-t border-zinc-200 bg-zinc-50 text-xs font-semibold text-zinc-700">
                 <tr>
                   <td className="px-4 py-3">Total · {workerRows.length} people</td>
-                  <td className="px-4 py-3 text-right tabular-nums">{workerRows.reduce((s, r) => s + r.days, 0)}</td>
-                  <td className="px-4 py-3 tabular-nums">{fmt(workerRows.reduce((s, r) => s + r.hours, 0))}h</td>
-                  <td className="px-4 py-3 text-right tabular-nums">{fmt(workerRows.reduce((s, r) => s + r.overtime, 0))}h</td>
-                  <td className="px-4 py-3 text-right tabular-nums">{workerRows.reduce((s, r) => s + r.late, 0)}</td>
-                  <td className="px-4 py-3 text-right tabular-nums">{workerRows.reduce((s, r) => s + r.absent, 0)}</td>
-                  <td className="px-4 py-3 text-right tabular-nums">{workerRows.reduce((s, r) => s + r.tasks, 0)}</td>
-                  <td className="px-4 py-3 text-right tabular-nums">{egp(totalPay)}</td>
+                  <td className="px-4 py-3 text-right font-code tabular-nums">
+                    {workerRows.reduce((s, r) => s + r.days, 0)}
+                  </td>
+                  <td className="px-4 py-3 font-code tabular-nums">
+                    {fmt(workerRows.reduce((s, r) => s + r.hours, 0))}h
+                  </td>
+                  <td className="px-4 py-3 text-right font-code tabular-nums">
+                    {fmt(workerRows.reduce((s, r) => s + r.overtime, 0))}h
+                  </td>
+                  <td className="px-4 py-3 text-right font-code tabular-nums">
+                    {workerRows.reduce((s, r) => s + r.late, 0)}
+                  </td>
+                  <td className="px-4 py-3 text-right font-code tabular-nums">
+                    {workerRows.reduce((s, r) => s + r.absent, 0)}
+                  </td>
+                  <td className="px-4 py-3 text-right font-code tabular-nums">
+                    {workerRows.reduce((s, r) => s + r.tasks, 0)}
+                  </td>
+                  <td className="px-4 py-3 text-right font-code tabular-nums">{egp(totalPay)}</td>
                 </tr>
               </tfoot>
             </table>
           </div>
         )}
-      </Card>
+      </ChartCard>
 
-      {/* Projects + exceptions */}
+      {/* Projects + Exceptions & Adjustments */}
       <div className="grid gap-6 xl:grid-cols-3">
-        <Card title="Project delivery" description="Progress across all tasks · completed counts are for the selected period" action={<CsvButton onClick={exportProjects} />} className="xl:col-span-2">
+        <ChartCard
+          title="Project Delivery Velocity"
+          subtitle="Progress across all directives · completed counts reflect the selected period"
+          actions={<CsvButton onClick={exportProjects} />}
+          className="xl:col-span-2"
+        >
           {!loaded.projects ? (
-            <div className="space-y-3 p-5">
+            <div className="space-y-3">
               {Array.from({ length: 4 }).map((_, i) => (
                 <Skeleton key={i} className="h-10 w-full" />
               ))}
@@ -705,32 +1053,53 @@ export default function ReportsPage() {
           ) : projectRows.length === 0 ? (
             <EmptyState compact icon={ICONS.projects} title="No projects yet" />
           ) : (
-            <div className="divide-y divide-zinc-100">
+            <div className="divide-y divide-zinc-100 -mx-5 -my-5">
               {projectRows.slice(0, 12).map((p) => (
-                <div key={p.id} className="flex items-center gap-4 px-5 py-3">
+                <div key={p.id} className="flex items-center gap-4 px-5 py-3.5 hover:bg-zinc-50/70">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <p className="truncate text-sm font-medium text-zinc-900">{p.name}</p>
-                      {p.status !== "active" && <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium capitalize text-zinc-600">{p.status.replace("-", " ")}</span>}
+                      <p className="truncate text-sm font-semibold text-zinc-900">{p.name}</p>
+                      {p.status !== "active" && (
+                        <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium capitalize text-zinc-600">
+                          {p.status.replace("-", " ")}
+                        </span>
+                      )}
                     </div>
                     <div className="mt-1.5 flex items-center gap-2">
                       <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-zinc-100">
-                        <div className={`h-full rounded-full ${p.pct === 100 ? "bg-emerald-500" : "bg-red-500"}`} style={{ width: `${p.pct}%` }} />
+                        <div
+                          className={`h-full rounded-full ${
+                            p.pct === 100 ? "bg-emerald-500" : "bg-red-500"
+                          }`}
+                          style={{ width: `${p.pct}%` }}
+                        />
                       </div>
-                      <span className="w-9 text-right text-[11px] font-semibold tabular-nums text-zinc-700">{p.pct}%</span>
+                      <span className="w-9 text-right font-code text-[11px] font-semibold tabular-nums text-zinc-700">
+                        {p.pct}%
+                      </span>
                     </div>
                   </div>
                   <div className="hidden shrink-0 grid-cols-3 gap-4 text-center sm:grid">
                     <div>
-                      <p className="text-sm font-semibold tabular-nums text-emerald-600">+{p.doneInRange}</p>
+                      <p className="font-code text-sm font-semibold tabular-nums text-emerald-600">
+                        +{p.doneInRange}
+                      </p>
                       <p className="text-[10px] text-zinc-400">done</p>
                     </div>
                     <div>
-                      <p className="text-sm font-semibold tabular-nums text-amber-600">{p.review}</p>
+                      <p className="font-code text-sm font-semibold tabular-nums text-amber-600">
+                        {p.review}
+                      </p>
                       <p className="text-[10px] text-zinc-400">review</p>
                     </div>
                     <div>
-                      <p className={`text-sm font-semibold tabular-nums ${p.overdue ? "text-red-600" : "text-zinc-400"}`}>{p.overdue}</p>
+                      <p
+                        className={`font-code text-sm font-semibold tabular-nums ${
+                          p.overdue ? "text-red-600" : "text-zinc-400"
+                        }`}
+                      >
+                        {p.overdue}
+                      </p>
                       <p className="text-[10px] text-zinc-400">overdue</p>
                     </div>
                   </div>
@@ -738,52 +1107,62 @@ export default function ReportsPage() {
               ))}
             </div>
           )}
-        </Card>
+        </ChartCard>
 
         <div className="space-y-6">
-          <Card title="Exception requests" description={`${exceptionStats.total} in this period`}>
+          <ChartCard title="Exception Requests" subtitle={`${exceptionStats.total} submitted in period`}>
             {exceptionStats.total === 0 ? (
               <EmptyState compact icon={ICONS.exceptions} title="No requests in this period" />
             ) : (
-              <div className="grid grid-cols-2 gap-4 p-5">
+              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-400">By type</p>
+                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+                    By type
+                  </p>
                   {Object.entries(exceptionStats.byType).map(([k, v]) => (
                     <div key={k} className="flex justify-between py-1 text-xs">
                       <span className="capitalize text-zinc-600">{k}</span>
-                      <span className="font-semibold text-zinc-900">{v}</span>
+                      <span className="font-code font-semibold text-zinc-900">{v}</span>
                     </div>
                   ))}
                 </div>
                 <div>
-                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-400">By status</p>
+                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
+                    By status
+                  </p>
                   {Object.entries(exceptionStats.byStatus).map(([k, v]) => (
                     <div key={k} className="flex justify-between py-1 text-xs">
                       <span className="capitalize text-zinc-600">{k}</span>
-                      <span className="font-semibold text-zinc-900">{v}</span>
+                      <span className="font-code font-semibold text-zinc-900">{v}</span>
                     </div>
                   ))}
                 </div>
               </div>
             )}
-          </Card>
+          </ChartCard>
 
-          <Card title="Penalties & bonuses" description={`${penaltyStats.count} adjustments in this period`}>
-            <div className="grid grid-cols-2 divide-x divide-zinc-100">
+          <ChartCard title="Penalties & Bonuses" subtitle={`${penaltyStats.count} adjustments in period`}>
+            <div className="grid grid-cols-2 divide-x divide-zinc-100 -mx-5 -my-5">
               <div className="p-5">
                 <p className="text-[11px] font-medium text-zinc-500">Penalties</p>
-                <p className="mt-1 text-xl font-bold tabular-nums text-red-600">
-                  −{+penaltyStats.penaltiesTotal.toFixed(2)} <span className="text-sm font-semibold">day{penaltyStats.penaltiesTotal === 1 ? "" : "s"}</span>
+                <p className="mt-1 font-code text-xl font-bold tabular-nums text-red-600">
+                  −{+penaltyStats.penaltiesTotal.toFixed(2)}{" "}
+                  <span className="text-xs font-semibold">
+                    day{penaltyStats.penaltiesTotal === 1 ? "" : "s"}
+                  </span>
                 </p>
               </div>
               <div className="p-5">
                 <p className="text-[11px] font-medium text-zinc-500">Bonuses</p>
-                <p className="mt-1 text-xl font-bold tabular-nums text-emerald-600">
-                  +{+penaltyStats.bonusTotal.toFixed(2)} <span className="text-sm font-semibold">day{penaltyStats.bonusTotal === 1 ? "" : "s"}</span>
+                <p className="mt-1 font-code text-xl font-bold tabular-nums text-emerald-600">
+                  +{+penaltyStats.bonusTotal.toFixed(2)}{" "}
+                  <span className="text-xs font-semibold">
+                    day{penaltyStats.bonusTotal === 1 ? "" : "s"}
+                  </span>
                 </p>
               </div>
             </div>
-          </Card>
+          </ChartCard>
         </div>
       </div>
     </div>

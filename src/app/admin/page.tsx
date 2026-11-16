@@ -6,16 +6,72 @@ import { collection, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { FILTERED_LINKS, ICONS, STRAPI_CMS_ADMIN } from "@/lib/admin/nav";
 import { effectiveSessionWorkMs, type SessionLike } from "@/lib/admin/workTime";
+import { formatDepartment } from "@/lib/admin/hrReports";
+import { subscribeClientPortals } from "@/lib/admin/clientPortalStore";
+import { ARC_DEFAULT_PORTAL, type ClientRolloutPortal } from "@/lib/admin/clientPortalTypes";
+import {
+  AttendanceHeatmap,
+  ChartCard,
+  DonutBreakdownChart,
+  InteractiveAreaChart,
+  InteractiveBarChart,
+  KpiStatCard,
+  type KpiTone,
+} from "@/components/admin/ui/Charts";
 
 /* ───────────────────────── Types ───────────────────────── */
 type TS = { toDate?: () => Date } | Date | string | null | undefined;
 
-interface Worker { id: string; firstName?: string; lastName?: string; status?: string; isOnline?: boolean; role?: string; department?: string }
-interface Project { id: string; name: string; clientName?: string; status?: string; createdAt?: TS }
-interface Task { id: string; title: string; status: string; priority?: string; projectId?: string; dueDate?: TS; createdAt?: TS; updatedAt?: TS; assignedTo?: string | string[] }
-interface Session extends SessionLike { id: string; isLate?: boolean }
-interface ExceptionReq { id: string; workerName?: string; type?: string; status?: string; createdAt?: TS; submittedAt?: TS }
-interface Submission { id: string; fullName?: string; company?: string; status?: string; submittedAt?: TS; timestamp?: TS; services?: string[] }
+interface Worker {
+  id: string;
+  firstName?: string;
+  lastName?: string;
+  status?: string;
+  isOnline?: boolean;
+  role?: string;
+  department?: string;
+}
+interface Project {
+  id: string;
+  name: string;
+  clientName?: string;
+  status?: string;
+  createdAt?: TS;
+}
+interface Task {
+  id: string;
+  title: string;
+  status: string;
+  priority?: string;
+  projectId?: string;
+  dueDate?: TS;
+  createdAt?: TS;
+  updatedAt?: TS;
+  assignedTo?: string | string[];
+}
+interface Session extends SessionLike {
+  id: string;
+  isLate?: boolean;
+  department?: string;
+  presenceStatus?: "active" | "idle" | "offline";
+}
+interface ExceptionReq {
+  id: string;
+  workerName?: string;
+  type?: string;
+  status?: string;
+  createdAt?: TS;
+  submittedAt?: TS;
+}
+interface Submission {
+  id: string;
+  fullName?: string;
+  company?: string;
+  status?: string;
+  submittedAt?: TS;
+  timestamp?: TS;
+  services?: string[];
+}
 
 /* ───────────────────────── Helpers ───────────────────────── */
 function toDate(v: TS): Date | null {
@@ -28,8 +84,12 @@ function toDate(v: TS): Date | null {
   if (typeof v.toDate === "function") return v.toDate();
   return null;
 }
-const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+const ymd = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
 const hours = (ms: number) => Math.round((ms / 3_600_000) * 10) / 10;
+
 function timeAgo(d: Date | null) {
   if (!d) return "";
   const s = Math.floor((Date.now() - d.getTime()) / 1000);
@@ -39,6 +99,7 @@ function timeAgo(d: Date | null) {
   if (s < 604800) return `${Math.floor(s / 86400)}d ago`;
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
+
 function useCollection<T>(name: string) {
   const [items, setItems] = useState<T[]>([]);
   const [ready, setReady] = useState(false);
@@ -59,58 +120,44 @@ function useCollection<T>(name: string) {
 
 function Icon({ d, className = "h-5 w-5" }: { d: string; className?: string }) {
   return (
-    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.7}>
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75}>
       <path strokeLinecap="round" strokeLinejoin="round" d={d} />
     </svg>
   );
 }
 
-const TONES = {
+const TONES: Record<KpiTone, { bg: string; fg: string; bar: string }> = {
   red: { bg: "bg-red-50", fg: "text-red-600", bar: "bg-red-500" },
   blue: { bg: "bg-blue-50", fg: "text-blue-600", bar: "bg-blue-500" },
   amber: { bg: "bg-amber-50", fg: "text-amber-600", bar: "bg-amber-500" },
   emerald: { bg: "bg-emerald-50", fg: "text-emerald-600", bar: "bg-emerald-500" },
   violet: { bg: "bg-violet-50", fg: "text-violet-600", bar: "bg-violet-500" },
-  zinc: { bg: "bg-zinc-100", fg: "text-zinc-600", bar: "bg-zinc-500" },
+  zinc: { bg: "bg-zinc-100", fg: "text-zinc-700", bar: "bg-zinc-500" },
   orange: { bg: "bg-orange-50", fg: "text-orange-600", bar: "bg-orange-500" },
   sky: { bg: "bg-sky-50", fg: "text-sky-600", bar: "bg-sky-500" },
-} as const;
-type Tone = keyof typeof TONES;
+};
 
-/* ───────────────────────── Small components ───────────────────────── */
-function Kpi({ label, value, sub, icon, tone, href, alert }: { label: string; value: string | number; sub: string; icon: string; tone: Tone; href: string; alert?: boolean }) {
-  const t = TONES[tone];
-  return (
-    <Link href={href} className={`ui-card ui-card-hover group relative block p-4 ${alert ? "ring-1 ring-amber-300" : ""}`}>
-      <div className="flex items-start justify-between">
-        <span className={`flex h-9 w-9 items-center justify-center rounded-lg ${t.bg} ${t.fg}`}>
-          <Icon d={icon} className="h-[18px] w-[18px]" />
-        </span>
-        {alert && (
-          <span className="relative flex h-2.5 w-2.5">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
-            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-amber-500" />
-          </span>
-        )}
-      </div>
-      <p className="mt-3 text-2xl font-bold tabular-nums tracking-tight text-zinc-900">{value}</p>
-      <p className="text-[13px] font-medium text-zinc-700">{label}</p>
-      <p className="mt-0.5 text-xs text-zinc-500">{sub}</p>
-      <Icon d="M9 5l7 7-7 7" className="absolute bottom-4 right-4 h-4 w-4 text-zinc-300 transition-all group-hover:translate-x-0.5 group-hover:text-zinc-500" />
-    </Link>
-  );
-}
-
-function SectionHeader({ title, subtitle, href, cta }: { title: string; subtitle?: string; href?: string; cta?: string }) {
+function SectionHeader({
+  title,
+  subtitle,
+  href,
+  cta,
+}: {
+  title: string;
+  subtitle?: string;
+  href?: string;
+  cta?: string;
+}) {
   return (
     <div className="mb-4 flex items-end justify-between gap-3">
       <div>
-        <h2 className="text-[15px] font-semibold text-zinc-900">{title}</h2>
+        <h2 className="text-[15px] font-semibold tracking-tight text-zinc-900">{title}</h2>
         {subtitle && <p className="text-xs text-zinc-500">{subtitle}</p>}
       </div>
       {href && (
-        <Link href={href} className="text-xs font-medium text-red-600 hover:text-red-700">
-          {cta ?? "View all"} →
+        <Link href={href} className="inline-flex items-center gap-1 text-xs font-semibold text-red-600 hover:text-red-700">
+          {cta ?? "View all"}
+          <Icon d="M9 5l7 7-7 7" className="h-3.5 w-3.5" />
         </Link>
       )}
     </div>
@@ -118,8 +165,10 @@ function SectionHeader({ title, subtitle, href, cta }: { title: string; subtitle
 }
 
 function Skeleton({ className = "" }: { className?: string }) {
-  return <div className={`animate-pulse rounded-lg bg-zinc-200/70 ${className}`} />;
+  return <div className={`mft-skeleton rounded-xl ${className}`} />;
 }
+
+const DEPT_PALETTE = ["#dc2626", "#2563eb", "#059669", "#d97706", "#7c3aed", "#0284c7"];
 
 /* ───────────────────────── Page ───────────────────────── */
 export default function AdminOverviewPage() {
@@ -129,9 +178,22 @@ export default function AdminOverviewPage() {
   const [sessions] = useCollection<Session>("workSessions");
   const [exceptions] = useCollection<ExceptionReq>("exceptionRequests");
   const [submissions] = useCollection<Submission>("submissions");
+  const [portalData, setPortalData] = useState<ClientRolloutPortal>(ARC_DEFAULT_PORTAL);
+
+  useEffect(() => {
+    const unsub = subscribeClientPortals((portalsMap) => {
+      const first = portalsMap[ARC_DEFAULT_PORTAL.id] ?? Object.values(portalsMap)[0] ?? ARC_DEFAULT_PORTAL;
+      setPortalData(first);
+    });
+    return () => unsub();
+  }, []);
+
   const ready = wReady && pReady && tReady;
 
   const [now, setNow] = useState(() => new Date());
+  const [chartDays, setChartDays] = useState<7 | 14 | 28>(14);
+  const [chartMode, setChartMode] = useState<"area" | "bar" | "heatmap">("area");
+
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 60_000);
     return () => clearInterval(id);
@@ -143,6 +205,7 @@ export default function AdminOverviewPage() {
 
     const approvedWorkers = workers.filter((w) => w.status === "approved");
     const pendingWorkers = workers.filter((w) => w.status === "pending");
+    const workerMap = new Map(workers.map((w) => [w.id, w]));
 
     const pendingApproval = tasks.filter((t) => t.status === "pending-approval");
     const openTasks = tasks.filter((t) => t.status !== "completed");
@@ -163,57 +226,130 @@ export default function AdminOverviewPage() {
     const todayMs = todaySessions.reduce((a, x) => a + effectiveSessionWorkMs(x, now.getTime()), 0);
     const lateToday = todaySessions.filter((x) => x.isLate).length;
     const activeSessions = todaySessions.filter((x) => x.isActive);
+    const idleSessions = activeSessions.filter((x) => x.presenceStatus === "idle");
     const activeTodayWorkerIds = new Set(activeSessions.map((x) => x.workerId).filter(Boolean));
     const onlineWorkers = workers.filter((w) => activeTodayWorkerIds.has(w.id));
 
-    // Last 7 days hours
-    const week: { label: string; date: string; h: number }[] = [];
-    for (let i = 6; i >= 0; i--) {
+    // Build 28-day daily series for charts, sparklines & week-over-week deltas
+    const days28: {
+      label: string;
+      shortDay: string;
+      date: string;
+      totalH: number;
+      regularH: number;
+      overtimeH: number;
+      sessions: number;
+      late: number;
+      tasksDone: number;
+    }[] = [];
+
+    for (let i = 27; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
       const key = ymd(d);
-      const ms = sessions.filter((x) => x.date === key).reduce((a, x) => a + (x.totalWorkTime || 0), 0);
-      week.push({ label: d.toLocaleDateString(undefined, { weekday: "short" }), date: key, h: hours(ms) });
+      const daySessions = sessions.filter((x) => x.date === key);
+      let dayTotalH = 0;
+      let dayOtH = 0;
+      let dayLate = 0;
+      for (const sess of daySessions) {
+        const h = hours(effectiveSessionWorkMs(sess, key === today ? now.getTime() : undefined));
+        dayTotalH += h;
+        dayOtH += Math.max(0, h - 8);
+        if (sess.isLate) dayLate++;
+      }
+      const dayTasksDone = completedTasks.filter((t) => {
+        const td = toDate(t.updatedAt) || toDate(t.createdAt);
+        return td && ymd(td) === key;
+      }).length;
+
+      days28.push({
+        label: d.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+        shortDay: d.toLocaleDateString(undefined, { weekday: "short" }),
+        date: key,
+        totalH: Math.round(dayTotalH * 10) / 10,
+        regularH: Math.round(Math.max(0, dayTotalH - dayOtH) * 10) / 10,
+        overtimeH: Math.round(dayOtH * 10) / 10,
+        sessions: daySessions.length,
+        late: dayLate,
+        tasksDone: dayTasksDone,
+      });
     }
-    const weekTotal = Math.round(week.reduce((a, d) => a + d.h, 0) * 10) / 10;
-    const weekMax = Math.max(1, ...week.map((d) => d.h));
+
+    const last7 = days28.slice(-7);
+    const prev7 = days28.slice(-14, -7);
+    const weekTotal = Math.round(last7.reduce((a, d) => a + d.totalH, 0) * 10) / 10;
+    const prevWeekTotal = Math.round(prev7.reduce((a, d) => a + d.totalH, 0) * 10) / 10;
+    const hoursDelta = prevWeekTotal > 0 ? (weekTotal - prevWeekTotal) / prevWeekTotal : null;
+
+    const tasksDone7 = last7.reduce((a, d) => a + d.tasksDone, 0);
+    const tasksDonePrev7 = prev7.reduce((a, d) => a + d.tasksDone, 0);
+    const tasksDelta = tasksDonePrev7 > 0 ? (tasksDone7 - tasksDonePrev7) / tasksDonePrev7 : null;
 
     const pendingExceptions = exceptions.filter((e) => e.status === "pending");
     const newSubs = submissions.filter((x) => !x.status || x.status === "new");
 
     const statusDist = [
-      { key: "assigned", label: "To do", color: "#3b82f6", n: tasks.filter((t) => t.status === "assigned").length },
-      { key: "in-progress", label: "In progress", color: "#f59e0b", n: tasks.filter((t) => t.status === "in-progress").length },
-      { key: "pending-approval", label: "In review", color: "#ea580c", n: pendingApproval.length },
-      { key: "completed", label: "Completed", color: "#10b981", n: completedTasks.length },
+      { key: "assigned", label: "To do", color: "#2563eb", value: tasks.filter((t) => t.status === "assigned").length },
+      { key: "in-progress", label: "In progress", color: "#d97706", value: tasks.filter((t) => t.status === "in-progress").length },
+      { key: "pending-approval", label: "In review", color: "#ea580c", value: pendingApproval.length },
+      { key: "completed", label: "Completed", color: "#059669", value: completedTasks.length },
     ];
-    const totalTasks = Math.max(1, tasks.length);
-    let acc = 0;
-    const conic = statusDist
-      .map((x) => {
-        const from = (acc / totalTasks) * 360;
-        acc += x.n;
-        const to = (acc / totalTasks) * 360;
-        return `${x.color} ${from}deg ${to}deg`;
-      })
-      .join(", ");
+
+    // Department hours breakdown (last 28 days)
+    const deptMap = new Map<string, number>();
+    const cutoff28 = days28[0]?.date ?? "";
+    for (const sess of sessions) {
+      if ((sess.date ?? "") < cutoff28) continue;
+      const dept = sess.department || workerMap.get(sess.workerId ?? "")?.department || "general";
+      const h = hours(effectiveSessionWorkMs(sess, sess.date === today ? now.getTime() : undefined));
+      deptMap.set(dept, (deptMap.get(dept) ?? 0) + h);
+    }
+    const deptSlices = Array.from(deptMap.entries())
+      .map(([k, v], i) => ({
+        key: k,
+        label: formatDepartment(k),
+        value: Math.round(v * 10) / 10,
+        color: DEPT_PALETTE[i % DEPT_PALETTE.length],
+      }))
+      .filter((x) => x.value > 0)
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 6);
 
     const projectRows = activeProjects
       .map((p) => {
         const pt = tasks.filter((t) => t.projectId === p.id);
         const done = pt.filter((t) => t.status === "completed").length;
         const review = pt.filter((t) => t.status === "pending-approval").length;
-        return { ...p, total: pt.length, done, review, pct: pt.length ? Math.round((done / pt.length) * 100) : 0 };
+        const overdueCount = pt.filter((t) => {
+          if (t.status === "completed") return false;
+          const d = toDate(t.dueDate);
+          return d && d < startOfToday;
+        }).length;
+        return {
+          ...p,
+          total: pt.length,
+          done,
+          review,
+          overdueCount,
+          pct: pt.length ? Math.round((done / pt.length) * 100) : 0,
+        };
       })
       .sort((a, b) => b.review - a.review || b.total - a.total)
-      .slice(0, 5);
+      .slice(0, 6);
 
     // Activity feed
-    type Act = { id: string; at: Date; title: string; meta: string; href: string; tone: Tone; icon: string };
+    type Act = { id: string; at: Date; title: string; meta: string; href: string; tone: KpiTone; icon: string };
     const acts: Act[] = [];
     tasks.forEach((t) => {
       const at = toDate(t.updatedAt) || toDate(t.createdAt);
       if (!at) return;
-      const verb = t.status === "completed" ? "completed" : t.status === "pending-approval" ? "submitted for review" : toDate(t.updatedAt) ? "updated" : "created";
+      const verb =
+        t.status === "completed"
+          ? "completed"
+          : t.status === "pending-approval"
+            ? "submitted for review"
+            : toDate(t.updatedAt)
+              ? "updated"
+              : "created";
       acts.push({
         id: "t" + t.id,
         at,
@@ -227,7 +363,15 @@ export default function AdminOverviewPage() {
     submissions.forEach((x) => {
       const at = toDate(x.submittedAt) || toDate(x.timestamp);
       if (!at) return;
-      acts.push({ id: "s" + x.id, at, title: x.fullName || "New lead", meta: `Submission${x.company ? ` · ${x.company}` : ""}`, href: "/admin/submissions", tone: "violet", icon: ICONS.submissions });
+      acts.push({
+        id: "s" + x.id,
+        at,
+        title: x.fullName || "New lead",
+        meta: `Submission${x.company ? ` · ${x.company}` : ""}`,
+        href: "/admin/submissions",
+        tone: "violet",
+        icon: ICONS.submissions,
+      });
     });
     exceptions.forEach((e) => {
       const at = toDate(e.createdAt) || toDate(e.submittedAt);
@@ -245,34 +389,268 @@ export default function AdminOverviewPage() {
     acts.sort((a, b) => b.at.getTime() - a.at.getTime());
 
     return {
-      approvedWorkers, pendingWorkers, onlineWorkers, pendingApproval, openTasks, completedTasks, overdue, dueToday,
-      activeProjects, completedProjects, todayMs, lateToday, activeSessions, week, weekTotal, weekMax,
-      pendingExceptions, newSubs, statusDist, conic, projectRows, activity: acts.slice(0, 10), todaySessions,
+      approvedWorkers,
+      pendingWorkers,
+      onlineWorkers,
+      idleSessions,
+      pendingApproval,
+      openTasks,
+      completedTasks,
+      overdue,
+      dueToday,
+      activeProjects,
+      completedProjects,
+      todayMs,
+      lateToday,
+      activeSessions,
+      days28,
+      last7,
+      weekTotal,
+      hoursDelta,
+      tasksDelta,
+      pendingExceptions,
+      newSubs,
+      statusDist,
+      deptSlices,
+      projectRows,
+      activity: acts.slice(0, 8),
+      todaySessions,
     };
   }, [workers, projects, tasks, sessions, exceptions, submissions, now]);
 
-  const greeting = now.getHours() < 12 ? "Good morning" : now.getHours() < 18 ? "Good afternoon" : "Good evening";
-  const attentionCount = s.pendingApproval.length + s.pendingWorkers.length + s.pendingExceptions.length + s.overdue.length + s.newSubs.length;
+  // Client Rollout Portal live metrics
+  const portalStats = useMemo(() => {
+    const posts = portalData.feedCalendar ?? [];
+    const stories = portalData.dailyStories ?? [];
+    const milestones = portalData.milestones ?? [];
+    const approvedPosts = posts.filter(
+      (p) => p.publishStatus === "Approved" || p.publishStatus === "Published" || p.publishStatus === "Scheduled",
+    ).length;
+    const readyPosts = posts.filter((p) => p.publishStatus === "Ready for Review").length;
+    const revisionPosts = posts.filter((p) => p.publishStatus === "Revision Requested").length;
+    const approvedStories = stories.filter(
+      (st) => st.publishStatus === "Approved" || st.publishStatus === "Published" || st.publishStatus === "Scheduled",
+    ).length;
+    const pendingMilestones = milestones.filter(
+      (m) => (m.status === "Waiting Client" || m.owner.includes("ARC")) && !m.clientApproved && m.status !== "Done",
+    ).length;
+    return {
+      totalPosts: posts.length,
+      approvedPosts,
+      readyPosts,
+      revisionPosts,
+      totalStories: stories.length,
+      approvedStories,
+      pendingMilestones,
+      pct: posts.length ? Math.round((approvedPosts / posts.length) * 100) : 0,
+    };
+  }, [portalData]);
+
+  const chartSlice = useMemo(() => s.days28.slice(-chartDays), [s.days28, chartDays]);
+  const chartAvgHours = useMemo(() => {
+    if (!chartSlice.length) return 0;
+    return Math.round((chartSlice.reduce((a, d) => a + d.totalH, 0) / chartSlice.length) * 10) / 10;
+  }, [chartSlice]);
+
+  const greeting =
+    now.getHours() < 12 ? "Good morning" : now.getHours() < 18 ? "Good afternoon" : "Good evening";
+  const attentionCount =
+    s.pendingApproval.length +
+    s.pendingWorkers.length +
+    s.pendingExceptions.length +
+    s.overdue.length +
+    s.newSubs.length +
+    portalStats.revisionPosts;
 
   const attention = [
-    { n: s.pendingApproval.length, label: "tasks waiting for your approval", href: FILTERED_LINKS.pendingApprovals, tone: "amber" as Tone, icon: "M5 13l4 4L19 7", cta: "Review" },
-    { n: s.overdue.length, label: "overdue tasks", href: "/admin/projects", tone: "red" as Tone, icon: ICONS.sessions, cta: "Open" },
-    { n: s.pendingWorkers.length, label: "new workers awaiting approval", href: FILTERED_LINKS.pendingWorkers, tone: "blue" as Tone, icon: ICONS.workers, cta: "Approve" },
-    { n: s.pendingExceptions.length, label: "exception requests pending", href: FILTERED_LINKS.pendingExceptions, tone: "orange" as Tone, icon: ICONS.exceptions, cta: "Decide" },
-    { n: s.newSubs.length, label: "new client submissions", href: FILTERED_LINKS.newSubmissions, tone: "violet" as Tone, icon: ICONS.submissions, cta: "Contact" },
+    {
+      n: s.pendingApproval.length,
+      label: "tasks waiting for your approval",
+      href: FILTERED_LINKS.pendingApprovals,
+      tone: "amber" as KpiTone,
+      icon: "M5 13l4 4L19 7",
+      cta: "Review",
+    },
+    {
+      n: s.overdue.length,
+      label: "overdue task directives",
+      href: "/admin/tasks",
+      tone: "red" as KpiTone,
+      icon: ICONS.sessions,
+      cta: "Inspect",
+    },
+    {
+      n: portalStats.revisionPosts,
+      label: "client rollout posts with requested edits",
+      href: "/admin/client-portal",
+      tone: "orange" as KpiTone,
+      icon: ICONS.clientPortal,
+      cta: "Studio",
+    },
+    {
+      n: s.pendingWorkers.length,
+      label: "new workers awaiting account approval",
+      href: FILTERED_LINKS.pendingWorkers,
+      tone: "blue" as KpiTone,
+      icon: ICONS.workers,
+      cta: "Approve",
+    },
+    {
+      n: s.pendingExceptions.length,
+      label: "HR exception requests pending decision",
+      href: FILTERED_LINKS.pendingExceptions,
+      tone: "violet" as KpiTone,
+      icon: ICONS.exceptions,
+      cta: "Decide",
+    },
+    {
+      n: s.newSubs.length,
+      label: "new inbound client submissions",
+      href: FILTERED_LINKS.newSubmissions,
+      tone: "emerald" as KpiTone,
+      icon: ICONS.submissions,
+      cta: "Contact",
+    },
   ].filter((a) => a.n > 0);
 
   const modules = [
-    { title: "Projects", href: "/admin/projects", icon: ICONS.projects, tone: "red" as Tone, desc: "Boards, lists & calendars per client", stats: [["Active", s.activeProjects.length], ["Completed", s.completedProjects.length], ["Total", projects.length]] },
-    { title: "Tasks", href: "/admin/tasks", icon: ICONS.tasks, tone: "blue" as Tone, desc: "Every directive across all projects", stats: [["Open", s.openTasks.length], ["In review", s.pendingApproval.length], ["Done", s.completedTasks.length]] },
-    { title: "Workers", href: "/admin/workers", icon: ICONS.workers, tone: "emerald" as Tone, desc: "Team roster, approvals & profiles", stats: [["Approved", s.approvedWorkers.length], ["Pending", s.pendingWorkers.length], ["Online", s.onlineWorkers.length]] },
-    { title: "Work Sessions", href: "/admin/work-sessions", icon: ICONS.sessions, tone: "sky" as Tone, desc: "Attendance logs & hours worked", stats: [["Today", `${hours(s.todayMs)}h`], ["Active", s.activeSessions.length], ["7 days", `${s.weekTotal}h`]] },
-    { title: "HR Dashboard", href: "/admin/hr", icon: ICONS.hr, tone: "violet" as Tone, desc: "Performance, penalties & alerts", stats: [["Late today", s.lateToday], ["Sessions", s.todaySessions.length], ["Team", s.approvedWorkers.length]] },
-    { title: "Exceptions", href: "/admin/exceptions", icon: ICONS.exceptions, tone: "orange" as Tone, desc: "Late arrival & absence requests", stats: [["Pending", s.pendingExceptions.length], ["Total", exceptions.length], ["Approved", exceptions.filter((e) => e.status === "approved").length]] },
-    { title: "Submissions", href: "/admin/submissions", icon: ICONS.submissions, tone: "amber" as Tone, desc: "Inbound leads & meeting requests", stats: [["New", s.newSubs.length], ["Total", submissions.length], ["Done", submissions.filter((x) => x.status === "completed").length]] },
-    { title: "Reports", href: "/admin/reports", icon: ICONS.reports, tone: "sky" as Tone, desc: "Payroll, attendance & delivery with CSV/PDF export", stats: [["7-day hours", `${s.weekTotal}h`], ["Done tasks", s.completedTasks.length], ["Team", s.approvedWorkers.length]] },
-    { title: "Activity Log", href: "/admin/activity", icon: ICONS.activity, tone: "zinc" as Tone, desc: "Audit trail of every admin action", stats: [] },
-    { title: "Strapi CMS", href: STRAPI_CMS_ADMIN, icon: ICONS.cms, tone: "zinc" as Tone, desc: "Manage website content", stats: [], external: true },
+    {
+      title: "Projects",
+      href: "/admin/projects",
+      icon: ICONS.projects,
+      tone: "red" as KpiTone,
+      desc: "Client boards, lists, group chat & calendars",
+      stats: [
+        ["Active", s.activeProjects.length],
+        ["Completed", s.completedProjects.length],
+        ["Total", projects.length],
+      ],
+    },
+    {
+      title: "Tasks",
+      href: "/admin/tasks",
+      icon: ICONS.tasks,
+      tone: "blue" as KpiTone,
+      desc: "All directives, reviews & deadlines",
+      stats: [
+        ["Open", s.openTasks.length],
+        ["In review", s.pendingApproval.length],
+        ["Done", s.completedTasks.length],
+      ],
+    },
+    {
+      title: "Client Rollout Studio",
+      href: "/admin/client-portal",
+      icon: ICONS.clientPortal,
+      tone: "emerald" as KpiTone,
+      desc: "3-month social media rollout, Kanban & story decks",
+      stats: [
+        ["Posts", `${portalStats.approvedPosts}/${portalStats.totalPosts}`],
+        ["In review", portalStats.readyPosts],
+        ["Stories", portalStats.totalStories],
+      ],
+    },
+    {
+      title: "HR Operations",
+      href: "/admin/hr",
+      icon: ICONS.hr,
+      tone: "violet" as KpiTone,
+      desc: "Attendance, payroll cycles, payslips & penalties",
+      stats: [
+        ["Late today", s.lateToday],
+        ["Sessions", s.todaySessions.length],
+        ["Roster", s.approvedWorkers.length],
+      ],
+    },
+    {
+      title: "Workers",
+      href: "/admin/workers",
+      icon: ICONS.workers,
+      tone: "sky" as KpiTone,
+      desc: "Team roster, onboarding approvals & rates",
+      stats: [
+        ["Approved", s.approvedWorkers.length],
+        ["Pending", s.pendingWorkers.length],
+        ["Online", s.onlineWorkers.length],
+      ],
+    },
+    {
+      title: "Work Sessions",
+      href: "/admin/work-sessions",
+      icon: ICONS.sessions,
+      tone: "amber" as KpiTone,
+      desc: "Live shift timers, check-ins & presence logs",
+      stats: [
+        ["Today", `${hours(s.todayMs)}h`],
+        ["Active", s.activeSessions.length],
+        ["7 days", `${s.weekTotal}h`],
+      ],
+    },
+    {
+      title: "Reports & Analytics",
+      href: "/admin/reports",
+      icon: ICONS.reports,
+      tone: "blue" as KpiTone,
+      desc: "Payroll, attendance & delivery exports (CSV/PDF)",
+      stats: [
+        ["7d hours", `${s.weekTotal}h`],
+        ["Done tasks", s.completedTasks.length],
+        ["Team", s.approvedWorkers.length],
+      ],
+    },
+    {
+      title: "Exceptions",
+      href: "/admin/exceptions",
+      icon: ICONS.exceptions,
+      tone: "orange" as KpiTone,
+      desc: "Late arrival, absence & leave requests",
+      stats: [
+        ["Pending", s.pendingExceptions.length],
+        ["Approved", exceptions.filter((e) => e.status === "approved").length],
+        ["Total", exceptions.length],
+      ],
+    },
+    {
+      title: "Reimbursements",
+      href: "/admin/reimbursements",
+      icon: ICONS.reimbursements,
+      tone: "emerald" as KpiTone,
+      desc: "Outdoor missions & purchase expense claims",
+      stats: [
+        ["Policy", "2026"],
+        ["Team", s.approvedWorkers.length],
+        ["Status", "Live"],
+      ],
+    },
+    {
+      title: "Submissions",
+      href: "/admin/submissions",
+      icon: ICONS.submissions,
+      tone: "violet" as KpiTone,
+      desc: "Inbound client leads & discovery requests",
+      stats: [
+        ["New", s.newSubs.length],
+        ["Total", submissions.length],
+        ["Closed", submissions.filter((x) => x.status === "completed").length],
+      ],
+    },
+    {
+      title: "Activity Audit Log",
+      href: "/admin/activity",
+      icon: ICONS.activity,
+      tone: "zinc" as KpiTone,
+      desc: "Chronological audit trail of admin actions",
+      stats: [],
+    },
+    {
+      title: "Strapi CMS",
+      href: STRAPI_CMS_ADMIN,
+      icon: ICONS.cms,
+      tone: "zinc" as KpiTone,
+      desc: "External website content management",
+      stats: [],
+      external: true,
+    },
   ];
 
   const workerName = (id: string) => {
@@ -282,157 +660,661 @@ export default function AdminOverviewPage() {
 
   return (
     <div className="space-y-6">
-      {/* ── Hero ── */}
-      <section className="relative overflow-hidden rounded-2xl border border-zinc-200 bg-gradient-to-br from-zinc-900 via-zinc-900 to-red-950 p-6 text-white md:p-8" style={{ boxShadow: "var(--mft-shadow-lg)" }}>
-        <div className="pointer-events-none absolute -right-20 -top-20 h-72 w-72 rounded-full bg-red-600/30 blur-3xl" />
-        <div className="pointer-events-none absolute -bottom-24 left-1/3 h-56 w-56 rounded-full bg-red-500/10 blur-3xl" />
+      {/* ── Executive Command Hero ── */}
+      <section
+        className="relative overflow-hidden rounded-2xl border border-zinc-800 bg-gradient-to-br from-zinc-950 via-zinc-900 to-zinc-950 p-6 text-white md:p-7"
+        style={{ boxShadow: "var(--mft-shadow-lg)" }}
+      >
+        <div className="pointer-events-none absolute -right-24 -top-24 h-80 w-80 rounded-full bg-red-600/20 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-28 left-1/3 h-64 w-64 rounded-full bg-blue-500/10 blur-3xl" />
+
         <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <p className="text-xs font-medium text-zinc-400">{now.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</p>
-            <h1 className="mt-1 text-2xl font-semibold tracking-tight md:text-3xl">{greeting} 👋</h1>
-            <p className="mt-2 max-w-xl text-sm text-zinc-300">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 font-code text-[10px] font-semibold uppercase tracking-wider text-emerald-300">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                Live Telemetry
+              </span>
+              <span className="font-code text-xs text-zinc-400">
+                {now.toLocaleDateString(undefined, {
+                  weekday: "long",
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                })}
+              </span>
+            </div>
+            <h1 className="mt-2 text-2xl font-bold tracking-tight md:text-3xl">{greeting}</h1>
+            <p className="mt-1.5 max-w-xl text-sm text-zinc-300">
               {attentionCount > 0 ? (
-                <>You have <span className="font-semibold text-white">{attentionCount} item{attentionCount === 1 ? "" : "s"}</span> that need your attention across the workspace.</>
+                <>
+                  There {attentionCount === 1 ? "is" : "are"}{" "}
+                  <span className="font-semibold text-white">
+                    {attentionCount} priority item{attentionCount === 1 ? "" : "s"}
+                  </span>{" "}
+                  awaiting review across tasks, HR operations, and the client rollout studio.
+                </>
               ) : (
-                <>Everything is under control — no pending approvals or overdue work.</>
+                <>All workspace queues are clear — zero overdue directives or pending approvals.</>
               )}
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Link href="/admin/projects?new=1" className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-red-900/40 transition-all hover:bg-red-500 active:scale-[0.98]">
-              <Icon d="M12 4v16m8-8H4" className="h-4 w-4" /> New project
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href="/admin/projects?new=1"
+              className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2.5 text-xs font-semibold text-white shadow-lg shadow-red-950/50 transition-all hover:bg-red-500 active:scale-[0.99]"
+            >
+              <Icon d="M12 4v16m8-8H4" className="h-4 w-4" /> New Project
             </Link>
-            <Link href="/admin/tasks" className="inline-flex items-center gap-2 rounded-lg bg-white/10 px-4 py-2 text-sm font-semibold text-white ring-1 ring-white/15 backdrop-blur transition-all hover:bg-white/15">
-              <Icon d={ICONS.tasks} className="h-4 w-4" /> Assign task
+            <Link
+              href="/admin/client-portal"
+              className="inline-flex items-center gap-2 rounded-xl bg-white/10 px-3.5 py-2.5 text-xs font-semibold text-white ring-1 ring-white/15 backdrop-blur transition-all hover:bg-white/15"
+            >
+              <Icon d={ICONS.clientPortal} className="h-4 w-4 text-red-400" /> Client Studio
             </Link>
-            <Link href="/admin/workers" className="inline-flex items-center gap-2 rounded-lg bg-white/10 px-4 py-2 text-sm font-semibold text-white ring-1 ring-white/15 backdrop-blur transition-all hover:bg-white/15">
-              <Icon d={ICONS.workers} className="h-4 w-4" /> Team
+            <Link
+              href="/admin/hr"
+              className="inline-flex items-center gap-2 rounded-xl bg-white/10 px-3.5 py-2.5 text-xs font-semibold text-white ring-1 ring-white/15 backdrop-blur transition-all hover:bg-white/15"
+            >
+              <Icon d={ICONS.hr} className="h-4 w-4 text-emerald-400" /> HR &amp; Payroll
+            </Link>
+            <Link
+              href="/admin/reports"
+              className="inline-flex items-center gap-2 rounded-xl bg-white/10 px-3.5 py-2.5 text-xs font-semibold text-white ring-1 ring-white/15 backdrop-blur transition-all hover:bg-white/15"
+            >
+              <Icon d={ICONS.reports} className="h-4 w-4 text-sky-400" /> Analytics
             </Link>
           </div>
         </div>
-        {/* Mini strip */}
+
+        {/* Live Telemetry Strip */}
         <div className="relative mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
           {[
-            ["Online now", `${s.onlineWorkers.length}/${s.approvedWorkers.length}`],
-            ["Hours today", `${hours(s.todayMs)}h`],
-            ["Due today", s.dueToday.length],
-            ["Completion", `${tasks.length ? Math.round((s.completedTasks.length / tasks.length) * 100) : 0}%`],
-          ].map(([l, v]) => (
-            <div key={l as string} className="rounded-xl bg-white/5 px-4 py-3 ring-1 ring-white/10">
-              <p className="text-[11px] text-zinc-400">{l}</p>
-              <p className="text-xl font-semibold tabular-nums">{ready ? v : "—"}</p>
+            {
+              label: "Workforce Online",
+              val: `${s.onlineWorkers.length} / ${s.approvedWorkers.length}`,
+              sub: `${s.activeSessions.length - s.idleSessions.length} active · ${s.idleSessions.length} idle`,
+              dot: "bg-emerald-400",
+            },
+            {
+              label: "Hours Logged Today",
+              val: `${hours(s.todayMs)}h`,
+              sub: `7-day total: ${s.weekTotal}h`,
+              dot: "bg-sky-400",
+            },
+            {
+              label: "Task Completion",
+              val: `${tasks.length ? Math.round((s.completedTasks.length / tasks.length) * 100) : 0}%`,
+              sub: `${s.dueToday.length} due today · ${s.pendingApproval.length} in review`,
+              dot: "bg-amber-400",
+            },
+            {
+              label: "Client Rollout Sign-Off",
+              val: `${portalStats.pct}%`,
+              sub: `${portalStats.approvedPosts}/${portalStats.totalPosts} posts · ${portalStats.readyPosts} in review`,
+              dot: "bg-red-400",
+            },
+          ].map((item) => (
+            <div
+              key={item.label}
+              className="rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 backdrop-blur-xs"
+            >
+              <div className="flex items-center gap-1.5 text-[11px] font-medium text-zinc-400">
+                <span className={`h-1.5 w-1.5 rounded-full ${item.dot}`} />
+                {item.label}
+              </div>
+              <p className="mt-1 font-code text-xl font-bold tracking-tight tabular-nums text-white">
+                {ready ? item.val : "—"}
+              </p>
+              <p className="mt-0.5 truncate text-[11px] text-zinc-400">{item.sub}</p>
             </div>
           ))}
         </div>
       </section>
 
-      {/* ── KPIs ── */}
-      <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {!ready
-          ? Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-[138px]" />)
-          : (
-            <>
-              <Kpi label="Active projects" value={s.activeProjects.length} sub={`${projects.length} total`} icon={ICONS.projects} tone="red" href="/admin/projects" />
-              <Kpi label="Open tasks" value={s.openTasks.length} sub={`${s.dueToday.length} due today`} icon={ICONS.tasks} tone="blue" href="/admin/tasks" />
-              <Kpi label="Awaiting approval" value={s.pendingApproval.length} sub="Submitted by workers" icon="M5 13l4 4L19 7" tone="amber" href={FILTERED_LINKS.pendingApprovals} alert={s.pendingApproval.length > 0} />
-              <Kpi label="Overdue tasks" value={s.overdue.length} sub="Past due date" icon={ICONS.sessions} tone="orange" href="/admin/projects" alert={s.overdue.length > 0} />
-              <Kpi label="Team members" value={s.approvedWorkers.length} sub={`${s.onlineWorkers.length} online · ${s.pendingWorkers.length} pending`} icon={ICONS.workers} tone="emerald" href={s.pendingWorkers.length > 0 ? FILTERED_LINKS.pendingWorkers : "/admin/workers"} alert={s.pendingWorkers.length > 0} />
-              <Kpi label="Hours logged today" value={`${hours(s.todayMs)}h`} sub={`${s.activeSessions.length} active sessions`} icon={ICONS.sessions} tone="sky" href="/admin/work-sessions" />
-              <Kpi label="Exception requests" value={s.pendingExceptions.length} sub="Pending decision" icon={ICONS.exceptions} tone="violet" href={FILTERED_LINKS.pendingExceptions} alert={s.pendingExceptions.length > 0} />
-              <Kpi label="New submissions" value={s.newSubs.length} sub={`${submissions.length} leads total`} icon={ICONS.submissions} tone="zinc" href={FILTERED_LINKS.newSubmissions} alert={s.newSubs.length > 0} />
-            </>
-          )}
+      {/* ── 8 KPI Stat Cards with Sparklines & Directional Deltas ── */}
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {!ready ? (
+          Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-[136px]" />)
+        ) : (
+          <>
+            <KpiStatCard
+              label="Logged Hours (7d)"
+              value={`${s.weekTotal}h`}
+              sub={`${hours(s.todayMs)}h logged today`}
+              icon={ICONS.sessions}
+              tone="red"
+              href="/admin/work-sessions"
+              delta={s.hoursDelta}
+              good="up"
+              period="vs prior 7d"
+              trend={s.last7.map((d) => d.totalH)}
+            />
+            <KpiStatCard
+              label="Open Directives"
+              value={s.openTasks.length}
+              sub={`${s.dueToday.length} due today · ${s.completedTasks.length} done`}
+              icon={ICONS.tasks}
+              tone="blue"
+              href="/admin/tasks"
+              delta={s.tasksDelta}
+              good="up"
+              period="velocity vs 7d"
+              trend={s.last7.map((d) => d.tasksDone)}
+            />
+            <KpiStatCard
+              label="Awaiting Approval"
+              value={s.pendingApproval.length}
+              sub="Submitted by team for review"
+              icon="M5 13l4 4L19 7"
+              tone="amber"
+              href={FILTERED_LINKS.pendingApprovals}
+              alert={s.pendingApproval.length > 0}
+            />
+            <KpiStatCard
+              label="Overdue Directives"
+              value={s.overdue.length}
+              sub={s.overdue.length > 0 ? "Requires immediate follow-up" : "All tasks on schedule"}
+              icon={ICONS.exceptions}
+              tone="orange"
+              href="/admin/tasks"
+              good="down"
+              alert={s.overdue.length > 0}
+            />
+            <KpiStatCard
+              label="Active Projects"
+              value={s.activeProjects.length}
+              sub={`${s.completedProjects.length} completed · ${projects.length} total`}
+              icon={ICONS.projects}
+              tone="emerald"
+              href="/admin/projects"
+            />
+            <KpiStatCard
+              label="Client Rollout Studio"
+              value={`${portalStats.approvedPosts}/${portalStats.totalPosts}`}
+              sub={`${portalStats.readyPosts} awaiting client · ${portalStats.approvedStories} stories`}
+              icon={ICONS.clientPortal}
+              tone="violet"
+              href="/admin/client-portal"
+              alert={portalStats.revisionPosts > 0}
+            />
+            <KpiStatCard
+              label="Team Roster & Presence"
+              value={s.approvedWorkers.length}
+              sub={`${s.onlineWorkers.length} online now · ${s.pendingWorkers.length} pending`}
+              icon={ICONS.workers}
+              tone="sky"
+              href={s.pendingWorkers.length > 0 ? FILTERED_LINKS.pendingWorkers : "/admin/workers"}
+              alert={s.pendingWorkers.length > 0}
+              trend={s.last7.map((d) => d.sessions)}
+            />
+            <KpiStatCard
+              label="HR Exceptions & Leads"
+              value={s.pendingExceptions.length + s.newSubs.length}
+              sub={`${s.pendingExceptions.length} HR requests · ${s.newSubs.length} new leads`}
+              icon={ICONS.hr}
+              tone="zinc"
+              href={s.pendingExceptions.length > 0 ? FILTERED_LINKS.pendingExceptions : "/admin/hr"}
+              alert={s.pendingExceptions.length + s.newSubs.length > 0}
+            />
+          </>
+        )}
       </section>
 
-      {/* ── Attention + Chart ── */}
+      {/* ── Analytics Workbench + Priority Action Inbox ── */}
       <section className="grid gap-6 xl:grid-cols-3">
-        <div className="ui-card p-5 xl:col-span-1">
-          <SectionHeader title="Needs your attention" subtitle="Prioritized action items" />
-          {attention.length === 0 ? (
-            <div className="flex flex-col items-center justify-center rounded-xl bg-emerald-50/60 py-10 text-center">
-              <span className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
-                <Icon d="M5 13l4 4L19 7" />
-              </span>
-              <p className="mt-3 text-sm font-medium text-zinc-800">All clear</p>
-              <p className="text-xs text-zinc-500">No pending actions right now.</p>
-            </div>
-          ) : (
-            <ul className="space-y-2">
-              {attention.map((a) => {
-                const t = TONES[a.tone];
-                return (
-                  <li key={a.label}>
-                    <Link href={a.href} className="group flex items-center gap-3 rounded-xl border border-zinc-100 p-3 transition-all hover:border-zinc-200 hover:bg-zinc-50">
-                      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${t.bg} ${t.fg}`}>
-                        <Icon d={a.icon} className="h-[18px] w-[18px]" />
-                      </span>
-                      <span className="flex-1 text-[13px] text-zinc-700">
-                        <span className="font-semibold text-zinc-900">{a.n}</span> {a.label}
-                      </span>
-                      <span className="rounded-md bg-zinc-900 px-2 py-1 text-[11px] font-semibold text-white opacity-80 transition-opacity group-hover:opacity-100">{a.cta}</span>
-                    </Link>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
+        <ChartCard
+          title="Workforce & Output Telemetry"
+          subtitle={`${chartSlice.reduce((a, d) => Math.round((a + d.totalH) * 10) / 10, 0)}h logged across ${chartDays} days · Daily avg ${chartAvgHours}h`}
+          className="xl:col-span-2"
+          actions={
+            <div className="flex flex-wrap items-center gap-2">
+              {/* View mode tablist */}
+              <div
+                role="tablist"
+                aria-label="Chart visualization mode"
+                className="flex items-center overflow-x-auto rounded-lg border border-zinc-200 bg-zinc-50 p-0.5"
+              >
+                {(
+                  [
+                    ["area", "Area Trend"],
+                    ["bar", "Stacked Bar"],
+                    ["heatmap", "28d Matrix"],
+                  ] as const
+                ).map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    role="tab"
+                    aria-selected={chartMode === key}
+                    onClick={(e) => {
+                      setChartMode(key);
+                      e.currentTarget.scrollIntoView({ block: "nearest", inline: "nearest" });
+                    }}
+                    className={`mft-tab-btn rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors cursor-pointer ${
+                      chartMode === key ? "bg-white text-zinc-900 shadow-2xs" : "text-zinc-500 hover:text-zinc-800"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
 
-        <div className="ui-card p-5 xl:col-span-2 flex flex-col justify-between">
-          <SectionHeader
-            title="Hours worked — last 7 days"
-            subtitle={`${s.weekTotal}h total · Avg ${Math.round((s.weekTotal / 7) * 10) / 10}h/day`}
-            href="/admin/work-sessions"
-            cta="Sessions"
-          />
-          <div className="relative pt-4">
-            {/* Subtle horizontal reference gridlines */}
-            <div className="pointer-events-none absolute inset-x-0 top-4 bottom-7 flex flex-col justify-between">
-              {[100, 66, 33, 0].map((g) => (
-                <div key={g} className="w-full border-b border-dashed border-zinc-100" />
-              ))}
-            </div>
-
-            <div className="relative flex h-48 items-end gap-3">
-              {s.week.map((d, i) => {
-                const pct = (d.h / s.weekMax) * 100;
-                const isToday = i === s.week.length - 1;
-                return (
-                  <div key={d.date} className="group flex flex-1 flex-col items-center gap-2">
-                    <span
-                      className={`rounded-md px-1.5 py-0.5 text-[11px] font-bold tabular-nums transition-all ${
-                        isToday
-                          ? "bg-red-50 text-red-600"
-                          : "text-zinc-600 group-hover:bg-zinc-900 group-hover:text-white"
+              {/* Range selector */}
+              {chartMode !== "heatmap" && (
+                <div className="flex items-center rounded-lg border border-zinc-200 bg-zinc-50 p-0.5">
+                  {([7, 14, 28] as const).map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => setChartDays(d)}
+                      className={`rounded-md px-2 py-1 font-code text-[11px] font-semibold transition-colors cursor-pointer ${
+                        chartDays === d ? "bg-white text-zinc-900 shadow-2xs" : "text-zinc-500 hover:text-zinc-800"
                       }`}
                     >
-                      {d.h}h
-                    </span>
-                    <div className="relative flex h-36 w-full max-w-[48px] items-end overflow-hidden rounded-xl bg-zinc-100/80 p-1">
-                      <div
-                        className={`w-full rounded-lg transition-all duration-700 ${
-                          isToday
-                            ? "bg-gradient-to-t from-red-600 via-red-500 to-amber-400 shadow-sm shadow-red-500/30"
-                            : "bg-gradient-to-t from-zinc-800 to-zinc-500 group-hover:from-red-600 group-hover:to-red-400"
-                        }`}
-                        style={{ height: `${Math.max(pct, d.h > 0 ? 8 : 3)}%` }}
-                      />
-                    </div>
-                    <span className={`text-[11px] font-semibold ${isToday ? "text-red-600" : "text-zinc-500"}`}>
-                      {d.label}
-                    </span>
-                  </div>
-                );
-              })}
+                      {d}d
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          }
+          footer={
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span>
+                Overtime logged in window:{" "}
+                <strong className="font-code font-semibold text-zinc-800">
+                  {Math.round(chartSlice.reduce((a, d) => a + d.overtimeH, 0) * 10) / 10}h
+                </strong>
+              </span>
+              <Link href="/admin/reports" className="font-semibold text-red-600 hover:text-red-700">
+                Open full payroll &amp; attendance reports →
+              </Link>
+            </div>
+          }
+        >
+          {chartMode === "area" ? (
+            <InteractiveAreaChart
+              data={chartSlice}
+              xKey="label"
+              height={235}
+              format={(v) => `${v}h`}
+              referenceValue={chartAvgHours}
+              referenceLabel="Daily avg"
+              description={`Logged hours and overtime over the last ${chartDays} days`}
+              series={[
+                { key: "totalH", label: "Total Hours", color: "#dc2626", fillOpacity: 0.22 },
+                { key: "overtimeH", label: "Overtime Hours", color: "#f59e0b", fillOpacity: 0.14 },
+              ]}
+            />
+          ) : chartMode === "bar" ? (
+            <InteractiveBarChart
+              data={chartSlice}
+              xKey="label"
+              height={235}
+              stacked
+              format={(v) => `${v}h`}
+              referenceValue={chartAvgHours}
+              referenceLabel="Daily avg"
+              description={`Regular and overtime hours stacked bar chart over the last ${chartDays} days`}
+              series={[
+                { key: "regularH", label: "Regular Hours", color: "#18181b" },
+                { key: "overtimeH", label: "Overtime (>8h)", color: "#dc2626" },
+              ]}
+            />
+          ) : (
+            <AttendanceHeatmap
+              days={s.days28.map((d) => ({
+                date: d.date,
+                label: d.label,
+                hours: d.totalH,
+                sessions: d.sessions,
+                late: d.late,
+              }))}
+            />
+          )}
+        </ChartCard>
+
+        {/* Priority Action Inbox */}
+        <div className="ui-card flex flex-col justify-between p-5">
+          <div>
+            <SectionHeader title="Priority Action Queue" subtitle="Items awaiting admin decision" />
+            {attention.length === 0 ? (
+              <div className="flex flex-col items-center justify-center rounded-xl border border-emerald-200/60 bg-emerald-50/50 py-10 text-center">
+                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+                  <Icon d="M5 13l4 4L19 7" />
+                </span>
+                <p className="mt-3 text-sm font-semibold text-zinc-800">All queues clear</p>
+                <p className="mt-0.5 text-xs text-zinc-500">No pending approvals or overdue tasks right now.</p>
+              </div>
+            ) : (
+              <ul className="space-y-2">
+                {attention.map((a) => {
+                  const t = TONES[a.tone];
+                  return (
+                    <li key={a.label}>
+                      <Link
+                        href={a.href}
+                        className="group flex items-center gap-3 rounded-xl border border-zinc-100 p-3 transition-all hover:border-zinc-200 hover:bg-zinc-50"
+                      >
+                        <span
+                          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${t.bg} ${t.fg}`}
+                        >
+                          <Icon d={a.icon} className="h-[18px] w-[18px]" />
+                        </span>
+                        <span className="min-w-0 flex-1 text-[13px] text-zinc-700">
+                          <span className="font-code font-bold text-zinc-900">{a.n}</span> {a.label}
+                        </span>
+                        <span className="rounded-lg bg-zinc-900 px-2.5 py-1 text-[11px] font-semibold text-white transition-colors group-hover:bg-red-600">
+                          {a.cta}
+                        </span>
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+
+          {/* Live Workforce Presence Radar Strip */}
+          <div className="mt-5 rounded-xl border border-zinc-200/80 bg-zinc-50/70 p-3.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold text-zinc-800">Live Shift Radar</span>
+              <Link href="/admin/work-sessions" className="font-semibold text-red-600 hover:text-red-700">
+                Sessions →
+              </Link>
+            </div>
+            <div className="mt-2.5 grid grid-cols-3 gap-2 text-center">
+              <div className="rounded-lg bg-white p-2 border border-zinc-200/60">
+                <p className="font-code text-base font-bold text-emerald-600">
+                  {s.activeSessions.length - s.idleSessions.length}
+                </p>
+                <p className="text-[10px] font-medium text-zinc-500">Active</p>
+              </div>
+              <div className="rounded-lg bg-white p-2 border border-zinc-200/60">
+                <p className="font-code text-base font-bold text-amber-600">{s.idleSessions.length}</p>
+                <p className="text-[10px] font-medium text-zinc-500">Idle</p>
+              </div>
+              <div className="rounded-lg bg-white p-2 border border-zinc-200/60">
+                <p className="font-code text-base font-bold text-red-600">{s.lateToday}</p>
+                <p className="text-[10px] font-medium text-zinc-500">Late Today</p>
+              </div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* ── Modules overview (every page) ── */}
+      {/* ── 3-Column Breakdown Bento: Task Pipeline Donut + Department Hours Donut + Client Rollout Studio ── */}
+      <section className="grid gap-6 lg:grid-cols-3">
+        <ChartCard
+          title="Task Pipeline Distribution"
+          subtitle={`${tasks.length} directives across all projects`}
+          actions={
+            <Link href="/admin/tasks" className="text-xs font-semibold text-red-600 hover:text-red-700">
+              All tasks →
+            </Link>
+          }
+        >
+          <DonutBreakdownChart
+            slices={s.statusDist}
+            centerLabel="Completion"
+            centerValue={`${tasks.length ? Math.round((s.completedTasks.length / tasks.length) * 100) : 0}%`}
+            description="Task pipeline breakdown across To do, In progress, In review, and Completed"
+          />
+        </ChartCard>
+
+        <ChartCard
+          title="Hours by Department (28d)"
+          subtitle="Share of logged hours across teams"
+          actions={
+            <Link href="/admin/reports" className="text-xs font-semibold text-red-600 hover:text-red-700">
+              Reports →
+            </Link>
+          }
+        >
+          {s.deptSlices.length === 0 ? (
+            <p className="py-12 text-center text-xs text-zinc-400">No department hours logged in this window.</p>
+          ) : (
+            <DonutBreakdownChart
+              slices={s.deptSlices}
+              centerLabel="28d Hours"
+              format={(v) => `${v}h`}
+              description="Logged hours by department over the last 28 days"
+            />
+          )}
+        </ChartCard>
+
+        <ChartCard
+          title="Client Rollout Studio"
+          subtitle={`${portalData.clientName} · ${portalData.projectTitle}`}
+          badge={
+            <span className="rounded-full bg-emerald-50 px-2 py-0.5 font-code text-[10px] font-semibold text-emerald-700">
+              3-Month Rollout
+            </span>
+          }
+          actions={
+            <Link
+              href="/client"
+              target="_blank"
+              className="rounded-lg border border-zinc-200 px-2.5 py-1 text-[11px] font-semibold text-zinc-700 hover:bg-zinc-50"
+            >
+              Client View ↗
+            </Link>
+          }
+        >
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-medium text-zinc-500">Feed &amp; Reels Sign-Off Progress</p>
+                <p className="mt-0.5 font-code text-2xl font-bold text-zinc-900">
+                  {portalStats.approvedPosts} / {portalStats.totalPosts}{" "}
+                  <span className="text-xs font-medium text-zinc-500">approved ({portalStats.pct}%)</span>
+                </p>
+              </div>
+              <span className="rounded-xl bg-red-50 px-3 py-1.5 font-code text-xs font-bold text-red-600">
+                {portalStats.readyPosts} in review
+              </span>
+            </div>
+
+            <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-100">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-red-600 to-emerald-500 transition-all duration-500"
+                style={{ width: `${portalStats.pct}%` }}
+              />
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 pt-1 text-center">
+              <div className="rounded-xl border border-zinc-200/70 bg-zinc-50/70 p-2.5">
+                <p className="font-code text-base font-bold text-zinc-900">
+                  {portalStats.approvedStories}/{portalStats.totalStories}
+                </p>
+                <p className="text-[10px] font-medium text-zinc-500">Stories Approved</p>
+              </div>
+              <div className="rounded-xl border border-zinc-200/70 bg-zinc-50/70 p-2.5">
+                <p className="font-code text-base font-bold text-amber-600">{portalStats.pendingMilestones}</p>
+                <p className="text-[10px] font-medium text-zinc-500">Pending Sign-Offs</p>
+              </div>
+              <div className="rounded-xl border border-zinc-200/70 bg-zinc-50/70 p-2.5">
+                <p className="font-code text-base font-bold text-red-600">{portalStats.revisionPosts}</p>
+                <p className="text-[10px] font-medium text-zinc-500">Edits Requested</p>
+              </div>
+            </div>
+
+            <Link
+              href="/admin/client-portal"
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-zinc-900 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-zinc-800"
+            >
+              Open Content Rollout Studio
+              <Icon d="M9 5l7 7-7 7" className="h-3.5 w-3.5" />
+            </Link>
+          </div>
+        </ChartCard>
+      </section>
+
+      {/* ── Active Projects Delivery Table + Live Activity & Online Roster ── */}
+      <section className="grid gap-6 xl:grid-cols-3">
+        <div className="ui-card overflow-hidden xl:col-span-2">
+          <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-4">
+            <div>
+              <h2 className="text-[15px] font-semibold text-zinc-900">Active Projects Delivery</h2>
+              <p className="text-xs text-zinc-500">Prioritized by directives awaiting review and completion progress</p>
+            </div>
+            <Link href="/admin/projects" className="text-xs font-semibold text-red-600 hover:text-red-700">
+              All projects →
+            </Link>
+          </div>
+
+          {s.projectRows.length === 0 ? (
+            <p className="py-12 text-center text-sm text-zinc-500">No active projects yet.</p>
+          ) : (
+            <div className="mft-table-wrapper">
+              <table className="w-full min-w-[560px] text-sm">
+                <thead className="border-b border-zinc-100 bg-zinc-50/90 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+                  <tr>
+                    <th className="px-5 py-3">Project / Client</th>
+                    <th className="px-3 py-3 text-right">Directives</th>
+                    <th className="px-3 py-3 text-right">Status</th>
+                    <th className="px-5 py-3 text-right">Delivery Progress</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100">
+                  {s.projectRows.map((p) => (
+                    <tr key={p.id} className="transition-colors hover:bg-zinc-50/80">
+                      <td className="px-5 py-3.5">
+                        <Link href={`/admin/projects?project=${encodeURIComponent(p.id)}`} className="flex items-center gap-3">
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-zinc-900 font-code text-xs font-bold text-white">
+                            {p.name.slice(0, 2).toUpperCase()}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="truncate font-semibold text-zinc-900">{p.name}</p>
+                            <p className="truncate text-xs text-zinc-500">{p.clientName || "Internal Workspace"}</p>
+                          </div>
+                        </Link>
+                      </td>
+                      <td className="px-3 py-3.5 text-right font-code text-xs tabular-nums text-zinc-700">
+                        <span className="font-bold text-zinc-900">{p.done}</span> / {p.total}
+                      </td>
+                      <td className="px-3 py-3.5 text-right">
+                        <div className="inline-flex flex-wrap justify-end gap-1">
+                          {p.review > 0 && (
+                            <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+                              {p.review} review
+                            </span>
+                          )}
+                          {p.overdueCount > 0 && (
+                            <span className="rounded-md bg-red-50 px-2 py-0.5 text-[11px] font-semibold text-red-700">
+                              {p.overdueCount} overdue
+                            </span>
+                          )}
+                          {p.review === 0 && p.overdueCount === 0 && (
+                            <span className="rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                              On track
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-5 py-3.5">
+                        <div className="flex items-center justify-end gap-2.5">
+                          <div className="h-2 w-28 overflow-hidden rounded-full bg-zinc-100">
+                            <div
+                              className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-400 transition-all duration-500"
+                              style={{ width: `${p.pct}%` }}
+                            />
+                          </div>
+                          <span className="w-9 text-right font-code text-xs font-bold tabular-nums text-zinc-800">
+                            {p.pct}%
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Who's Online + Recent Activity */}
+        <div className="space-y-6">
+          <div className="ui-card p-5">
+            <SectionHeader
+              title="Online Team Roster"
+              subtitle={`${s.onlineWorkers.length} of ${s.approvedWorkers.length} members active`}
+              href="/admin/workers"
+            />
+            {s.onlineWorkers.length === 0 ? (
+              <p className="py-6 text-center text-xs text-zinc-400">No active shifts right now.</p>
+            ) : (
+              <ul className="space-y-1.5">
+                {s.onlineWorkers.slice(0, 5).map((w) => {
+                  const openForWorker = s.openTasks.filter((t) =>
+                    (Array.isArray(t.assignedTo) ? t.assignedTo : [t.assignedTo]).includes(w.id),
+                  ).length;
+                  return (
+                    <li key={w.id} className="flex items-center gap-3 rounded-xl px-2 py-1.5 hover:bg-zinc-50">
+                      <span className="relative">
+                        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-900 font-code text-[11px] font-bold uppercase text-white">
+                          {(w.firstName?.[0] ?? "") + (w.lastName?.[0] ?? "")}
+                        </span>
+                        <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-white" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-xs font-semibold text-zinc-900">
+                          {workerName(w.id) || "Worker"}
+                        </span>
+                        <span className="block truncate text-[11px] capitalize text-zinc-500">
+                          {(w.role || w.department || "team member").replace(/-/g, " ")}
+                        </span>
+                      </span>
+                      <span className="rounded-md bg-zinc-100 px-2 py-0.5 font-code text-[10px] font-semibold text-zinc-600">
+                        {openForWorker} open
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+
+          <div className="ui-card p-5">
+            <SectionHeader title="Live Workspace Stream" subtitle="Recent events" href="/admin/activity" />
+            {s.activity.length === 0 ? (
+              <p className="py-6 text-center text-xs text-zinc-400">No recent activity.</p>
+            ) : (
+              <ol className="relative space-y-1.5 before:absolute before:bottom-2 before:left-[15px] before:top-2 before:w-px before:bg-zinc-200">
+                {s.activity.slice(0, 5).map((a) => {
+                  const t = TONES[a.tone];
+                  return (
+                    <li key={a.id}>
+                      <Link
+                        href={a.href}
+                        className="relative flex items-center gap-3 rounded-lg py-1.5 pr-2 transition-colors hover:bg-zinc-50"
+                      >
+                        <span
+                          className={`relative z-10 flex h-8 w-8 shrink-0 items-center justify-center rounded-full ring-4 ring-white ${t.bg} ${t.fg}`}
+                        >
+                          <Icon d={a.icon} className="h-3.5 w-3.5" />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-xs font-semibold text-zinc-900">{a.title}</span>
+                          <span className="block truncate text-[11px] text-zinc-500">{a.meta}</span>
+                        </span>
+                        <span className="shrink-0 font-code text-[10px] text-zinc-400">{timeAgo(a.at)}</span>
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ol>
+            )}
+          </div>
+        </div>
+      </section>
+
+      {/* ── Complete 12-Module Directory ── */}
       <section>
-        <SectionHeader title="All modules" subtitle="Quick snapshot of every area of the dashboard" />
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <SectionHeader title="Workspace Modules" subtitle="Direct access to every operational and HR control center" />
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {modules.map((m) => {
             const t = TONES[m.tone];
             return (
@@ -441,189 +1323,40 @@ export default function AdminOverviewPage() {
                 href={m.href}
                 target={m.external ? "_blank" : undefined}
                 rel={m.external ? "noopener noreferrer" : undefined}
-                className="ui-card ui-card-hover group flex flex-col p-5"
+                className="ui-card ui-card-hover group flex flex-col justify-between p-5"
               >
-                <div className="flex items-center gap-3">
-                  <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${t.bg} ${t.fg}`}>
-                    <Icon d={m.icon} />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="font-semibold text-zinc-900">{m.title}</p>
-                    <p className="truncate text-xs text-zinc-500">{m.desc}</p>
+                <div>
+                  <div className="flex items-center gap-3">
+                    <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${t.bg} ${t.fg}`}>
+                      <Icon d={m.icon} />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-semibold text-zinc-900">{m.title}</p>
+                      <p className="truncate text-xs text-zinc-500">{m.desc}</p>
+                    </div>
                   </div>
+                  {m.stats.length > 0 ? (
+                    <div className="mt-4 grid grid-cols-3 divide-x divide-zinc-100 rounded-xl border border-zinc-100 bg-zinc-50/70 py-2.5">
+                      {m.stats.map(([l, v]) => (
+                        <div key={l as string} className="px-2 text-center">
+                          <p className="font-code text-sm font-bold tabular-nums text-zinc-900">{v}</p>
+                          <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">{l}</p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="mt-4 rounded-xl border border-zinc-100 bg-zinc-50/70 py-3.5 text-center text-xs text-zinc-500">
+                      {m.external ? "Opens external CMS ↗" : "View full audit trail →"}
+                    </div>
+                  )}
                 </div>
-                {m.stats.length > 0 ? (
-                  <div className="mt-4 grid grid-cols-3 divide-x divide-zinc-100 rounded-lg bg-zinc-50 py-2.5">
-                    {m.stats.map(([l, v]) => (
-                      <div key={l as string} className="px-2 text-center">
-                        <p className="text-base font-bold tabular-nums text-zinc-900">{v}</p>
-                        <p className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">{l}</p>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="mt-4 rounded-lg bg-zinc-50 py-4 text-center text-xs text-zinc-500">Opens in a new tab ↗</div>
-                )}
-                <span className="mt-4 inline-flex items-center gap-1 text-xs font-medium text-zinc-500 transition-colors group-hover:text-red-600">
-                  Open {m.title} <Icon d="M9 5l7 7-7 7" className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
+                <span className="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-zinc-500 transition-colors group-hover:text-red-600">
+                  Open {m.title}
+                  <Icon d="M9 5l7 7-7 7" className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
                 </span>
               </Link>
             );
           })}
-        </div>
-      </section>
-
-      {/* ── Projects + Task distribution + Online ── */}
-      <section className="grid gap-6 xl:grid-cols-3">
-        <div className="ui-card p-5 xl:col-span-2">
-          <SectionHeader title="Active projects" subtitle="Sorted by items in review" href="/admin/projects" />
-          {s.projectRows.length === 0 ? (
-            <p className="py-10 text-center text-sm text-zinc-500">No active projects yet.</p>
-          ) : (
-            <div className="divide-y divide-zinc-100">
-              {s.projectRows.map((p) => (
-                <Link key={p.id} href="/admin/projects" className="flex items-center gap-4 py-3 transition-colors hover:bg-zinc-50/70 -mx-2 px-2 rounded-lg">
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-zinc-900 text-xs font-bold text-white">
-                    {p.name.slice(0, 2).toUpperCase()}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <p className="truncate text-sm font-semibold text-zinc-900">{p.name}</p>
-                      {p.review > 0 && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">{p.review} in review</span>}
-                    </div>
-                    <p className="truncate text-xs text-zinc-500">{p.clientName || "Internal"} · {p.done}/{p.total} tasks</p>
-                  </div>
-                  <div className="hidden w-40 sm:block">
-                    <div className="h-2 overflow-hidden rounded-full bg-zinc-100">
-                      <div className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-400 transition-all duration-700" style={{ width: `${p.pct}%` }} />
-                    </div>
-                  </div>
-                  <span className="w-10 text-right text-sm font-semibold tabular-nums text-zinc-700">{p.pct}%</span>
-                </Link>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="ui-card p-5">
-          <SectionHeader title="Task pipeline" subtitle={`${tasks.length} tasks overall`} href="/admin/tasks" />
-          <div className="flex flex-col sm:flex-row items-center gap-6">
-            <div className="relative h-36 w-36 shrink-0">
-              <svg viewBox="0 0 120 120" className="h-36 w-36 -rotate-90">
-                <circle cx="60" cy="60" r="48" fill="none" stroke="#e4e4e7" strokeWidth="14" className="opacity-40" />
-                {(() => {
-                  const total = Math.max(1, tasks.length);
-                  const circumference = 2 * Math.PI * 48;
-                  let cum = 0;
-                  return s.statusDist.map((x) => {
-                    if (x.n <= 0) return null;
-                    const dash = (x.n / total) * circumference;
-                    const offset = -(cum / total) * circumference;
-                    cum += x.n;
-                    return (
-                      <circle
-                        key={x.key}
-                        cx="60"
-                        cy="60"
-                        r="48"
-                        fill="none"
-                        stroke={x.color}
-                        strokeWidth="14"
-                        strokeDasharray={`${dash} ${circumference - dash}`}
-                        strokeDashoffset={offset}
-                        className="transition-all duration-700"
-                      />
-                    );
-                  });
-                })()}
-              </svg>
-              <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-2xl font-bold tabular-nums text-zinc-900">
-                  {tasks.length ? Math.round((s.completedTasks.length / tasks.length) * 100) : 0}%
-                </span>
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">done</span>
-              </div>
-            </div>
-            <ul className="flex-1 w-full space-y-2.5">
-              {s.statusDist.map((x) => {
-                const pct = tasks.length ? Math.round((x.n / tasks.length) * 100) : 0;
-                return (
-                  <li key={x.key} className="space-y-1 text-xs">
-                    <div className="flex items-center gap-2">
-                      <span className="h-2.5 w-2.5 rounded-full" style={{ background: x.color }} />
-                      <span className="flex-1 font-medium text-zinc-600">{x.label}</span>
-                      <span className="font-bold tabular-nums text-zinc-900">{x.n}</span>
-                      <span className="w-8 text-right text-[10px] tabular-nums text-zinc-400">{pct}%</span>
-                    </div>
-                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-100">
-                      <div
-                        className="h-full rounded-full transition-all duration-700"
-                        style={{ width: `${pct}%`, backgroundColor: x.color }}
-                      />
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        </div>
-      </section>
-
-      {/* ── Activity + Online ── */}
-      <section className="grid gap-6 xl:grid-cols-3">
-        <div className="ui-card p-5 xl:col-span-2">
-          <SectionHeader title="Recent activity" subtitle="Latest events across tasks, leads and requests" />
-          {s.activity.length === 0 ? (
-            <p className="py-10 text-center text-sm text-zinc-500">No activity yet.</p>
-          ) : (
-            <ol className="relative space-y-1 before:absolute before:bottom-2 before:left-[17px] before:top-2 before:w-px before:bg-zinc-200">
-              {s.activity.map((a) => {
-                const t = TONES[a.tone];
-                return (
-                  <li key={a.id}>
-                    <Link href={a.href} className="relative flex items-center gap-3 rounded-lg py-2 pr-2 transition-colors hover:bg-zinc-50">
-                      <span className={`relative z-10 flex h-9 w-9 shrink-0 items-center justify-center rounded-full ring-4 ring-white ${t.bg} ${t.fg}`}>
-                        <Icon d={a.icon} className="h-4 w-4" />
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-[13px] font-medium text-zinc-900">{a.title}</span>
-                        <span className="block truncate text-xs text-zinc-500">{a.meta}</span>
-                      </span>
-                      <span className="shrink-0 text-[11px] text-zinc-400">{timeAgo(a.at)}</span>
-                    </Link>
-                  </li>
-                );
-              })}
-            </ol>
-          )}
-        </div>
-
-        <div className="ui-card p-5">
-          <SectionHeader title="Who's online" subtitle={`${s.onlineWorkers.length} of ${s.approvedWorkers.length} team members`} href="/admin/workers" />
-          {s.onlineWorkers.length === 0 ? (
-            <p className="py-10 text-center text-sm text-zinc-500">Nobody is online right now.</p>
-          ) : (
-            <ul className="space-y-1">
-              {s.onlineWorkers.slice(0, 8).map((w) => {
-                const openForWorker = s.openTasks.filter((t) => (Array.isArray(t.assignedTo) ? t.assignedTo : [t.assignedTo]).includes(w.id)).length;
-                return (
-                  <li key={w.id} className="flex items-center gap-3 rounded-lg px-1 py-2">
-                    <span className="relative">
-                      <span className="flex h-9 w-9 items-center justify-center rounded-full bg-zinc-900 text-[11px] font-bold uppercase text-white">
-                        {(w.firstName?.[0] ?? "") + (w.lastName?.[0] ?? "")}
-                      </span>
-                      <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-emerald-500 ring-2 ring-white" />
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[13px] font-medium text-zinc-900">{workerName(w.id) || "Worker"}</span>
-                      <span className="block truncate text-xs capitalize text-zinc-500">{(w.role || w.department || "team member").replace(/-/g, " ")}</span>
-                    </span>
-                    <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-medium text-zinc-600">{openForWorker} open</span>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
         </div>
       </section>
     </div>
