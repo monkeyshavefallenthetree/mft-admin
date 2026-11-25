@@ -14,6 +14,7 @@ import { ICONS } from "@/lib/admin/nav";
 import ModalPortal from "@/components/admin/ui/ModalPortal";
 import ExceptionPolicyInsight, { checkAnnualLeave, checkMonthlyPermission, type InsightWorker } from "@/components/admin/hr/ExceptionPolicyInsight";
 import { chargeableMinutes, policyConfigFromSettings } from "@/lib/admin/hrPolicy2026";
+import { cairoYmd, cairoYmdAtMinutes } from "@/lib/admin/cairoTime";
 import { DEFAULT_HR_SETTINGS, type HrSettings } from "@/lib/admin/hrReports";
 import { subscribeHrSettings } from "@/lib/admin/hrSettings";
 
@@ -280,10 +281,10 @@ export default function AdminExceptionsPage() {
         }
         // When an external mission is approved, credit its hours in workSessions for that date & unlock shift
         if (e?.type === "external_mission" && e.workerId) {
-          const missionDate = e.exceptionDate || new Date().toISOString().split("T")[0];
+          const missionDate = e.exceptionDate || cairoYmd();
           const hrs = Math.max(0.5, Number(e.missionHours) || Math.round(((Number(e.lateMinutes) || 60) / 60) * 10) / 10);
           const missionMs = Math.round(hrs * 3600 * 1000);
-          const startAt = new Date(`${missionDate}T10:00:00`);
+          const startAt = cairoYmdAtMinutes(missionDate, 10 * 60) ?? new Date(`${missionDate}T10:00:00`);
           const endAt = new Date(startAt.getTime() + missionMs);
           batch.set(
             doc(db, "workSessions", `mission_${e.id}`),
@@ -339,7 +340,7 @@ export default function AdminExceptionsPage() {
             workerName: e.workerName || "Worker",
             type: "advance",
             amount: Number(e.requestedAmount),
-            date: e.exceptionDate || new Date().toISOString().split("T")[0],
+            date: e.exceptionDate || cairoYmd(),
             reason: `[Approved Advance Request] ${e.reason || ""}`.trim(),
             status: "applied",
             createdAt: serverTimestamp(),
@@ -597,7 +598,7 @@ export default function AdminExceptionsPage() {
         e.adminResponse || "",
       ]);
     }
-    downloadCsv(rows, `exception_requests_${new Date().toISOString().split("T")[0]}.csv`);
+    downloadCsv(rows, `exception_requests_${cairoYmd()}.csv`);
     toast.success(`Exported ${filtered.length} requests`);
   };
 

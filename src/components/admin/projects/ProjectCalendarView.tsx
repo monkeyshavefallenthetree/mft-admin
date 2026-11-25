@@ -21,7 +21,7 @@ interface Props {
   onOpenCreateTask: (prefillDate?: string) => void;
 }
 
-const DAY_NAMES = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
+const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 export default function ProjectCalendarView({
   tasks,
@@ -34,10 +34,12 @@ export default function ProjectCalendarView({
   const cursorDate = selectedDate || new Date();
   const [viewMonth, setViewMonth] = useState(new Date(cursorDate.getFullYear(), cursorDate.getMonth(), 1));
 
-  const workerMap = new Map<string, Worker>();
-  workers.forEach((w) => workerMap.set(w.id, w));
+  const workerMap = useMemo(() => {
+    const map = new Map<string, Worker>();
+    workers.forEach((w) => map.set(w.id, w));
+    return map;
+  }, [workers]);
 
-  // Map tasks by date key: YYYY-M-D (both startDate and dueDate)
   const tasksByDate = useMemo(() => {
     const map = new Map<string, TaskRow[]>();
     const addToDate = (d: Date | null, t: TaskRow) => {
@@ -56,7 +58,6 @@ export default function ProjectCalendarView({
     return map;
   }, [tasks]);
 
-  // Build grid
   const daysInGrid = useMemo(() => {
     const year = viewMonth.getFullYear();
     const month = viewMonth.getMonth();
@@ -68,21 +69,18 @@ export default function ProjectCalendarView({
 
     const cells: { date: Date; isCurrentMonth: boolean; key: string; dayTasks: TaskRow[] }[] = [];
 
-    // Padding before
     for (let i = 0; i < startOffset; i++) {
       const d = new Date(year, month, 1 - (startOffset - i));
       const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
       cells.push({ date: d, isCurrentMonth: false, key, dayTasks: tasksByDate.get(key) || [] });
     }
 
-    // Days in current month
     for (let i = 1; i <= lastDay.getDate(); i++) {
       const d = new Date(year, month, i);
       const key = `${year}-${month}-${i}`;
       cells.push({ date: d, isCurrentMonth: true, key, dayTasks: tasksByDate.get(key) || [] });
     }
 
-    // Padding after
     const remainder = cells.length % 7;
     if (remainder > 0) {
       const toAdd = 7 - remainder;
@@ -98,8 +96,12 @@ export default function ProjectCalendarView({
 
   const prevMonth = () => setViewMonth(new Date(viewMonth.getFullYear(), viewMonth.getMonth() - 1, 1));
   const nextMonth = () => setViewMonth(new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 1));
+  const jumpToday = () => {
+    const now = new Date();
+    setViewMonth(new Date(now.getFullYear(), now.getMonth(), 1));
+    onSelectDate(now);
+  };
 
-  // Selected date tasks
   const selectedDateTasks = useMemo(() => {
     if (!selectedDate) return [];
     const key = `${selectedDate.getFullYear()}-${selectedDate.getMonth()}-${selectedDate.getDate()}`;
@@ -114,39 +116,47 @@ export default function ProjectCalendarView({
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
       {/* Calendar Grid (2 Cols) */}
-      <div className="lg:col-span-2 bg-white border-2 border-zinc-900 rounded-lg p-5 shadow-[3px_3px_0px_0px_#09090b]">
-        {/* Calendar Nav */}
-        <div className="flex items-center justify-between pb-4 mb-4 border-b border-zinc-200">
-          <button
-            type="button"
-            onClick={prevMonth}
-            className="px-3 py-1 bg-zinc-100 hover:bg-zinc-900 hover:text-white rounded text-xs font-mono font-bold transition-colors cursor-pointer"
-          >
-            &lt; PREV
-          </button>
-          <h2 className="text-xl font-oswald font-bold uppercase tracking-wider text-zinc-950">
+      <div className="lg:col-span-2 ui-card p-5">
+        <div className="flex items-center justify-between pb-4 mb-4 border-b border-zinc-100">
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={prevMonth}
+              className="brutal-btn-outline px-2.5 py-1.5"
+              aria-label="Previous month"
+            >
+              ← Prev
+            </button>
+            <button
+              type="button"
+              onClick={jumpToday}
+              className="brutal-btn-outline px-2.5 py-1.5"
+            >
+              Today
+            </button>
+          </div>
+          <h2 className="text-base sm:text-lg font-bold tracking-tight text-zinc-950">
             {viewMonth.toLocaleString("default", { month: "long", year: "numeric" })}
           </h2>
           <button
             type="button"
             onClick={nextMonth}
-            className="px-3 py-1 bg-zinc-100 hover:bg-zinc-900 hover:text-white rounded text-xs font-mono font-bold transition-colors cursor-pointer"
+            className="brutal-btn-outline px-2.5 py-1.5"
+            aria-label="Next month"
           >
-            NEXT &gt;
+            Next →
           </button>
         </div>
 
-        {/* Days of week */}
         <div className="grid grid-cols-7 mb-2">
           {DAY_NAMES.map((name) => (
-            <div key={name} className="text-center font-mono text-[10px] font-bold text-zinc-400 tracking-wider">
+            <div key={name} className="text-center text-[11px] font-semibold uppercase text-zinc-400 tracking-wider">
               {name}
             </div>
           ))}
         </div>
 
-        {/* Calendar Cells */}
-        <div className="grid grid-cols-7 gap-1">
+        <div className="grid grid-cols-7 gap-1.5">
           {daysInGrid.map((cell, idx) => {
             const isSelected =
               selectedDate &&
@@ -166,23 +176,23 @@ export default function ProjectCalendarView({
               <div
                 key={idx}
                 onClick={() => onSelectDate(isSelected ? null : cell.date)}
-                className={`min-h-[72px] sm:min-h-[85px] p-1.5 rounded border transition-all cursor-pointer flex flex-col justify-between ${
+                className={`min-h-[76px] sm:min-h-[90px] p-2 rounded-xl border transition-all cursor-pointer flex flex-col justify-between ${
                   isSelected
-                    ? "bg-red-50 border-red-600 ring-2 ring-red-600 shadow-xs"
+                    ? "bg-red-50/70 border-red-500 ring-2 ring-red-500/20"
                     : isToday
-                    ? "bg-zinc-50 border-zinc-900 font-bold"
+                    ? "bg-zinc-50 border-zinc-900"
                     : cell.isCurrentMonth
-                    ? "bg-white border-zinc-200 hover:border-zinc-400 hover:bg-zinc-50/50"
-                    : "bg-zinc-50/40 border-transparent opacity-40 hover:opacity-80"
+                    ? "bg-white border-zinc-200/80 hover:border-zinc-300 hover:bg-zinc-50/50"
+                    : "bg-zinc-50/40 border-transparent opacity-40 hover:opacity-75"
                 }`}
               >
                 <div className="flex items-center justify-between">
                   <span
-                    className={`text-xs font-mono font-bold ${
+                    className={`font-code text-xs font-semibold ${
                       isSelected
-                        ? "text-red-600"
+                        ? "text-red-600 font-bold"
                         : isToday
-                        ? "text-zinc-950 underline"
+                        ? "bg-zinc-900 text-white px-1.5 py-0.2 rounded-md"
                         : "text-zinc-700"
                     }`}
                   >
@@ -191,12 +201,12 @@ export default function ProjectCalendarView({
 
                   {cell.dayTasks.length > 0 && (
                     <span
-                      className={`text-[9px] font-bold font-mono px-1 rounded ${
+                      className={`font-code text-[9px] font-bold px-1.5 py-0.2 rounded-full ${
                         hasUrgent
                           ? "bg-red-600 text-white"
                           : hasPending
                           ? "bg-amber-500 text-white"
-                          : "bg-zinc-200 text-zinc-700"
+                          : "bg-zinc-100 text-zinc-700"
                       }`}
                     >
                       {cell.dayTasks.length}
@@ -204,8 +214,7 @@ export default function ProjectCalendarView({
                   )}
                 </div>
 
-                {/* Day Tasks Preview Chips */}
-                <div className="space-y-0.5 mt-1 overflow-hidden">
+                <div className="space-y-1 mt-1.5 overflow-hidden">
                   {cell.dayTasks.slice(0, 2).map((t) => (
                     <div
                       key={t.id}
@@ -213,14 +222,14 @@ export default function ProjectCalendarView({
                         e.stopPropagation();
                         onSelectTask(t);
                       }}
-                      className={`text-[9px] font-mono px-1 py-0.2 rounded truncate uppercase font-bold border ${
+                      className={`text-[10px] px-1.5 py-0.5 rounded-md truncate font-medium border ${
                         t.status === "completed"
-                          ? "bg-emerald-50 text-emerald-800 border-emerald-200 line-through"
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-200 line-through"
                           : t.status === "pending-approval"
-                          ? "bg-amber-100 text-amber-900 border-amber-300"
+                          ? "bg-amber-50 text-amber-800 border-amber-200"
                           : t.priority === "urgent"
-                          ? "bg-red-100 text-red-900 border-red-300"
-                          : "bg-zinc-100 text-zinc-800 border-zinc-200"
+                          ? "bg-red-50 text-red-800 border-red-200"
+                          : "bg-zinc-100/80 text-zinc-800 border-zinc-200/80"
                       }`}
                       title={t.title}
                     >
@@ -228,7 +237,7 @@ export default function ProjectCalendarView({
                     </div>
                   ))}
                   {cell.dayTasks.length > 2 && (
-                    <p className="text-[8px] font-mono font-bold text-zinc-500 text-center">
+                    <p className="font-code text-[9px] font-semibold text-zinc-400 text-center">
                       +{cell.dayTasks.length - 2} more
                     </p>
                   )}
@@ -238,35 +247,41 @@ export default function ProjectCalendarView({
           })}
         </div>
 
-        {/* Footer */}
-        <div className="mt-4 pt-3 border-t border-zinc-200 flex items-center justify-between text-xs font-mono text-zinc-500">
-          <span>{selectedDate ? `Selected: ${selectedDate.toLocaleDateString()}` : "Showing whole month"}</span>
+        <div className="mt-4 pt-3 border-t border-zinc-100 flex items-center justify-between text-xs text-zinc-500">
+          <span>{selectedDate ? `Selected: ${selectedDate.toLocaleDateString()}` : "Showing full month schedule"}</span>
           {selectedDate && (
             <button
               type="button"
               onClick={() => onSelectDate(null)}
-              className="text-red-600 font-bold hover:underline cursor-pointer"
+              className="text-red-600 font-semibold hover:underline cursor-pointer"
             >
-              [ Clear Date Filter ]
+              Clear date filter
             </button>
           )}
         </div>
       </div>
 
       {/* Selected Day Inspector Panel (1 Col) */}
-      <div className="bg-white border-2 border-zinc-900 rounded-lg p-5 shadow-[3px_3px_0px_0px_#09090b]">
-        <div className="flex items-center justify-between pb-3 mb-4 border-b border-zinc-200">
+      <div className="ui-card p-5">
+        <div className="flex items-center justify-between pb-3.5 mb-4 border-b border-zinc-100">
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-400 font-mono">Day Schedule</p>
-            <h3 className="text-lg font-oswald font-bold uppercase text-zinc-950">
-              {selectedDate ? selectedDate.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" }) : "Select a Date"}
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Day Schedule</p>
+            <h3 className="text-base font-bold text-zinc-950 mt-0.5">
+              {selectedDate
+                ? selectedDate.toLocaleDateString("en-US", {
+                    weekday: "short",
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })
+                : "Select a Date"}
             </h3>
           </div>
           {selectedDate && (
             <button
               type="button"
               onClick={() => onOpenCreateTask(selectedDateStr)}
-              className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-[11px] font-bold uppercase rounded shadow-xs cursor-pointer"
+              className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-xl shadow-2xs cursor-pointer"
             >
               + Task
             </button>
@@ -274,18 +289,18 @@ export default function ProjectCalendarView({
         </div>
 
         {!selectedDate ? (
-          <div className="py-12 text-center text-xs text-zinc-400 font-mono">
-            Click on any date in the calendar to inspect assigned directives and schedule work.
+          <div className="py-12 text-center text-xs text-zinc-400">
+            Select any date on the calendar to inspect scheduled directives or assign new work.
           </div>
         ) : selectedDateTasks.length === 0 ? (
           <div className="py-10 text-center">
-            <p className="text-xs text-zinc-500 font-mono">No tasks scheduled for this day.</p>
+            <p className="text-xs text-zinc-500">No tasks scheduled for this date.</p>
             <button
               type="button"
               onClick={() => onOpenCreateTask(selectedDateStr)}
-              className="mt-3 px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-bold uppercase rounded cursor-pointer"
+              className="mt-3 brutal-btn"
             >
-              Schedule Task for this Date
+              Schedule Task for Date
             </button>
           </div>
         ) : (
@@ -298,18 +313,18 @@ export default function ProjectCalendarView({
                 <div
                   key={t.id}
                   onClick={() => onSelectTask(t)}
-                  className="p-3 bg-zinc-50 border border-zinc-200 rounded hover:border-zinc-900 transition-all cursor-pointer group"
+                  className="p-3.5 bg-zinc-50/70 border border-zinc-200/80 rounded-xl hover:border-zinc-400 transition-all cursor-pointer group"
                 >
                   <div className="flex items-center justify-between gap-1 mb-1.5">
                     <span
-                      className={`text-[9px] font-bold uppercase px-1.5 py-0.2 rounded border ${
+                      className={`text-[10px] font-semibold uppercase px-2 py-0.2 rounded-full border ${
                         STATUS_CONFIG[t.status]?.badge || "bg-zinc-100 text-zinc-700 border-zinc-200"
                       }`}
                     >
                       {STATUS_CONFIG[t.status]?.label || t.status}
                     </span>
                     <span
-                      className={`text-[9px] font-bold uppercase px-1.5 py-0.2 rounded border ${
+                      className={`text-[10px] font-semibold uppercase px-2 py-0.2 rounded-full border ${
                         PRIORITY_CONFIG[t.priority]?.badge || "bg-zinc-100 text-zinc-600 border-zinc-200"
                       }`}
                     >
@@ -317,25 +332,25 @@ export default function ProjectCalendarView({
                     </span>
                   </div>
 
-                  <h4 className="text-xs font-bold uppercase text-zinc-950 group-hover:text-red-600 transition-colors">
+                  <h4 className="text-xs font-semibold text-zinc-950 group-hover:text-red-600 transition-colors">
                     {t.title}
                   </h4>
 
                   {t.description && (
-                    <p className="text-[11px] text-zinc-500 font-mono line-clamp-2 mt-1">
+                    <p className="text-[11px] text-zinc-500 line-clamp-2 mt-1">
                       {stripRichHtml(t.description)}
                     </p>
                   )}
 
                   {(Boolean(t.startDate) || Boolean(t.dueDate)) && (
-                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] font-mono">
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5 font-code text-[10px]">
                       {Boolean(t.startDate) && (
-                        <span className="px-1.5 py-0.2 rounded bg-sky-50 text-sky-700 border border-sky-200 font-bold">
+                        <span className="px-2 py-0.5 rounded-md bg-sky-50 text-sky-700 border border-sky-200 font-semibold">
                           ▶ Start: {formatSmartDate(t.startDate).label}
                         </span>
                       )}
                       {Boolean(t.dueDate) && (
-                        <span className="px-1.5 py-0.2 rounded bg-zinc-100 text-zinc-700 border border-zinc-200 font-bold">
+                        <span className="px-2 py-0.5 rounded-md bg-zinc-100 text-zinc-700 border border-zinc-200 font-semibold">
                           📅 Due: {formatSmartDate(t.dueDate).label}
                         </span>
                       )}
@@ -343,9 +358,9 @@ export default function ProjectCalendarView({
                   )}
 
                   {taskWorkers.length > 0 && (
-                    <div className="mt-2 pt-2 border-t border-zinc-200 flex items-center gap-1.5 text-[10px] text-zinc-600 font-mono">
+                    <div className="mt-2.5 pt-2 border-t border-zinc-200/70 flex items-center gap-1.5 text-[11px] text-zinc-600">
                       <span>👤</span>
-                      <span>{taskWorkers.map((w) => w.firstName).join(", ")}</span>
+                      <span className="font-medium">{taskWorkers.map((w) => w.firstName).join(", ")}</span>
                     </div>
                   )}
                 </div>

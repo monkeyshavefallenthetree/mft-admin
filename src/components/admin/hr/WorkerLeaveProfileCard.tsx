@@ -230,8 +230,8 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
   };
 
   return (
-    <div dir={dir} className="border-2 border-zinc-900 dark:border-zinc-700 p-4 bg-white dark:bg-zinc-900 rounded-lg space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 dark:border-zinc-800 pb-2.5">
+    <div dir={dir} className="ui-card p-5 space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 dark:border-zinc-800 pb-3">
         <div>
           <h4 className="font-bold text-xs uppercase text-zinc-950 dark:text-white flex items-center gap-2">
             <span>🗓️</span>
@@ -250,7 +250,7 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
           </p>
         </div>
         {preview && (
-          <span className="px-2.5 py-1 rounded bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-[11px] font-bold">
+          <span className="px-2.5 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 text-[11px] font-semibold">
             {isAr ? leavePhaseLabelAr(preview) : leavePhaseLabelEn(preview)} ·{" "}
             {isAr ? `${preview.serviceMonths} شهر خدمة` : `${preview.serviceMonths} mo tenure`}
           </span>
@@ -258,8 +258,8 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
       </div>
 
       {/* Quick Tenure Presets for Existing Workers */}
-      <div className="flex flex-wrap items-center gap-1.5 text-[11px] bg-zinc-50 dark:bg-zinc-800/50 p-2.5 rounded border border-zinc-200 dark:border-zinc-700">
-        <span className="font-bold text-zinc-600 dark:text-zinc-300">
+      <div className="flex flex-wrap items-center gap-1.5 text-[11px] bg-zinc-50 dark:bg-zinc-800/50 p-2.5 rounded-xl border border-zinc-200/80 dark:border-zinc-800">
+        <span className="font-semibold text-zinc-600 dark:text-zinc-300">
           {t("⚡ اختصارات سريعة لتاريخ التعيين:", "⚡ Quick tenure presets:")}
         </span>
         {[
@@ -275,7 +275,7 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
               setHireDate(p.hire);
               if (!attendanceStartDate) setAttendanceStartDate(p.sys);
             }}
-            className="px-2.5 py-1 border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 hover:bg-red-600 hover:text-white hover:border-red-600 font-bold rounded cursor-pointer transition-colors"
+            className="px-2.5 py-1 border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 hover:bg-red-600 hover:text-white hover:border-red-600 font-semibold rounded-lg cursor-pointer transition-colors"
           >
             {isAr ? p.ar : p.en}
           </button>
@@ -284,10 +284,10 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
 
       {/* Row 1: Joining Date & System Attendance Start Date */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-        <label className="block p-3 bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700 rounded">
-          <span className="text-zinc-800 dark:text-zinc-200 font-bold flex items-center justify-between">
+        <label className="block p-3.5 bg-zinc-50/70 dark:bg-zinc-800/40 border border-zinc-200/80 dark:border-zinc-800 rounded-xl">
+          <span className="text-zinc-800 dark:text-zinc-200 font-semibold flex items-center justify-between">
             <span>{t("١. تاريخ التعيين الفعلي بالشركة", "1. Company Joining Date")}</span>
-            <span className="text-[10px] font-normal text-red-600">
+            <span className="text-[10px] font-medium text-red-600">
               {t("للإجازات وفترة الاختبار", "Leave & Probation")}
             </span>
           </span>
@@ -296,7 +296,7 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
             id={`worker-hire-date-${worker.id}`}
             value={hireDate}
             onChange={(e) => setHireDate(e.target.value)}
-            className="mt-1.5 w-full bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 px-2.5 py-1.5 font-bold rounded focus:outline-none focus:ring-2 focus:ring-red-600"
+            className="mt-1.5 w-full brutal-input px-2.5 py-1.5 font-semibold"
           />
           {!hireDate && fallback ? (
             <span className="block mt-1 text-[10px] text-amber-600 font-medium">
@@ -315,13 +315,13 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
           )}
         </label>
 
-        <label className="block p-3 bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-zinc-700 rounded">
-          <span className="text-zinc-800 dark:text-zinc-200 font-bold flex items-center justify-between">
+        <label className="block p-3.5 bg-zinc-50/70 dark:bg-zinc-800/40 border border-zinc-200/80 dark:border-zinc-800 rounded-xl">
+          <span className="text-zinc-800 dark:text-zinc-200 font-semibold flex items-center justify-between">
             <span>{t("٢. تاريخ بدء حساب الحضور بالنظام", "2. System Attendance Start Date")}</span>
             <button
               type="button"
               onClick={() => setAttendanceStartDate(todayYmd)}
-              className="text-[10px] text-emerald-700 dark:text-emerald-400 underline cursor-pointer font-bold"
+              className="text-[10px] text-emerald-700 dark:text-emerald-400 underline cursor-pointer font-semibold"
             >
               {t(`اجعله اليوم (${todayYmd})`, `Set to Today (${todayYmd})`)}
             </button>
@@ -331,7 +331,7 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
             id={`worker-attendance-start-${worker.id}`}
             value={attendanceStartDate}
             onChange={(e) => setAttendanceStartDate(e.target.value)}
-            className="mt-1.5 w-full bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 px-2.5 py-1.5 font-bold rounded focus:outline-none focus:ring-2 focus:ring-red-600"
+            className="mt-1.5 w-full brutal-input px-2.5 py-1.5 font-semibold"
           />
           <span className="block mt-1 text-[10px] text-zinc-500">
             {t(
@@ -343,12 +343,12 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
       </div>
 
       {/* Row 1.5: Labor Law Option for First-Year Annual Leave (15 days vs Old Labor Law 21 days) */}
-      <div className="p-3 bg-sky-50/50 dark:bg-sky-950/20 border border-sky-200 dark:border-sky-900 rounded space-y-2 text-xs">
+      <div className="p-3.5 bg-sky-50/50 dark:bg-sky-950/20 border border-sky-200/80 dark:border-sky-900/60 rounded-xl space-y-2.5 text-xs">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-zinc-900 dark:text-zinc-100 font-bold">
+          <span className="text-zinc-900 dark:text-zinc-100 font-semibold">
             {t("⚖️ نظام قانون العمل للإجازة السنوية (أول سنة):", "⚖️ Labor Law Entitlement Mode (First Year):")}
           </span>
-          <span className="text-[10px] text-sky-700 dark:text-sky-300 font-bold">
+          <span className="text-[10px] text-sky-700 dark:text-sky-300 font-semibold">
             {leaveLawType === "legacy_21"
               ? t("قانون عمل قديم: 21 يوم من أول سنة (1.75 يوم/شهر)", "Old Labor Law: 21 days from Year 1 (1.75d/mo)")
               : t("قانون العمل الجديد: 15 يوم أول سنة ثم 21 يوم", "New Law: 15 days in Year 1, then 21 days")}
@@ -358,15 +358,15 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
           <button
             type="button"
             onClick={() => setLeaveLawType("new_15")}
-            className={`text-start p-2.5 rounded border-2 transition-all cursor-pointer ${
+            className={`text-start p-3 rounded-xl border transition-all cursor-pointer ${
               leaveLawType === "new_15"
-                ? "border-red-600 bg-red-50/70 dark:bg-red-950/30 text-zinc-950 dark:text-white shadow-[2px_2px_0px_0px_#dc2626]"
-                : "border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 hover:border-zinc-500"
+                ? "border-red-500 bg-red-50/70 dark:bg-red-950/30 text-zinc-950 dark:text-white ring-2 ring-red-500/20"
+                : "border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 hover:border-zinc-400"
             }`}
           >
-            <div className="font-bold flex items-center justify-between">
+            <div className="font-semibold flex items-center justify-between">
               <span>{t("📋 قانون العمل الجديد (15 يوم أول سنة)", "📋 Standard Law (15 days in Year 1)")}</span>
-              {leaveLawType === "new_15" && <span className="text-red-600 font-black">✓</span>}
+              {leaveLawType === "new_15" && <span className="text-red-600 font-bold">✓</span>}
             </div>
             <p className="text-[10px] text-zinc-500 dark:text-zinc-400 mt-1">
               {t(
@@ -379,15 +379,15 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
           <button
             type="button"
             onClick={() => setLeaveLawType("legacy_21")}
-            className={`text-start p-2.5 rounded border-2 transition-all cursor-pointer ${
+            className={`text-start p-3 rounded-xl border transition-all cursor-pointer ${
               leaveLawType === "legacy_21"
-                ? "border-red-600 bg-red-50/70 dark:bg-red-950/30 text-zinc-950 dark:text-white shadow-[2px_2px_0px_0px_#dc2626]"
-                : "border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 hover:border-zinc-500"
+                ? "border-red-500 bg-red-50/70 dark:bg-red-950/30 text-zinc-950 dark:text-white ring-2 ring-red-500/20"
+                : "border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 hover:border-zinc-400"
             }`}
           >
-            <div className="font-bold flex items-center justify-between">
+            <div className="font-semibold flex items-center justify-between">
               <span>{t("⚖️ قانون عمل قديم (21 يوم أول سنة بدل 15)", "⚖️ Old Labor Law (21 days in Year 1 instead of 15)")}</span>
-              {leaveLawType === "legacy_21" && <span className="text-red-600 font-black">✓</span>}
+              {leaveLawType === "legacy_21" && <span className="text-red-600 font-bold">✓</span>}
             </div>
             <p className="text-[10px] text-zinc-500 dark:text-zinc-400 mt-1">
               {t(
@@ -400,11 +400,11 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
       </div>
 
       {/* Row 2: Compensation (Hourly Rate & Monthly Salary) */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs p-3 bg-emerald-50/40 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900 rounded">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs p-3.5 bg-emerald-50/40 dark:bg-emerald-950/20 border border-emerald-200/80 dark:border-emerald-900/60 rounded-xl">
         <label className="block">
-          <span className="text-zinc-800 dark:text-zinc-200 font-bold flex items-center justify-between">
+          <span className="text-zinc-800 dark:text-zinc-200 font-semibold flex items-center justify-between">
             <span>{t("٣. أجر الساعة (ج.م / ساعة)", "3. Hourly Rate (EGP / hour)")}</span>
-            <span className="text-[10px] text-emerald-700 dark:text-emerald-400">
+            <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-code">
               {t(`الراتب التقديري (192 س): ${Math.round(hourlyRate * 192)} ج.م`, `~EGP ${Math.round(hourlyRate * 192)} / mo`)}
             </span>
           </span>
@@ -418,7 +418,7 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
               setHourlyRate(r);
               setMonthlySalary(String(Math.round(r * 192)));
             }}
-            className="mt-1 w-full bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 px-2.5 py-1.5 font-bold rounded focus:outline-none focus:ring-2 focus:ring-red-600"
+            className="mt-1 w-full brutal-input px-2.5 py-1.5 font-semibold font-code"
           />
           <span className="text-[10px] text-zinc-500">
             {t("يُستخدم في حساب الراتب الأساسي والإضافي والخصومات", "Used to calculate base pay, overtime, and deductions")}
@@ -426,7 +426,7 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
         </label>
 
         <label className="block">
-          <span className="text-zinc-800 dark:text-zinc-200 font-bold flex items-center justify-between">
+          <span className="text-zinc-800 dark:text-zinc-200 font-semibold flex items-center justify-between">
             <span>{t("٤. الراتب الشهري المتفق عليه (ج.م)", "4. Monthly Salary (EGP - 24d × 8h)")}</span>
             <button
               type="button"
@@ -434,7 +434,7 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
                 const sal = parseFloat(monthlySalary) || 0;
                 if (sal > 0) setHourlyRate(Math.round((sal / 192) * 100) / 100);
               }}
-              className="text-[10px] text-emerald-700 dark:text-emerald-400 underline cursor-pointer font-bold"
+              className="text-[10px] text-emerald-700 dark:text-emerald-400 underline cursor-pointer font-semibold"
             >
               {t("احسب أجر الساعة تلقائيًا", "Auto-calc hourly rate")}
             </button>
@@ -450,7 +450,7 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
               const sal = parseFloat(val) || 0;
               if (sal > 0) setHourlyRate(Math.round((sal / 192) * 100) / 100);
             }}
-            className="mt-1 w-full bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 px-2.5 py-1.5 font-bold rounded focus:outline-none focus:ring-2 focus:ring-red-600"
+            className="mt-1 w-full brutal-input px-2.5 py-1.5 font-semibold font-code"
           />
           <span className="text-[10px] text-zinc-500">
             {t("اكتب الراتب الشهري ليتم حساب أجر الساعة (الراتب ÷ 192 ساعة)", "Type monthly salary to auto-compute hourly rate (÷ 192h)")}
@@ -461,7 +461,7 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
       {/* Row 3: Prior Used Leave & Carry-Over */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
         <label className="block">
-          <span className="text-zinc-700 dark:text-zinc-300 font-bold">
+          <span className="text-zinc-700 dark:text-zinc-300 font-semibold">
             {t("٥. إجازات مستهلكة قبل النظام (أيام)", "5. Leave Used Before System (days)")}
           </span>
           <input
@@ -470,14 +470,14 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
             step={0.5}
             value={priorUsed}
             onChange={(e) => setPriorUsed(Math.max(0, parseFloat(e.target.value) || 0))}
-            className="mt-1 w-full bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 px-2.5 py-1.5 font-bold rounded focus:outline-none focus:ring-2 focus:ring-red-600"
+            className="mt-1 w-full brutal-input px-2.5 py-1.5 font-semibold font-code"
           />
           <span className="text-[10px] text-zinc-400">
             {t("تُخصم من الرصيد المتراكم للموظف القديم", "Deducted from accrued leave for existing staff")}
           </span>
         </label>
         <label className="block">
-          <span className="text-zinc-700 dark:text-zinc-300 font-bold">
+          <span className="text-zinc-700 dark:text-zinc-300 font-semibold">
             {t("٦. الرصيد المُرحّل والمُعتمد من الإدارة (أيام)", "6. Approved Carry-Over Balance (days)")}
           </span>
           <input
@@ -486,14 +486,14 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
             step={0.5}
             value={carry}
             onChange={(e) => setCarry(Math.max(0, parseFloat(e.target.value) || 0))}
-            className="mt-1 w-full bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 px-2.5 py-1.5 font-bold rounded focus:outline-none focus:ring-2 focus:ring-red-600"
+            className="mt-1 w-full brutal-input px-2.5 py-1.5 font-semibold font-code"
           />
           <span className="text-[10px] text-zinc-400">
             {t("يُضاف إلى الرصيد المُرحّل قانونياً واستحقاق ما بعد السنة الأولى", "Added to legally carried-over & post-Year-1 balance")}
           </span>
         </label>
         <label className="block">
-          <span className="text-zinc-700 dark:text-zinc-300 font-bold">
+          <span className="text-zinc-700 dark:text-zinc-300 font-semibold">
             {t("٧. اعتمد الترحيل بواسطة", "7. Carry-Over Approved By")}
           </span>
           <input
@@ -501,15 +501,15 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
             value={approvedBy}
             placeholder={t("اسم المدير المعتمد", "Manager name")}
             onChange={(e) => setApprovedBy(e.target.value)}
-            className="mt-1 w-full bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 px-2.5 py-1.5 font-bold rounded focus:outline-none focus:ring-2 focus:ring-red-600"
+            className="mt-1 w-full brutal-input px-2.5 py-1.5 font-semibold"
           />
         </label>
       </div>
 
       {/* Row 3.5: Approved Leave Requests with 1-Click Cancel & Restore Balance */}
       {workerLeaveReqs.length > 0 && (
-        <div className="p-3 bg-amber-50/50 dark:bg-amber-950/20 border border-amber-300 dark:border-amber-800 rounded space-y-2 text-xs">
-          <div className="font-bold text-amber-950 dark:text-amber-200 flex items-center justify-between">
+        <div className="p-3.5 bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200/80 dark:border-amber-800/60 rounded-xl space-y-2 text-xs">
+          <div className="font-semibold text-amber-950 dark:text-amber-200 flex items-center justify-between">
             <span>
               {t(
                 `🌴 الإجازات المعتمدة المخصومة من الرصيد (${workerLeaveReqs.length}):`,
@@ -534,15 +534,15 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
               return (
                 <div
                   key={req.id}
-                  className="p-2 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded flex items-center justify-between gap-2"
+                  className="p-2.5 bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 rounded-lg flex items-center justify-between gap-2"
                 >
                   <div>
-                    <span className="font-bold text-zinc-900 dark:text-white">{typeLabel}</span>{" "}
-                    <span className="text-emerald-700 dark:text-emerald-400 font-bold">
+                    <span className="font-semibold text-zinc-900 dark:text-white">{typeLabel}</span>{" "}
+                    <span className="text-emerald-700 dark:text-emerald-400 font-semibold">
                       ({effDays} {t("يوم عمل", "working day(s)")})
                     </span>{" "}
                     ·{" "}
-                    <span className="text-zinc-500">
+                    <span className="text-zinc-500 font-code">
                       {req.exceptionDate}
                       {req.endDate && req.endDate !== req.exceptionDate ? ` ← ${req.endDate}` : ""}
                     </span>
@@ -551,7 +551,7 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
                   <button
                     type="button"
                     onClick={() => void handleRevokeLeave(req)}
-                    className="shrink-0 px-2.5 py-1 bg-red-50 hover:bg-red-600 text-red-700 hover:text-white border border-red-300 rounded text-[10px] font-bold cursor-pointer transition-colors"
+                    className="shrink-0 px-2.5 py-1 bg-red-50 hover:bg-red-600 text-red-700 hover:text-white border border-red-200 dark:border-red-800 rounded-lg text-[10px] font-semibold cursor-pointer transition-colors"
                   >
                     {t("↩ شيل الإجازة ورجّع الرصيد", "↩ Cancel & Restore")}
                   </button>
@@ -598,7 +598,7 @@ export default function WorkerLeaveProfileCard({ worker, adminEmail = "admin", o
           type="button"
           disabled={!dirty || saving}
           onClick={() => void save()}
-          className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-mono text-xs font-bold uppercase border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] rounded cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-lg shadow-xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
           {saving
             ? t("جارٍ الحفظ…", "Saving…")

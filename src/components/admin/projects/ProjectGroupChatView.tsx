@@ -203,59 +203,59 @@ export default function ProjectGroupChatView({
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
       {/* Left Sidebar: Project Group Roster & Member Manager */}
-      <div className="lg:col-span-4 bg-white border-2 border-zinc-900 rounded-lg shadow-[4px_4px_0px_0px_#09090b] flex flex-col overflow-hidden">
-        <div className="p-4 border-b-2 border-zinc-900 bg-zinc-950 text-white flex items-center justify-between">
+      <div className="lg:col-span-4 ui-card flex flex-col overflow-hidden">
+        <div className="p-4 border-b border-zinc-100 bg-zinc-950 text-white flex items-center justify-between">
           <div>
-            <p className="text-[10px] font-mono uppercase tracking-widest text-red-400 font-bold">
-              // PROJECT CHANNEL
+            <p className="text-[10px] uppercase tracking-wider text-red-400 font-semibold">
+              Project Channel
             </p>
-            <h3 className="text-base font-oswald uppercase tracking-wider font-bold">
+            <h3 className="text-sm font-bold tracking-tight mt-0.5">
               Team & Group Members ({memberWorkers.length + 2})
             </h3>
           </div>
           <button
             type="button"
             onClick={() => setManageMembersOpen((v) => !v)}
-            className="px-2.5 py-1 text-[10px] font-mono font-bold uppercase tracking-wider rounded border border-zinc-700 bg-zinc-800 hover:bg-red-600 hover:border-red-600 text-white transition-colors cursor-pointer"
+            className="px-2.5 py-1 text-[11px] font-semibold rounded-lg border border-zinc-700 bg-zinc-800 hover:bg-red-600 hover:border-red-600 text-white transition-colors cursor-pointer"
           >
             {manageMembersOpen ? "Done" : "+ Manage"}
           </button>
         </div>
 
-        {/* Add / Remove Members Picker */}
         {manageMembersOpen && (
-          <div className="p-3 bg-zinc-50 border-b-2 border-zinc-200 space-y-2">
+          <div className="p-3.5 bg-zinc-50 border-b border-zinc-100 space-y-2.5">
             <input
-              type="text"
+              type="search"
               value={memberSearch}
               onChange={(e) => setMemberSearch(e.target.value)}
-              placeholder="Search workers to add to group chat..."
-              className="w-full px-2.5 py-1.5 bg-white border border-zinc-300 rounded text-xs font-mono text-zinc-900 focus:outline-none focus:border-red-600"
+              placeholder="Search workers to add..."
+              aria-label="Search workers to add to group chat"
+              className="w-full px-3 py-1.5 bg-white border border-zinc-200 rounded-xl text-xs text-zinc-900 focus:outline-none focus:border-zinc-900"
             />
-            <div className="max-h-48 overflow-y-auto space-y-1 pr-1">
+            <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
               {filteredWorkersForPicker.map((w) => {
                 const isExplicit = Array.isArray(project.memberIds) && project.memberIds.includes(w.id);
                 const isViaTask = taskAssignedIds.has(w.id);
                 return (
                   <div
                     key={w.id}
-                    className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded bg-white border border-zinc-200 text-xs"
+                    className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-white border border-zinc-200/80 text-xs"
                   >
                     <div className="min-w-0">
-                      <p className="font-bold text-zinc-900 truncate">
+                      <p className="font-semibold text-zinc-900 truncate">
                         {w.firstName} {w.lastName}
                       </p>
-                      <p className="text-[10px] font-mono text-zinc-500 truncate">
-                        {formatRole(w.role)} {isViaTask ? "· Assigned to task" : ""}
+                      <p className="text-[11px] text-zinc-500 truncate">
+                        {formatRole(w.role)} {isViaTask ? "· Task assignee" : ""}
                       </p>
                     </div>
                     <button
                       type="button"
                       disabled={savingMembers}
                       onClick={() => void handleToggleMember(w)}
-                      className={`px-2 py-0.5 text-[10px] font-mono font-bold uppercase rounded border transition-colors cursor-pointer ${
+                      className={`px-2.5 py-1 text-[11px] font-semibold rounded-lg border transition-colors cursor-pointer ${
                         isExplicit
-                          ? "bg-red-50 text-red-700 border-red-300 hover:bg-red-100"
+                          ? "bg-red-50 text-red-700 border-red-200 hover:bg-red-100"
                           : "bg-zinc-900 text-white border-zinc-900 hover:bg-red-600"
                       }`}
                     >
@@ -268,49 +268,48 @@ export default function ProjectGroupChatView({
           </div>
         )}
 
-        {/* Active Roster List */}
-        <div className="p-3 space-y-2 overflow-y-auto max-h-[480px]">
-          <p className="text-[10px] font-mono font-bold uppercase tracking-wider text-zinc-400 px-1">
+        <div className="p-3.5 space-y-2 overflow-y-auto max-h-[480px]">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400 px-1">
             Management & Account Leads
           </p>
-          <div className="flex items-center justify-between px-3 py-2 rounded-md bg-red-50/70 border border-red-200">
+          <div className="flex items-center justify-between px-3 py-2.5 rounded-xl bg-red-50/50 border border-red-100">
             <div className="flex items-center gap-2.5 min-w-0">
               <span className="w-7 h-7 rounded-full bg-red-600 text-white font-bold text-xs flex items-center justify-center shrink-0">
                 SA
               </span>
               <div className="min-w-0">
-                <p className="text-xs font-bold text-zinc-900 truncate">Super Admin</p>
-                <p className="text-[10px] font-mono text-zinc-500 truncate">admin@mft.com</p>
+                <p className="text-xs font-semibold text-zinc-900 truncate">Super Admin</p>
+                <p className="text-[11px] text-zinc-500 truncate">admin@mft.com</p>
               </div>
             </div>
-            <span className="text-[9px] font-mono font-bold uppercase px-1.5 py-0.5 rounded bg-red-100 text-red-700 border border-red-200">
+            <span className="text-[10px] font-semibold uppercase px-2 py-0.5 rounded-full bg-red-100/80 text-red-700">
               Admin
             </span>
           </div>
 
-          <div className="flex items-center justify-between px-3 py-2 rounded-md bg-sky-50/70 border border-sky-200">
+          <div className="flex items-center justify-between px-3 py-2.5 rounded-xl bg-sky-50/50 border border-sky-100">
             <div className="flex items-center gap-2.5 min-w-0">
               <span className="w-7 h-7 rounded-full bg-sky-600 text-white font-bold text-xs flex items-center justify-center shrink-0">
                 AM
               </span>
               <div className="min-w-0">
-                <p className="text-xs font-bold text-zinc-900 truncate">Account Manager</p>
-                <p className="text-[10px] font-mono text-zinc-500 truncate">mayamahmoud@mft.com</p>
+                <p className="text-xs font-semibold text-zinc-900 truncate">Account Manager</p>
+                <p className="text-[11px] text-zinc-500 truncate">mayamahmoud@mft.com</p>
               </div>
             </div>
-            <span className="text-[9px] font-mono font-bold uppercase px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 border border-sky-200">
+            <span className="text-[10px] font-semibold uppercase px-2 py-0.5 rounded-full bg-sky-100/80 text-sky-700">
               Account Mgr
             </span>
           </div>
 
-          <p className="text-[10px] font-mono font-bold uppercase tracking-wider text-zinc-400 px-1 pt-2">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400 px-1 pt-2">
             Assigned Project Team ({memberWorkers.length})
           </p>
           {memberWorkers.length === 0 ? (
-            <div className="p-4 text-center border border-dashed border-zinc-300 rounded-md bg-zinc-50">
-              <p className="text-xs font-bold text-zinc-600">No workers in this project yet</p>
+            <div className="p-4 text-center border border-dashed border-zinc-200 rounded-xl bg-zinc-50/50">
+              <p className="text-xs font-semibold text-zinc-600">No workers in this project yet</p>
               <p className="text-[11px] text-zinc-400 mt-0.5">
-                Assign workers to project tasks or click &ldquo;+ Manage&rdquo; above to add team members to this group chat.
+                Assign workers to project tasks or click &ldquo;+ Manage&rdquo; above to add team members.
               </p>
             </div>
           ) : (
@@ -322,23 +321,23 @@ export default function ProjectGroupChatView({
               return (
                 <div
                   key={w.id}
-                  className="flex items-center justify-between px-3 py-2 rounded-md bg-zinc-50 border border-zinc-200 hover:border-zinc-400 transition-colors"
+                  className="flex items-center justify-between px-3 py-2.5 rounded-xl bg-zinc-50/70 border border-zinc-200/80 hover:border-zinc-300 transition-colors"
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
                     <span className="w-7 h-7 rounded-full bg-zinc-900 text-white font-bold text-[11px] flex items-center justify-center shrink-0">
                       {initials}
                     </span>
                     <div className="min-w-0">
-                      <p className="text-xs font-bold text-zinc-900 truncate">
+                      <p className="text-xs font-semibold text-zinc-900 truncate">
                         {w.firstName} {w.lastName}
                       </p>
-                      <p className="text-[10px] font-mono text-zinc-500 truncate">
+                      <p className="text-[11px] text-zinc-500 truncate">
                         {formatRole(w.role)}
                       </p>
                     </div>
                   </div>
-                  <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-white border border-zinc-300 text-zinc-700 shrink-0">
-                    {workerTaskCount} task{workerTaskCount === 1 ? "" : "s"}
+                  <span className="font-code text-[10px] font-semibold px-2 py-0.5 rounded-lg bg-white border border-zinc-200 text-zinc-700 shrink-0">
+                    {workerTaskCount} {workerTaskCount === 1 ? "task" : "tasks"}
                   </span>
                 </div>
               );
@@ -348,46 +347,46 @@ export default function ProjectGroupChatView({
       </div>
 
       {/* Right Main Panel: Live Group Chat */}
-      <div className="lg:col-span-8 bg-white border-2 border-zinc-900 rounded-lg shadow-[4px_4px_0px_0px_#09090b] flex flex-col h-[620px] overflow-hidden">
+      <div className="lg:col-span-8 ui-card flex flex-col h-[620px] overflow-hidden">
         {/* Chat Header */}
-        <div className="px-5 py-3.5 border-b-2 border-zinc-900 bg-zinc-50 flex flex-wrap items-center justify-between gap-3">
+        <div className="px-5 py-3.5 border-b border-zinc-100 bg-zinc-50/70 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
-            <span className="w-9 h-9 rounded-lg bg-red-600 text-white flex items-center justify-center font-oswald font-bold text-base shadow-xs shrink-0">
+            <span className="w-9 h-9 rounded-xl bg-red-600 text-white flex items-center justify-center font-bold text-sm shadow-2xs shrink-0">
               💬
             </span>
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <h2 className="text-base font-oswald font-bold uppercase tracking-wider text-zinc-950 truncate">
+                <h2 className="text-sm font-bold text-zinc-950 truncate">
                   {project.name} — Group Chat
                 </h2>
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-50 text-emerald-700 border border-emerald-300">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                   LIVE
                 </span>
               </div>
-              <p className="text-[11px] font-mono text-zinc-500 truncate">
-                Connected to project · Notifies Admin, Account Manager & {memberWorkers.length} team member{memberWorkers.length === 1 ? "" : "s"}
+              <p className="text-[11px] text-zinc-500 truncate">
+                Synced with Admin, Account Manager & {memberWorkers.length} team member{memberWorkers.length === 1 ? "" : "s"}
               </p>
             </div>
           </div>
-          <span className="text-xs font-mono font-bold px-2.5 py-1 rounded bg-white border border-zinc-300 text-zinc-700">
-            {messages.length} message{messages.length === 1 ? "" : "s"}
+          <span className="font-code text-xs font-semibold px-2.5 py-1 rounded-lg bg-white border border-zinc-200 text-zinc-700">
+            {messages.length} {messages.length === 1 ? "message" : "messages"}
           </span>
         </div>
 
         {/* Messages Feed */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-3.5 bg-zinc-50/40">
+        <div className="flex-1 overflow-y-auto p-5 space-y-3.5 bg-zinc-50/30">
           {messages.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center py-12">
-              <div className="w-12 h-12 rounded-full bg-red-50 border border-red-200 text-red-600 flex items-center justify-center mb-3">
-                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <div className="w-12 h-12 rounded-2xl bg-red-50 border border-red-100 text-red-600 flex items-center justify-center mb-3">
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a1.994 1.994 0 01-1.414-.586m0 0L11 14h4a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2v4l.586-.586z" />
                 </svg>
               </div>
-              <p className="text-sm font-oswald font-bold uppercase tracking-wider text-zinc-900">
+              <p className="text-sm font-bold text-zinc-900">
                 Start the {project.name} Group Conversation
               </p>
-              <p className="text-xs font-mono text-zinc-500 max-w-md mt-1">
+              <p className="text-xs text-zinc-500 max-w-md mt-1">
                 Every message sent here is linked to this project and notifies the Super Admin, Account Manager, and all assigned project team members.
               </p>
             </div>
@@ -407,8 +406,8 @@ export default function ProjectGroupChatView({
               if (m.isSystem) {
                 return (
                   <div key={m.id} className="flex justify-center my-2">
-                    <span className="px-3 py-1 rounded-full bg-zinc-200/80 text-zinc-700 font-mono text-[11px] font-medium">
-                      🔔 {m.text} · <span className="text-zinc-500">{timeStr}</span>
+                    <span className="px-3 py-1 rounded-full bg-zinc-100 border border-zinc-200/80 text-zinc-600 text-[11px] font-medium">
+                      🔔 {m.text} · <span className="text-zinc-400">{timeStr}</span>
                     </span>
                   </div>
                 );
@@ -419,29 +418,29 @@ export default function ProjectGroupChatView({
                   key={m.id}
                   className={`flex flex-col gap-1 ${isMe ? "items-end" : "items-start"}`}
                 >
-                  <div className="flex items-center gap-1.5 text-[10px] font-mono text-zinc-500">
-                    <span className="font-bold text-zinc-800">
+                  <div className="flex items-center gap-1.5 text-[11px] text-zinc-500">
+                    <span className="font-semibold text-zinc-800">
                       {isMe ? `${m.senderName} (You)` : m.senderName}
                     </span>
                     <span
-                      className={`px-1.5 py-0.2 rounded text-[9px] font-bold uppercase ${
+                      className={`px-1.5 py-0.2 rounded-md text-[9px] font-semibold uppercase ${
                         m.senderRole === "admin"
-                          ? "bg-red-100 text-red-700 border border-red-200"
-                          : "bg-zinc-200 text-zinc-700"
+                          ? "bg-red-50 text-red-700 border border-red-200"
+                          : "bg-zinc-100 text-zinc-700"
                       }`}
                     >
                       {m.senderTitle || (m.senderRole === "admin" ? "ADMIN" : "TEAM")}
                     </span>
                     <span>·</span>
-                    <span>{timeStr}</span>
+                    <span className="font-code text-[10px]">{timeStr}</span>
                   </div>
                   <div
-                    className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-xs leading-relaxed whitespace-pre-wrap shadow-xs ${
+                    className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-xs leading-relaxed whitespace-pre-wrap shadow-2xs ${
                       isMe
                         ? "rounded-br-xs bg-red-600 text-white"
                         : m.senderRole === "admin"
                         ? "rounded-bl-xs bg-zinc-900 text-white"
-                        : "rounded-bl-xs bg-white border-2 border-zinc-900 text-zinc-900"
+                        : "rounded-bl-xs bg-white border border-zinc-200 text-zinc-900"
                     }`}
                   >
                     <LinkifiedText text={m.text} />
@@ -455,8 +454,8 @@ export default function ProjectGroupChatView({
 
         {/* Quick Task Reference Bar */}
         {tasks.length > 0 && (
-          <div className="px-4 py-2 border-t border-zinc-200 bg-zinc-50 flex items-center gap-1.5 overflow-x-auto text-[11px] font-mono">
-            <span className="text-zinc-400 font-bold uppercase shrink-0">Tag task:</span>
+          <div className="px-4 py-2 border-t border-zinc-100 bg-zinc-50/70 flex items-center gap-1.5 overflow-x-auto text-[11px]">
+            <span className="text-zinc-400 font-semibold shrink-0">Mention task:</span>
             {tasks.slice(0, 6).map((t) => (
               <button
                 key={t.id}
@@ -464,7 +463,7 @@ export default function ProjectGroupChatView({
                 onClick={() => insertTaskReference(t)}
                 onDoubleClick={() => onSelectTask?.(t)}
                 title="Click to mention in chat · Double-click to open task"
-                className="px-2 py-0.5 rounded bg-white hover:bg-red-50 hover:text-red-700 hover:border-red-300 border border-zinc-300 text-zinc-700 truncate max-w-[180px] shrink-0 transition-colors cursor-pointer"
+                className="px-2.5 py-0.5 rounded-lg bg-white hover:bg-red-50 hover:text-red-700 hover:border-red-200 border border-zinc-200 text-zinc-700 truncate max-w-[180px] shrink-0 transition-colors cursor-pointer font-medium"
               >
                 #{t.title}
               </button>
@@ -475,22 +474,23 @@ export default function ProjectGroupChatView({
         {/* Composer */}
         <form
           onSubmit={handleSend}
-          className="p-3.5 border-t-2 border-zinc-900 bg-white flex items-center gap-2.5"
+          className="p-3.5 border-t border-zinc-100 bg-white flex items-center gap-2.5"
         >
           <input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={`Message ${project.name} group chat (notifies team, Account Manager & Admin)...`}
-            className="flex-1 px-3.5 py-2.5 bg-zinc-50 border-2 border-zinc-300 rounded-lg text-xs font-mono text-zinc-950 focus:outline-none focus:border-red-600 focus:bg-white transition-all"
+            placeholder={`Message ${project.name} channel...`}
+            aria-label={`Message ${project.name} group chat`}
+            className="flex-1 px-3.5 py-2.5 bg-zinc-50/80 border border-zinc-200 rounded-xl text-xs text-zinc-950 focus:outline-none focus:border-zinc-900 focus:bg-white transition-all"
           />
           <button
             type="submit"
             disabled={!input.trim() || sending}
-            className="px-5 py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-mono font-bold text-xs uppercase tracking-wider rounded-lg border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] active:translate-x-0.5 active:translate-y-0.5 transition-all cursor-pointer flex items-center gap-2"
+            className="px-4 py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-semibold text-xs rounded-xl shadow-2xs transition-all cursor-pointer inline-flex items-center gap-2"
           >
             <span>{sending ? "Sending..." : "Send"}</span>
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
             </svg>
           </button>

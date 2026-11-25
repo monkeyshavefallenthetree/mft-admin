@@ -14,6 +14,7 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { cairoYmd } from "./cairoTime";
 import {
   DEFAULT_HR_SETTINGS,
   EGYPTIAN_HOLIDAYS_TEMPLATE,
@@ -714,7 +715,7 @@ export async function approveReimbursementFinal(
       workerName: r.workerName || "",
       type: "allowance",
       amount: payload.amount,
-      date: new Date().toISOString().split("T")[0],
+      date: cairoYmd(),
       reason: `[${label}] ${r.purpose}${r.type === "outdoor" && r.routeFrom ? ` (${r.routeFrom} → ${r.routeTo})` : ""}`,
       status: "applied",
       source: "reimbursement",

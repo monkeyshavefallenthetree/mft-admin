@@ -14,6 +14,7 @@ import { auth, db } from "@/lib/firebase";
 import { downloadCsv } from "@/lib/admin/csv";
 import { DEPARTMENTS } from "@/lib/admin/constants";
 import { sessionHours } from "@/lib/admin/workTime";
+import { cairoYmd } from "@/lib/admin/cairoTime";
 import {
   type SessionForHr,
   type HrSettings,
@@ -186,6 +187,7 @@ export default function AdminHRPage() {
     effectiveLedger,
     approved,
     today,
+    liveNowMs,
     activeCycle,
     activePeriod,
     currentCycleId,
@@ -311,8 +313,8 @@ export default function AdminHRPage() {
       ]);
     }
 
-    const s = activePeriod.start.toISOString().split("T")[0];
-    const e = activePeriod.end.toISOString().split("T")[0];
+    const s = cairoYmd(activePeriod.start);
+    const e = cairoYmd(activePeriod.end);
     downloadCsv(rows, `payroll_${s}_to_${e}.csv`);
     toast.success(t("تم تحميل شيت الرواتب بصيغة CSV شاملاً البونص والخصومات", "Payroll sheet CSV downloaded (with Bonuses & Deductions)"));
   };
@@ -343,8 +345,8 @@ export default function AdminHRPage() {
     try {
       const updateData: Partial<PayrollCycleRecord> = {
         cycleLabel: activePeriod.label,
-        periodStart: activePeriod.start.toISOString().split("T")[0],
-        periodEnd: activePeriod.end.toISOString().split("T")[0],
+        periodStart: cairoYmd(activePeriod.start),
+        periodEnd: cairoYmd(activePeriod.end),
         status: nextStatus,
         totalGrossPay: payrollTotals.gross,
         totalNetPay: payrollTotals.net,
@@ -719,6 +721,7 @@ export default function AdminHRPage() {
           settings={settings}
           hrSummary={hrSummary}
           todaysSessions={todaysSessions}
+          liveNowMs={liveNowMs}
           presentWorkerIds={presentWorkerIds}
           lateWorkerIds={lateWorkerIds}
           overtimeWorkerIds={overtimeWorkerIds}
@@ -839,8 +842,8 @@ export default function AdminHRPage() {
           preselectedWorkerId={adjustmentWorkerId}
           initialType={adjustmentInitialType}
           existingAdjustments={adjustments.filter((a) => {
-            const pStart = activePeriod.start.toISOString().split("T")[0];
-            const pEnd = activePeriod.end.toISOString().split("T")[0];
+            const pStart = cairoYmd(activePeriod.start);
+            const pEnd = cairoYmd(activePeriod.end);
             return a.date >= pStart && a.date <= pEnd;
           })}
           adminEmail={adminEmail}

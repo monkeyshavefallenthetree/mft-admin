@@ -5,11 +5,14 @@
 import assert from "node:assert/strict";
 import {
   POLICY_2026_DEFAULTS as CFG,
+  atMinutes,
   auditAttendanceLog,
   chargeableMinutes,
   computeLeaveAccrual,
   evaluateClockIn,
   evaluateEarlyLeave,
+  formatHm,
+  minutesOfDay,
   parseAuditLog,
   payableOvertimeForDay,
   policyConfigFromSettings,
@@ -36,12 +39,12 @@ function test(name: string, fn: () => void) {
     console.log(`  \u2717 ${name}\n      ${(e as Error).message.split("\n").join("\n      ")}`);
   }
 }
-const at = (hm: string, day = "2026-10-21", sec = 0) => {
-  const [h, m] = hm.split(":").map(Number);
+const at = (hmStr: string, day = "2026-10-21", sec = 0) => {
+  const [h, m] = hmStr.split(":").map(Number);
   const d = parseYmd(day)!;
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), h!, m!, sec);
+  return new Date(atMinutes(d, h! * 60 + m!).getTime() + sec * 1000);
 };
-const hm = (d: Date) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+const hm = (d: Date) => formatHm(minutesOfDay(d));
 
 console.log("\n[1] Biometric 1-minute rule & rounding");
 test("11:00:59 is on time (seconds truncated)", () => {

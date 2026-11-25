@@ -15,6 +15,7 @@ interface Props {
   settings: HrSettings;
   hrSummary: HrSummary;
   todaysSessions: WorkSession[];
+  liveNowMs?: number;
   presentWorkerIds: Set<string>;
   lateWorkerIds: Set<string>;
   overtimeWorkerIds: Set<string>;
@@ -31,6 +32,7 @@ export default function TodayTab({
   settings,
   hrSummary,
   todaysSessions,
+  liveNowMs,
   presentWorkerIds,
   lateWorkerIds,
   overtimeWorkerIds,
@@ -165,7 +167,12 @@ export default function TodayTab({
           const isActiveInShift = workerTodaySessions.some((s) => Boolean(s.isActive));
           const isLate = isPresent && lateWorkerIds.has(w.id);
           const workedHours =
-            Math.round(workerTodaySessions.reduce((sum, s) => sum + sessionHours(s), 0) * 10) / 10;
+            Math.round(
+              workerTodaySessions.reduce(
+                (sum, s) => sum + sessionHours(s, liveNowMs, { standardHours: stdHours }),
+                0,
+              ) * 10,
+            ) / 10;
           const shiftPct = Math.min(100, Math.round((workedHours / stdHours) * 100));
           const clockInTs = workerSession?.startTime?.toDate
             ? workerSession.startTime

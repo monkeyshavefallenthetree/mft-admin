@@ -141,21 +141,24 @@ export default function TaskModalForm({
   return (
     <ModalPortal onClose={onClose}>
       <div
-        className="fixed inset-0 z-[120] bg-zinc-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in"
+        className="fixed inset-0 z-[120] bg-zinc-950/55 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in"
         onClick={onClose}
       >
         <div
-          className="bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 shadow-2xl rounded-xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 font-mono text-xs animate-scale-in"
+          className="ui-card shadow-2xl rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 text-xs animate-scale-in"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
-          <div className="mb-5 pb-3 border-b-2 border-zinc-900 dark:border-zinc-700 flex items-center justify-between">
+          <div className="mb-5 pb-3.5 border-b border-zinc-100 flex items-center justify-between">
             <div>
-              <h3 className="text-xl font-oswald text-red-600 uppercase tracking-wider font-bold">
-                {initialTask ? "// EDIT TASK DIRECTIVE" : "// CREATE TASK DIRECTIVE"}
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-red-600">
+                Studio Task Directive
+              </p>
+              <h3 className="text-base font-bold text-zinc-950 mt-0.5">
+                {initialTask ? "Edit Task Directive" : "Create Task Directive"}
               </h3>
               {projectName && (
-                <p className="text-[10px] text-zinc-500 dark:text-zinc-400 font-bold uppercase mt-0.5">
+                <p className="text-[11px] text-zinc-500 font-medium mt-0.5">
                   Project: {projectName}
                 </p>
               )}
@@ -163,7 +166,8 @@ export default function TaskModalForm({
             <button
               type="button"
               onClick={onClose}
-              className="w-7 h-7 rounded bg-zinc-100 hover:bg-zinc-900 hover:text-white dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700 flex items-center justify-center text-sm font-bold cursor-pointer transition-colors"
+              aria-label="Close modal"
+              className="w-7 h-7 rounded-lg bg-zinc-100 hover:bg-zinc-900 hover:text-white flex items-center justify-center text-sm font-bold cursor-pointer transition-colors"
             >
               &times;
             </button>
@@ -518,19 +522,19 @@ export default function TaskModalForm({
           </div>
 
           {/* Action Buttons */}
-          <div className="flex gap-3 pt-3 border-t-2 border-zinc-900">
+          <div className="flex gap-2.5 pt-3 border-t border-zinc-100">
             <button
               type="button"
               onClick={onClose}
               disabled={saving}
-              className="flex-1 py-2 border-2 border-zinc-900 rounded font-bold uppercase hover:bg-zinc-100 transition-colors cursor-pointer"
+              className="flex-1 brutal-btn-outline py-2.5"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={saving}
-              className="flex-1 py-2 bg-red-600 hover:bg-red-700 text-white font-bold uppercase rounded border-2 border-red-700 transition-colors cursor-pointer shadow-xs disabled:opacity-50"
+              className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-xl transition-colors cursor-pointer shadow-2xs disabled:opacity-50"
             >
               {saving ? "Saving..." : initialTask ? "Save Changes" : "Create Directive"}
             </button>

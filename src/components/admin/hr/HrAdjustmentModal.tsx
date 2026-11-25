@@ -10,6 +10,7 @@ import { auth, db } from "@/lib/firebase";
 import { sendExpoPushToWorkers } from "@/lib/chatNotifications";
 import { notifyAdmins } from "@/lib/adminNotifications";
 import { useHrLang } from "@/lib/admin/hrI18n";
+import { cairoYmd } from "@/lib/admin/cairoTime";
 import {
   DISCIPLINARY_RULES,
   type OffenseTier,
@@ -54,7 +55,7 @@ export default function HrAdjustmentModal({
   const [workerSearch, setWorkerSearch] = useState("");
   const [type, setType] = useState<AdjustmentKind>(initialType);
   const [amount, setAmount] = useState<number | "">("");
-  const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
+  const [date, setDate] = useState(() => cairoYmd());
   const [reason, setReason] = useState("");
   const [selectedRuleNum, setSelectedRuleNum] = useState<number | "">("");
   const [selectedOffenseTier, setSelectedOffenseTier] = useState<OffenseTier>(1);
@@ -215,21 +216,24 @@ export default function HrAdjustmentModal({
   return (
     <ModalPortal onClose={onClose}>
       <div
-        className="fixed inset-0 z-[120] bg-zinc-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in"
+        className="fixed inset-0 z-[120] bg-zinc-950/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto animate-fade-in"
         onClick={onClose}
       >
         <div
           dir={dir}
-          className="bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 shadow-2xl w-full max-w-xl max-h-[92vh] overflow-y-auto p-6 md:p-7 animate-scale-in text-zinc-950 dark:text-zinc-100 font-mono rounded-lg"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="hr-adjustment-modal-title"
+          className="ui-card shadow-2xl w-full max-w-xl max-h-[92vh] overflow-y-auto p-6 md:p-7 animate-scale-in text-zinc-950 dark:text-zinc-100"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
-          <div className="flex items-start justify-between pb-3 border-b-2 border-zinc-900 dark:border-zinc-700 mb-5">
+          <div className="flex items-start justify-between pb-3 border-b border-zinc-200 dark:border-zinc-800 mb-5">
             <div>
-              <span className="text-[10px] font-bold uppercase tracking-widest text-red-600 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 px-2 py-0.5 rounded font-mono">
-                {t("// إدارة البونص والخصومات والسلف · شيت الرواتب", "// PAYROLL BONUS, DEDUCTIONS & ADVANCES")}
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-red-600 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 px-2.5 py-0.5 rounded-full">
+                {t("إدارة البونص والخصومات والسلف · شيت الرواتب", "PAYROLL BONUS, DEDUCTIONS & ADVANCES")}
               </span>
-              <h3 className="text-xl font-bold font-heading tracking-wide text-zinc-950 dark:text-white mt-1">
+              <h3 id="hr-adjustment-modal-title" className="text-xl font-bold tracking-tight text-zinc-950 dark:text-white mt-1.5">
                 {t("إضافة أو حذف بونص / خصم / سلفة / بدل", "Add or Remove Bonus, Deduction, Advance or Allowance")}
               </h3>
               <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
@@ -241,8 +245,9 @@ export default function HrAdjustmentModal({
             </div>
             <button
               type="button"
+              aria-label="Close"
               onClick={onClose}
-              className="text-zinc-400 hover:text-zinc-950 dark:hover:text-white text-2xl font-bold leading-none p-1 cursor-pointer"
+              className="h-8 w-8 rounded-lg flex items-center justify-center text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer"
             >
               &times;
             </button>
@@ -250,11 +255,11 @@ export default function HrAdjustmentModal({
 
           <form onSubmit={handleSubmit} className="space-y-4 text-xs">
             {/* Target Worker(s) Multi-Select */}
-            <div className="space-y-2 border-2 border-zinc-900 dark:border-zinc-700 rounded p-3 bg-zinc-50 dark:bg-zinc-800/40">
+            <div className="space-y-2 border border-zinc-200/80 dark:border-zinc-800 rounded-xl p-3.5 bg-zinc-50/70 dark:bg-zinc-800/40">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <label className="block font-bold uppercase text-zinc-700 dark:text-zinc-300">
+                <label className="block font-semibold uppercase text-zinc-700 dark:text-zinc-300">
                   {t("اختر الموظف أو مجموعة موظفين *", "Select Worker(s) *")}
-                  <span className="ms-2 inline-flex items-center px-2 py-0.5 rounded bg-red-600 text-white text-[10px] font-black">
+                  <span className="ms-2 inline-flex items-center px-2 py-0.5 rounded-full bg-red-600 text-white text-[10px] font-bold">
                     {t(`تم اختيار ${selectedWorkerIds.length} موظف`, `${selectedWorkerIds.length} selected`)}
                   </span>
                 </label>
@@ -262,14 +267,14 @@ export default function HrAdjustmentModal({
                   <button
                     type="button"
                     onClick={() => setSelectedWorkerIds(workers.map((w) => w.id))}
-                    className="px-2 py-1 text-[10px] font-bold bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900 rounded cursor-pointer hover:opacity-90"
+                    className="px-2.5 py-1 text-[10px] font-semibold bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900 rounded-lg cursor-pointer hover:opacity-90"
                   >
                     {t("✓ تحديد الكل", "✓ Select All")}
                   </button>
                   <button
                     type="button"
                     onClick={() => setSelectedWorkerIds([])}
-                    className="px-2 py-1 text-[10px] font-bold border border-zinc-400 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 rounded cursor-pointer hover:bg-zinc-100"
+                    className="px-2.5 py-1 text-[10px] font-semibold border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 rounded-lg cursor-pointer hover:bg-zinc-100"
                   >
                     {t("✕ إلغاء الكل", "✕ Clear")}
                   </button>
@@ -281,10 +286,10 @@ export default function HrAdjustmentModal({
                 value={workerSearch}
                 onChange={(e) => setWorkerSearch(e.target.value)}
                 placeholder={t("🔍 ابحث باسم الموظف أو القسم...", "🔍 Search worker by name or department...")}
-                className="w-full bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2.5 py-1.5 text-xs rounded focus:outline-none focus:ring-2 focus:ring-red-600"
+                className="w-full brutal-input px-2.5 py-1.5 text-xs"
               />
 
-              <div className="max-h-40 overflow-y-auto divide-y divide-zinc-200 dark:divide-zinc-700 border border-zinc-200 dark:border-zinc-700 rounded bg-white dark:bg-zinc-900">
+              <div className="max-h-40 overflow-y-auto divide-y divide-zinc-200/70 dark:divide-zinc-800 border border-zinc-200/80 dark:border-zinc-800 rounded-xl bg-white dark:bg-zinc-900">
                 {workers
                   .filter((w) => {
                     const q = workerSearch.trim().toLowerCase();
@@ -297,9 +302,9 @@ export default function HrAdjustmentModal({
                     return (
                       <label
                         key={w.id}
-                        className={`flex items-center justify-between gap-2 px-3 py-1.5 cursor-pointer transition-colors ${
+                        className={`flex items-center justify-between gap-2 px-3 py-2 cursor-pointer transition-colors ${
                           checked
-                            ? "bg-red-50/80 dark:bg-red-950/30 font-bold text-red-900 dark:text-red-200"
+                            ? "bg-red-50/80 dark:bg-red-950/30 font-semibold text-red-900 dark:text-red-200"
                             : "hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
                         }`}
                       >
@@ -318,7 +323,7 @@ export default function HrAdjustmentModal({
                             {w.firstName} {w.lastName}
                           </span>
                         </div>
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 shrink-0">
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 shrink-0">
                           {w.department || "General"}
                         </span>
                       </label>
@@ -329,7 +334,7 @@ export default function HrAdjustmentModal({
 
             {/* Adjustment Type Selection */}
             <div>
-              <label className="block font-bold uppercase text-zinc-700 dark:text-zinc-300 mb-1">
+              <label className="block font-semibold uppercase text-zinc-700 dark:text-zinc-300 mb-1.5">
                 {t("نوع العملية على شيت الرواتب *", "Adjustment Type *")}
               </label>
               <div className="grid grid-cols-2 gap-2">
@@ -339,25 +344,25 @@ export default function HrAdjustmentModal({
                       id: "bonus",
                       label: t("🎁 بونص / مكافأة (Bonus)", "🎁 Bonus (مكافأة)"),
                       desc: t("يزيد على الراتب في شيت الرواتب (+)", "Added to earnings in Payroll Sheet (+)"),
-                      activeCls: "border-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-200 ring-2 ring-emerald-600/20",
+                      activeCls: "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-200 ring-2 ring-emerald-500/20",
                     },
                     {
                       id: "deduction",
                       label: t("⛔ خصم إداري (Deduction)", "⛔ Deduction (خصم إداري)"),
                       desc: t("يُخصم من الراتب في شيت الرواتب (-)", "Subtracted in Payroll Sheet (-)"),
-                      activeCls: "border-red-600 bg-red-50 dark:bg-red-950/40 text-red-900 dark:text-red-200 ring-2 ring-red-600/20",
+                      activeCls: "border-red-500 bg-red-50 dark:bg-red-950/40 text-red-900 dark:text-red-200 ring-2 ring-red-500/20",
                     },
                     {
                       id: "allowance",
                       label: t("➕ بدل إضافي (Allowance)", "➕ Allowance (بدل)"),
                       desc: t("يُضاف لإجمالي المستحقات (+)", "Added to monthly gross pay (+)"),
-                      activeCls: "border-sky-600 bg-sky-50 dark:bg-sky-950/40 text-sky-900 dark:text-sky-200 ring-2 ring-sky-600/20",
+                      activeCls: "border-sky-500 bg-sky-50 dark:bg-sky-950/40 text-sky-900 dark:text-sky-200 ring-2 ring-sky-500/20",
                     },
                     {
                       id: "advance",
                       label: t("💸 سلفة نقدية (Advance)", "💸 Salary Advance (سلفة)"),
                       desc: t("تُسترد من صافي الراتب (-)", "Deducted from monthly net pay (-)"),
-                      activeCls: "border-amber-600 bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 ring-2 ring-amber-600/20",
+                      activeCls: "border-amber-500 bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 ring-2 ring-amber-500/20",
                     },
                   ] as const
                 ).map((item) => (
@@ -365,13 +370,13 @@ export default function HrAdjustmentModal({
                     key={item.id}
                     type="button"
                     onClick={() => setType(item.id)}
-                    className={`p-2.5 rounded border-2 text-start cursor-pointer transition-all ${
+                    className={`p-3 rounded-xl border text-start cursor-pointer transition-all ${
                       type === item.id
-                        ? `${item.activeCls} font-bold`
-                        : "border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50"
+                        ? `${item.activeCls} font-semibold`
+                        : "border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50"
                     }`}
                   >
-                    <div className="font-bold text-xs">{item.label}</div>
+                    <div className="font-semibold text-xs">{item.label}</div>
                     <div className="text-[10px] opacity-75 mt-0.5">{item.desc}</div>
                   </button>
                 ))}
@@ -380,15 +385,15 @@ export default function HrAdjustmentModal({
 
             {/* Quick Disciplinary Violation Picker (When type === "deduction") */}
             {type === "deduction" && (
-              <div className="p-3 rounded-lg border-2 border-red-300 dark:border-red-900 bg-red-50/50 dark:bg-red-950/20 space-y-2.5">
+              <div className="p-3.5 rounded-xl border border-red-200 dark:border-red-900/60 bg-red-50/50 dark:bg-red-950/20 space-y-2.5">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-bold text-red-900 dark:text-red-200 text-xs">
+                  <span className="font-semibold text-red-900 dark:text-red-200 text-xs">
                     {t(
                       "⚖️ اختيار مخالفة من لائحة الجزاءات الرسمية (اختياري — يحسب الخصم تلقائياً):",
                       "⚖️ Pick from Official Disciplinary Schedule (Optional — auto-calculates EGP):",
                     )}
                   </span>
-                  <span className="text-[10px] px-2 py-0.5 rounded bg-white dark:bg-zinc-900 border border-red-200 dark:border-red-800 text-zinc-600 dark:text-zinc-300 font-bold">
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-white dark:bg-zinc-900 border border-red-200 dark:border-red-800 text-zinc-600 dark:text-zinc-300 font-semibold font-code">
                     {t(`أجر اليوم: ${primaryWorkerDailyWage} ج.م`, `Daily Wage: EGP ${primaryWorkerDailyWage}`)}
                   </span>
                 </div>
@@ -403,7 +408,7 @@ export default function HrAdjustmentModal({
                         applyDisciplinaryPreset(val, selectedOffenseTier);
                       }
                     }}
-                    className="sm:col-span-2 bg-white dark:bg-zinc-900 border border-red-300 dark:border-red-800 px-2.5 py-2 text-xs font-bold rounded text-zinc-900 dark:text-zinc-100"
+                    className="sm:col-span-2 brutal-input px-2.5 py-2 text-xs font-semibold cursor-pointer"
                   >
                     <option value="">
                       {t("— اختر بند المخالفة من اللائحة (أو اكتب الخصم يدوياً بالأسفل) —", "— Select Violation Rule (or enter custom below) —")}
@@ -424,7 +429,7 @@ export default function HrAdjustmentModal({
                         applyDisciplinaryPreset(Number(selectedRuleNum), tier);
                       }
                     }}
-                    className="bg-white dark:bg-zinc-900 border border-red-300 dark:border-red-800 px-2.5 py-2 text-xs font-bold rounded text-zinc-900 dark:text-zinc-100"
+                    className="brutal-input px-2.5 py-2 text-xs font-semibold cursor-pointer"
                   >
                     <option value={1}>{t("المرة ١ (أول مرة)", "1st Offense")}</option>
                     <option value={2}>{t("المرة ٢ (ثاني مرة)", "2nd Offense")}</option>
@@ -439,7 +444,7 @@ export default function HrAdjustmentModal({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="block font-bold uppercase text-zinc-700 dark:text-zinc-300">
+                  <label className="block font-semibold uppercase text-zinc-700 dark:text-zinc-300">
                     {t("المبلغ بالجنيه (EGP) *", "Amount in EGP *")}
                   </label>
                   <div className="flex gap-1">
@@ -448,7 +453,7 @@ export default function HrAdjustmentModal({
                         key={p}
                         type="button"
                         onClick={() => setAmount(p)}
-                        className="px-1.5 py-0.5 text-[10px] font-bold bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-900 hover:text-white border border-zinc-300 dark:border-zinc-700 rounded cursor-pointer"
+                        className="px-2 py-0.5 text-[10px] font-semibold font-code bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-900 hover:text-white border border-zinc-200 dark:border-zinc-700 rounded-md cursor-pointer transition-colors"
                       >
                         {p}
                       </button>
@@ -456,7 +461,7 @@ export default function HrAdjustmentModal({
                   </div>
                 </div>
                 <div className="relative">
-                  <span className="absolute start-3 top-2.5 font-bold text-zinc-400">EGP</span>
+                  <span className="absolute start-3 top-2.5 font-semibold font-code text-zinc-400">EGP</span>
                   <input
                     type="number"
                     min={1}
@@ -465,13 +470,13 @@ export default function HrAdjustmentModal({
                     value={amount}
                     onChange={(e) => setAmount(e.target.value === "" ? "" : Number(e.target.value))}
                     placeholder="500"
-                    className="w-full bg-white dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 ps-12 pe-3 py-2 text-zinc-950 dark:text-zinc-100 font-bold text-base rounded focus:outline-none focus:ring-2 focus:ring-red-600"
+                    className="w-full brutal-input ps-12 pe-3 py-2 font-bold font-code text-base"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block font-bold uppercase text-zinc-700 dark:text-zinc-300 mb-1">
+                <label className="block font-semibold uppercase text-zinc-700 dark:text-zinc-300 mb-1">
                   {t("التاريخ *", "Effective Date *")}
                 </label>
                 <input
@@ -479,14 +484,14 @@ export default function HrAdjustmentModal({
                   required
                   value={date}
                   onChange={(e) => setDate(e.target.value)}
-                  className="w-full bg-white dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 px-3 py-2.5 text-zinc-950 dark:text-zinc-100 font-bold rounded focus:outline-none focus:ring-2 focus:ring-red-600"
+                  className="w-full brutal-input px-3 py-2.5 font-semibold"
                 />
               </div>
             </div>
 
             {/* Reason */}
             <div>
-              <label className="block font-bold uppercase text-zinc-700 dark:text-zinc-300 mb-1">
+              <label className="block font-semibold uppercase text-zinc-700 dark:text-zinc-300 mb-1">
                 {t("السبب / البيان في شيت الرواتب *", "Reason & Note on Payroll Sheet *")}
               </label>
               <textarea
@@ -498,23 +503,23 @@ export default function HrAdjustmentModal({
                   "مثال: بونص تميز في تسليم المشروع، أو خصم إداري لمخالفة التعليمات...",
                   "e.g. Performance bonus for project delivery, or disciplinary deduction...",
                 )}
-                className="w-full bg-white dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 px-3 py-2 text-zinc-950 dark:text-zinc-100 rounded focus:outline-none focus:ring-2 focus:ring-red-600 resize-none"
+                className="w-full brutal-input px-3 py-2 resize-none"
               />
             </div>
 
             {/* Actions */}
-            <div className="flex justify-end gap-2 pt-2 border-t-2 border-zinc-900 dark:border-zinc-700">
+            <div className="flex justify-end gap-2 pt-2 border-t border-zinc-200 dark:border-zinc-800">
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 text-zinc-950 dark:text-zinc-100 font-bold uppercase cursor-pointer rounded"
+                className="brutal-btn-outline px-4 py-2 text-xs cursor-pointer"
               >
                 {t("إغلاق", "Cancel")}
               </button>
               <button
                 type="submit"
                 disabled={saving}
-                className={`px-5 py-2 text-white font-bold uppercase tracking-wider border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] cursor-pointer disabled:opacity-50 rounded ${
+                className={`px-5 py-2 text-white font-semibold text-xs rounded-lg shadow-xs cursor-pointer disabled:opacity-50 transition-colors ${
                   type === "bonus" || type === "allowance"
                     ? "bg-emerald-600 hover:bg-emerald-700"
                     : "bg-red-600 hover:bg-red-700"
@@ -534,7 +539,7 @@ export default function HrAdjustmentModal({
           </form>
 
           {/* Existing adjustments for the selected worker with 1-click delete */}
-          <div className="mt-5 pt-4 border-t-2 border-dashed border-zinc-300 dark:border-zinc-700 space-y-2 text-xs">
+          <div className="mt-5 pt-4 border-t border-dashed border-zinc-200 dark:border-zinc-800 space-y-2 text-xs">
             <div className="flex items-center justify-between">
               <h4 className="font-bold text-zinc-900 dark:text-white">
                 {t(
@@ -547,7 +552,7 @@ export default function HrAdjustmentModal({
               </span>
             </div>
             {workerAdjustments.length === 0 ? (
-              <p className="py-3 text-center text-zinc-400 bg-zinc-50 dark:bg-zinc-800/40 rounded border border-zinc-200 dark:border-zinc-800">
+              <p className="py-3 text-center text-zinc-400 bg-zinc-50/70 dark:bg-zinc-800/40 rounded-xl border border-zinc-200/80 dark:border-zinc-800">
                 {t("لا يوجد بونص أو خصومات مسجلة لهذا الموظف في هذه الدورة.", "No bonuses or deductions recorded for this worker in this cycle.")}
               </p>
             ) : (
@@ -558,23 +563,23 @@ export default function HrAdjustmentModal({
                   return (
                     <div
                       key={adj.id}
-                      className={`p-2.5 rounded border flex items-center justify-between gap-2 ${
+                      className={`p-2.5 rounded-xl border flex items-center justify-between gap-2 ${
                         isPos
-                          ? "bg-emerald-50/60 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800"
-                          : "bg-red-50/60 dark:bg-red-950/30 border-red-300 dark:border-red-800"
+                          ? "bg-emerald-50/60 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800/70"
+                          : "bg-red-50/60 dark:bg-red-950/30 border-red-200 dark:border-red-800/70"
                       }`}
                     >
                       <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-1.5 font-bold">
+                        <div className="flex flex-wrap items-center gap-1.5 font-semibold">
                           {selectedWorkerIds.length > 1 && adj.workerName && (
-                            <span className="px-1.5 py-0.5 rounded bg-zinc-900 text-white text-[10px]">
+                            <span className="px-2 py-0.5 rounded-full bg-zinc-900 text-white text-[10px]">
                               {adj.workerName}
                             </span>
                           )}
                           <span className={isPos ? "text-emerald-800 dark:text-emerald-300" : "text-red-700 dark:text-red-300"}>
-                            {isPos ? "🎁" : "⛔"} {kLabel}: {isPos ? "+" : "-"}EGP {adj.amount}
+                            {isPos ? "🎁" : "⛔"} {kLabel}: <span className="font-code">{isPos ? "+" : "-"}EGP {adj.amount}</span>
                           </span>
-                          <span className="text-[10px] text-zinc-500 font-normal">({adj.date})</span>
+                          <span className="text-[10px] text-zinc-500 font-code font-normal">({adj.date})</span>
                         </div>
                         {adj.reason && <p className="text-[11px] text-zinc-600 dark:text-zinc-300 truncate">{adj.reason}</p>}
                       </div>
@@ -582,7 +587,7 @@ export default function HrAdjustmentModal({
                         type="button"
                         disabled={deletingId === adj.id}
                         onClick={() => void handleRemoveAdjustment(adj)}
-                        className="shrink-0 px-2.5 py-1 bg-white dark:bg-zinc-900 hover:bg-red-600 text-red-600 hover:text-white border border-red-300 rounded text-[10px] font-bold cursor-pointer transition-colors"
+                        className="shrink-0 px-2.5 py-1 bg-white dark:bg-zinc-900 hover:bg-red-600 text-red-600 hover:text-white border border-red-200 dark:border-red-800 rounded-lg text-[10px] font-semibold cursor-pointer transition-colors"
                       >
                         {deletingId === adj.id
                           ? t("جارٍ الحذف...", "Removing...")

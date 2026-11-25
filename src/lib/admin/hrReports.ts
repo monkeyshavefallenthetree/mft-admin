@@ -1,4 +1,5 @@
 import { effectiveSessionWorkMs, sessionHours, type SessionLike } from "@/lib/admin/workTime";
+import { CAIRO_TZ, addDaysToYmd, cairoDayOfWeek, cairoEndOfDayMs, cairoMinutesOfDay, cairoParts, cairoStartOfDayMs, cairoWallTimeToDate, cairoYmd } from "@/lib/admin/cairoTime";
 import {
   POLICY_2026_SETTINGS_DEFAULTS,
   type Policy2026SettingsFields,
@@ -48,6 +49,7 @@ export interface HrSettings extends Policy2026SettingsFields {
   officePinFixedCode?: string;
   officePinSalt?: string;
   officeDeviceAuthSecret?: string;
+  autoClockOutGraceMinutes?: number;
 }
 
 export const DEFAULT_HR_SETTINGS: HrSettings = {
@@ -80,10 +82,7 @@ function normalizeDigits(str: string): string {
 }
 
 export function getLocalYmdForPin(d = new Date()): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  return cairoYmd(d);
 }
 
 export function computeDailyOfficePin(
@@ -300,15 +299,13 @@ export function getPayrollCycleRange(
   targetDate: Date = new Date(),
   monthStartDay: number = 21,
 ): { start: Date; end: Date; label: string } {
-  const d = new Date(targetDate);
-  const day = d.getDate();
-  const year = d.getFullYear();
-  const month = d.getMonth();
+  const { year, month, day } = cairoParts(targetDate);
 
   if (monthStartDay <= 1) {
-    const start = new Date(year, month, 1, 0, 0, 0, 0);
-    const end = new Date(year, month + 1, 0, 23, 59, 59, 999);
-    const label = `${start.toLocaleDateString("en-US", { month: "short", year: "numeric" })} (1st–End)`;
+    const start = cairoWallTimeToDate(year, month, 1, 0, 0, 0, 0);
+    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    const end = cairoWallTimeToDate(year, month, lastDay, 23, 59, 59, 999);
+    const label = `${start.toLocaleDateString("en-US", { timeZone: CAIRO_TZ, month: "short", year: "numeric" })} (1st–End)`;
     return { start, end, label };
   }
 
@@ -316,49 +313,42 @@ export function getPayrollCycleRange(
   let end: Date;
 
   if (day >= monthStartDay) {
-    start = new Date(year, month, monthStartDay, 0, 0, 0, 0);
-    end = new Date(year, month + 1, monthStartDay - 1, 23, 59, 59, 999);
+    start = cairoWallTimeToDate(year, month, monthStartDay, 0, 0, 0, 0);
+    end = cairoWallTimeToDate(year, month + 1, monthStartDay - 1, 23, 59, 59, 999);
   } else {
-    start = new Date(year, month - 1, monthStartDay, 0, 0, 0, 0);
-    end = new Date(year, month, monthStartDay - 1, 23, 59, 59, 999);
+    start = cairoWallTimeToDate(year, month - 1, monthStartDay, 0, 0, 0, 0);
+    end = cairoWallTimeToDate(year, month, monthStartDay - 1, 23, 59, 59, 999);
   }
 
-  const label = `${start.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${end.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+  const label = `${start.toLocaleDateString("en-US", { timeZone: CAIRO_TZ, month: "short", day: "numeric" })} – ${end.toLocaleDateString("en-US", { timeZone: CAIRO_TZ, month: "short", day: "numeric", year: "numeric" })}`;
   return { start, end, label };
 }
 
-/** Standard rolling window or payroll cycle range. */
+/** Standard rolling window or payroll cycle range (Africa/Cairo boundaries). */
 export function getHrDateRange(
   range: HrDateRangeKey,
   settings: HrSettings = DEFAULT_HR_SETTINGS,
 ): { start: Date; end: Date } {
-  const end = new Date();
-  end.setHours(23, 59, 59, 999);
-  const start = new Date();
+  const now = new Date();
+  const todayStr = cairoYmd(now);
+  const p = cairoParts(now);
+  const end = new Date(cairoEndOfDayMs(todayStr));
   switch (range) {
     case "today":
-      start.setHours(0, 0, 0, 0);
-      return { start, end };
+      return { start: new Date(cairoStartOfDayMs(todayStr)), end };
     case "week":
-      start.setDate(end.getDate() - 7);
-      start.setHours(0, 0, 0, 0);
-      return { start, end };
+      return { start: new Date(cairoStartOfDayMs(addDaysToYmd(todayStr, -7))), end };
     case "cycle":
     case "month": {
       const cycle = getPayrollCycleRange(end, settings.monthStartDay);
       return { start: cycle.start, end: cycle.end };
     }
     case "quarter":
-      start.setMonth(end.getMonth() - 3);
-      start.setHours(0, 0, 0, 0);
-      return { start, end };
+      return { start: cairoWallTimeToDate(p.year, p.month - 3, p.day, 0, 0, 0, 0), end };
     case "year":
-      start.setFullYear(end.getFullYear() - 1);
-      start.setHours(0, 0, 0, 0);
-      return { start, end };
+      return { start: cairoWallTimeToDate(p.year - 1, p.month, p.day, 0, 0, 0, 0), end };
     default:
-      start.setHours(0, 0, 0, 0);
-      return { start, end };
+      return { start: new Date(cairoStartOfDayMs(todayStr)), end };
   }
 }
 
@@ -411,11 +401,12 @@ export function getExpectedWorkDaysInPeriod(
         if (!item.endDate || item.endDate === item.date) {
           holidayDates.add(item.date);
         } else {
-          const cur = new Date(item.date + "T12:00:00");
-          const endD = new Date(item.endDate + "T12:00:00");
-          while (cur <= endD) {
-            holidayDates.add(cur.toISOString().split("T")[0]);
-            cur.setDate(cur.getDate() + 1);
+          let cur = item.date.slice(0, 10);
+          const endD = item.endDate.slice(0, 10);
+          let guardH = 0;
+          while (cur <= endD && guardH++ < 400) {
+            holidayDates.add(cur);
+            cur = addDaysToYmd(cur, 1);
           }
         }
       }
@@ -423,21 +414,19 @@ export function getExpectedWorkDaysInPeriod(
   }
 
   let workDays = 0;
-  const d = new Date(start);
-  d.setHours(12, 0, 0, 0);
-  const endAt = new Date(end);
-  endAt.setHours(12, 0, 0, 0);
+  let curYmd = cairoYmd(start);
+  const endYmd = cairoYmd(end);
+  let guard = 0;
 
-  while (d <= endAt) {
-    const dayOfWeek = d.getDay();
-    const ymd = d.toISOString().split("T")[0];
+  while (curYmd <= endYmd && guard++ < 4000) {
+    const dayOfWeek = cairoDayOfWeek(curYmd);
     const isWeekend = weekend.includes(dayOfWeek);
-    const isHoliday = holidayDates.has(ymd);
+    const isHoliday = holidayDates.has(curYmd);
 
     if (!isWeekend && !isHoliday) {
       workDays++;
     }
-    d.setDate(d.getDate() + 1);
+    curYmd = addDaysToYmd(curYmd, 1);
   }
   return workDays;
 }
@@ -445,8 +434,7 @@ export function getExpectedWorkDaysInPeriod(
 export function sessionInRange(s: SessionForHr, start: Date, end: Date): boolean {
   const ymd = sessionDateYmd(s);
   if (!ymd) return false;
-  const mid = new Date(ymd + "T12:00:00");
-  return mid >= start && mid <= end;
+  return ymd >= cairoYmd(start) && ymd <= cairoYmd(end);
 }
 
 export function workerSessionsInRange(
@@ -472,8 +460,13 @@ function parseHourStringToDecimal(val: string | number | undefined, defaultVal =
 /**
  * Calculates whether a session was on-time or late based on dynamic or default policies.
  */
-export function calculateAttendancePolicy(session: SessionForHr, settings: Partial<HrSettings> = DEFAULT_HR_SETTINGS) {
-  if (!session.loginTime?.toDate || session.totalWorkTime == null) {
+export function calculateAttendancePolicy(
+  session: SessionForHr,
+  settings: Partial<HrSettings> = DEFAULT_HR_SETTINGS,
+  nowMs = Date.now(),
+) {
+  const loginTime = toJsDate(session.startTime) ?? toJsDate(session.loginTime);
+  if (!loginTime || (session.totalWorkTime == null && !session.isActive)) {
     return {
       isLate: false,
       latePenalty: 0,
@@ -491,8 +484,7 @@ export function calculateAttendancePolicy(session: SessionForHr, settings: Parti
   const threshold1 = shiftStartMin + graceMins;
   const threshold2 = shiftStartMin + secondMins;
 
-  const loginTime = session.loginTime.toDate();
-  const loginMin = loginTime.getHours() * 60 + loginTime.getMinutes();
+  const loginMin = cairoMinutesOfDay(loginTime);
   let isLate = false;
   let latePenalty = 0;
   let attendanceStatus: "on-time" | "late" | "very-late" = "on-time";
@@ -507,7 +499,8 @@ export function calculateAttendancePolicy(session: SessionForHr, settings: Parti
     attendanceStatus = "late";
   }
 
-  const totalHours = session.totalWorkTime / (1000 * 60 * 60);
+  const totalHours =
+    effectiveSessionWorkMs(session, nowMs, { standardHours: settings.standardHours }) / (1000 * 60 * 60);
   return {
     isLate,
     latePenalty,
@@ -629,11 +622,12 @@ function holidayDateSet(holidays: (string | HolidayItem)[] | undefined): Set<str
       set.add(h.date);
       continue;
     }
-    const cur = new Date(h.date + "T12:00:00");
-    const endD = new Date(h.endDate + "T12:00:00");
-    while (cur <= endD) {
-      set.add(cur.toISOString().split("T")[0]);
-      cur.setDate(cur.getDate() + 1);
+    let cur = h.date.slice(0, 10);
+    const endD = h.endDate.slice(0, 10);
+    let guardH = 0;
+    while (cur <= endD && guardH++ < 400) {
+      set.add(cur);
+      cur = addDaysToYmd(cur, 1);
     }
   }
   return set;
@@ -672,11 +666,20 @@ export function computePayrollForWorker(
   const cfg = options?.settings ?? DEFAULT_HR_SETTINGS;
   const hr = hourlyRate > 0 ? hourlyRate : cfg.defaultHourlyRate || DEFAULT_HOURLY;
   const std = cfg.standardHours || WORK_POLICY.STANDARD_HOURS;
+  const otByDate = new Map<string, number>();
+  for (const o of options?.approvedOvertime ?? []) {
+    if (!o.date || !(o.minutes > 0)) continue;
+    otByDate.set(o.date, (otByDate.get(o.date) ?? 0) + o.minutes);
+  }
+
   const consolidatedByDate = new Map<string, SessionForHr>();
   for (const s of workerSessions) {
     const dKey = sessionDateYmd(s);
     if (!dKey) continue;
-    const sMs = effectiveSessionWorkMs(s);
+    const sMs = effectiveSessionWorkMs(s, Date.now(), {
+      standardHours: std,
+      overtimeMinutes: Math.max(Number(s.overtimeMinutes) || 0, otByDate.get(dKey) ?? 0),
+    });
     const sStart = toJsDate(s.startTime) ?? toJsDate(s.loginTime);
     const sOut = s.isActive ? null : toJsDate(s.logoutTime);
     const prev = consolidatedByDate.get(dKey);
@@ -717,11 +720,6 @@ export function computePayrollForWorker(
   const weekend = cfg.weekendDays ?? [5, 6];
   const holidaySet = holidayDateSet(options?.holidays);
   const ledger = options?.permissionLedger ?? [];
-  const otByDate = new Map<string, number>();
-  for (const o of options?.approvedOvertime ?? []) {
-    if (!o.date || !(o.minutes > 0)) continue;
-    otByDate.set(o.date, (otByDate.get(o.date) ?? 0) + o.minutes);
-  }
   const ledgerFor = (date: string, kind: "late" | "early_leave") =>
     ledger.find((e) => e.date === date && e.kind === kind && e.status === "applied");
 
@@ -796,8 +794,7 @@ export function computePayrollForWorker(
     // ── HR-POL-2026 ──
     policyApplied = true;
     consumeUnmatchedUpTo(date, false);
-    const d = new Date(date + "T12:00:00");
-    const isOffDay = weekend.includes(d.getDay()) || holidaySet.has(date);
+    const isOffDay = weekend.includes(cairoDayOfWeek(date)) || holidaySet.has(date);
     const firstIn = toJsDate(s.startTime) ?? toJsDate(s.loginTime);
     const lastOut = s.isActive ? null : toJsDate(s.logoutTime);
     const workedMin = Math.round(h * 60);
@@ -910,14 +907,13 @@ export function computePayrollForWorker(
   // Expected workdays excluding rest days, public holidays, days before worker onboarding, and future days
   let effStart = periodStart;
   if (options?.workerStartDate) {
-    const ws = new Date(options.workerStartDate + "T00:00:00");
-    if (!isNaN(ws.getTime()) && ws > effStart) effStart = ws;
+    const wsMs = cairoStartOfDayMs(options.workerStartDate);
+    if (Number.isFinite(wsMs) && wsMs > effStart.getTime()) effStart = new Date(wsMs);
   }
   let effEnd = periodEnd;
   if (options?.capAtToday) {
-    const endToday = new Date();
-    endToday.setHours(23, 59, 59, 999);
-    if (endToday < effEnd) effEnd = endToday;
+    const endTodayMs = cairoEndOfDayMs(cairoYmd());
+    if (Number.isFinite(endTodayMs) && endTodayMs < effEnd.getTime()) effEnd = new Date(endTodayMs);
   }
 
   const expectedWorkDays =
@@ -1011,12 +1007,11 @@ export function computePayrollForWorker(
   };
 }
 
-export function isLateTodayHtml(session: SessionForHr, settings: Partial<HrSettings> = DEFAULT_HR_SETTINGS): boolean {
-  const ts = session.loginTime?.toDate ? session.loginTime : session.startTime?.toDate ? session.startTime : null;
-  if (!ts?.toDate) return false;
-  const login = ts.toDate();
+export function isLateTodayHtml(session: SessionLike | SessionForHr, settings: Partial<HrSettings> = DEFAULT_HR_SETTINGS): boolean {
+  const login = toJsDate(session.startTime) ?? toJsDate(session.loginTime);
+  if (!login) return false;
 
-  const loginMin = login.getHours() * 60 + login.getMinutes();
+  const loginMin = cairoMinutesOfDay(login);
   const shiftStartMin = Math.round(parseHourStringToDecimal(settings.shiftStartTime, 10) * 60);
   const graceMins = settings.gracePeriodMinutes ?? 60;
   return loginMin > shiftStartMin + graceMins;

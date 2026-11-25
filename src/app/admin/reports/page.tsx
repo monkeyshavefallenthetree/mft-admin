@@ -9,18 +9,42 @@ import { logActivity } from "@/lib/admin/activity";
 import { toast } from "@/lib/admin/feedback";
 import { sessionHours } from "@/lib/admin/workTime";
 import {
+  CAIRO_TZ,
+  addDaysToYmd,
+  cairoDayOfWeek,
+  cairoEndOfDayMs,
+  cairoParts,
+  cairoStartOfDayMs,
+  cairoWallTimeToDate,
+  cairoYmd,
+  cairoYmdAtMinutes,
+} from "@/lib/admin/cairoTime";
+import { effectiveLeaveDaysForRequest } from "@/lib/admin/hrPolicy2026";
+import {
+  DEFAULT_HR_SETTINGS,
   calculateAttendancePolicy,
   computePayrollForWorker,
   formatDepartment,
   getExpectedWorkDaysInPeriod,
   sessionDateYmd,
+  type HolidayItem,
+  type HrSettings,
   type SessionForHr,
 } from "@/lib/admin/hrReports";
+import {
+  mergeLedgerWithApprovedRequests,
+  subscribeApprovedPolicyRequests,
+  subscribeHolidays,
+  subscribeHrSettings,
+  subscribePermissionLedger,
+  type ApprovedRequestRow,
+  type PermissionLedgerDoc,
+} from "@/lib/admin/hrSettings";
 import { getAssigneeIds, parseDate } from "@/components/admin/projects/types";
 import { EmptyState, PageHeader, Skeleton, STATE_ICONS } from "@/components/admin/ui/States";
 import { ICONS } from "@/lib/admin/nav";
+import { CellColumnTrend } from "@/components/admin/ui/CellColumnTrend";
 import {
-  CellColumnTrend,
   ChartCard,
   DonutBreakdownChart,
   InteractiveAreaChart,
@@ -38,6 +62,9 @@ interface Worker {
   role?: string;
   status?: string;
   hourlyRate?: number;
+  hireDate?: string;
+  attendanceStartDate?: string;
+  createdAt?: { toDate?: () => Date };
 }
 interface Session extends SessionForHr {
   id: string;
@@ -99,42 +126,49 @@ const DEPT_HEX = ["#dc2626", "#2563eb", "#059669", "#d97706", "#7c3aed", "#0284c
 /* ───────────── Helpers ───────────── */
 
 function ymd(d: Date) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return cairoYmd(d);
 }
 
 function resolveRange(key: RangeKey, from: string, to: string): { start: Date; end: Date } {
   const now = new Date();
-  const start = new Date(now);
-  const end = new Date(now);
-  start.setHours(0, 0, 0, 0);
-  end.setHours(23, 59, 59, 999);
+  const p = cairoParts(now);
+  const todayStr = cairoYmd(now);
+  let start = new Date(cairoStartOfDayMs(todayStr));
+  let end = new Date(cairoEndOfDayMs(todayStr));
+
   switch (key) {
     case "this-week": {
-      start.setDate(now.getDate() - now.getDay());
+      const dow = cairoDayOfWeek(todayStr);
+      start = new Date(cairoStartOfDayMs(addDaysToYmd(todayStr, -dow)));
       break;
     }
     case "last-7":
-      start.setDate(now.getDate() - 6);
+      start = new Date(cairoStartOfDayMs(addDaysToYmd(todayStr, -6)));
       break;
     case "this-month":
-      start.setDate(1);
+      start = cairoWallTimeToDate(p.year, p.month, 1, 0, 0, 0, 0);
       break;
-    case "last-month":
-      start.setMonth(now.getMonth() - 1, 1);
-      end.setDate(0);
+    case "last-month": {
+      const prevYear = p.month === 1 ? p.year - 1 : p.year;
+      const prevMonth = p.month === 1 ? 12 : p.month - 1;
+      const lastDay = new Date(Date.UTC(prevYear, prevMonth, 0)).getUTCDate();
+      start = cairoWallTimeToDate(prevYear, prevMonth, 1, 0, 0, 0, 0);
+      end = cairoWallTimeToDate(prevYear, prevMonth, lastDay, 23, 59, 59, 999);
       break;
+    }
     case "last-90":
-      start.setDate(now.getDate() - 89);
+      start = new Date(cairoStartOfDayMs(addDaysToYmd(todayStr, -89)));
       break;
     case "this-year":
-      start.setMonth(0, 1);
+      start = cairoWallTimeToDate(p.year, 1, 1, 0, 0, 0, 0);
       break;
     case "custom": {
-      const f = from ? new Date(from + "T00:00:00") : null;
-      const t = to ? new Date(to + "T23:59:59") : null;
-      if (f && !isNaN(f.getTime())) start.setTime(f.getTime());
-      else start.setDate(now.getDate() - 29);
-      if (t && !isNaN(t.getTime())) end.setTime(t.getTime());
+      const fMs = from ? cairoStartOfDayMs(from) : NaN;
+      const tMs = to ? cairoEndOfDayMs(to) : NaN;
+      start = Number.isFinite(fMs)
+        ? new Date(fMs)
+        : new Date(cairoStartOfDayMs(addDaysToYmd(todayStr, -29)));
+      if (Number.isFinite(tMs)) end = new Date(tMs);
       break;
     }
   }
@@ -147,7 +181,7 @@ function inRange(d: Date | null, start: Date, end: Date) {
 
 function sessionDate(s: Session): Date | null {
   const k = sessionDateYmd(s);
-  return k ? new Date(k + "T12:00:00") : null;
+  return k ? cairoYmdAtMinutes(k, 12 * 60) : null;
 }
 
 function name(w?: Worker) {
@@ -236,6 +270,11 @@ export default function ReportsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [exceptions, setExceptions] = useState<ExceptionReq[]>([]);
   const [penalties, setPenalties] = useState<Penalty[]>([]);
+  const [hrSettings, setHrSettings] = useState<HrSettings>(DEFAULT_HR_SETTINGS);
+  const [holidays, setHolidays] = useState<HolidayItem[]>([]);
+  const [ledger, setLedger] = useState<PermissionLedgerDoc[]>([]);
+  const [approvedRequests, setApprovedRequests] = useState<ApprovedRequestRow[]>([]);
+  const [liveNowMs, setLiveNowMs] = useState(() => Date.now());
   const [loaded, setLoaded] = useState<Record<string, boolean>>({});
 
   const [rangeKey, setRangeKey] = useUrlState("range", "this-month");
@@ -266,9 +305,29 @@ export default function ReportsPage() {
       sub<Project>("projects", setProjects),
       sub<ExceptionReq>("exceptionRequests", setExceptions),
       sub<Penalty>("penalties", setPenalties),
+      subscribeHrSettings(setHrSettings),
+      subscribeHolidays(setHolidays),
+      subscribePermissionLedger(setLedger),
+      subscribeApprovedPolicyRequests(setApprovedRequests),
     ];
-    return () => unsubs.forEach((u) => u());
+    const tickId = window.setInterval(() => setLiveNowMs(Date.now()), 60_000);
+    return () => {
+      window.clearInterval(tickId);
+      unsubs.forEach((u) => u());
+    };
   }, []);
+
+  const effectiveLedger = useMemo(
+    () =>
+      mergeLedgerWithApprovedRequests(
+        ledger,
+        approvedRequests,
+        hrSettings.permissionMinMinutes ?? 30,
+        hrSettings.permissionMaxSingleMinutes ?? 120,
+      ),
+    [ledger, approvedRequests, hrSettings.permissionMinMinutes, hrSettings.permissionMaxSingleMinutes],
+  );
+  const stdHours = hrSettings.standardHours || 8;
 
   const loading = !loaded.workers || !loaded.workSessions || !loaded.tasks;
 
@@ -277,10 +336,12 @@ export default function ReportsPage() {
     [rangeKey, from, to],
   );
   const rangeLabel = `${start.toLocaleDateString(undefined, {
+    timeZone: CAIRO_TZ,
     month: "short",
     day: "numeric",
     year: "numeric",
   })} – ${end.toLocaleDateString(undefined, {
+    timeZone: CAIRO_TZ,
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -325,21 +386,30 @@ export default function ReportsPage() {
 
   /* KPIs */
   const kpis = useMemo(() => {
-    const totalHours = rangeSessions.reduce((s, x) => s + sessionHours(x), 0);
-    const overtime = rangeSessions.reduce((s, x) => s + Math.max(0, sessionHours(x) - 8), 0);
+    const totalHours = rangeSessions.reduce(
+      (s, x) => s + sessionHours(x, liveNowMs, { standardHours: stdHours }),
+      0,
+    );
+    const overtime = rangeSessions.reduce(
+      (s, x) => s + Math.max(0, sessionHours(x, liveNowMs, { standardHours: stdHours }) - stdHours),
+      0,
+    );
     let late = 0;
     rangeSessions.forEach((s) => {
-      const p = calculateAttendancePolicy(s);
+      const p = calculateAttendancePolicy(s, hrSettings, liveNowMs);
       if (p.isLate || s.isLate) late++;
     });
-    const expectedDays = getExpectedWorkDaysInPeriod(start, end > new Date() ? new Date() : end);
+    const expectedDays = getExpectedWorkDaysInPeriod(start, end > new Date() ? new Date() : end, {
+      weekendDays: hrSettings.weekendDays,
+      holidays,
+    });
     const expectedSessions = expectedDays * teamWorkers.length;
     const workerDays = new Set(rangeSessions.map((s) => `${s.workerId}|${sessionDateYmd(s)}`)).size;
     const attendance =
       expectedSessions > 0 ? Math.min(100, Math.round((workerDays / expectedSessions) * 100)) : 0;
     const avgPerDay = workerDays > 0 ? totalHours / workerDays : 0;
     return { totalHours, overtime, late, attendance, avgPerDay, workerDays, expectedDays };
-  }, [rangeSessions, start, end, teamWorkers.length]);
+  }, [rangeSessions, start, end, teamWorkers.length, hrSettings, holidays, liveNowMs, stdHours]);
 
   /* Daily trend */
   const trend = useMemo(() => {
@@ -366,10 +436,10 @@ export default function ReportsPage() {
         key = ymd(w);
       }
       const b = buckets.get(key) ?? { hours: 0, overtime: 0, late: 0 };
-      const h = sessionHours(s);
+      const h = sessionHours(s, liveNowMs, { standardHours: stdHours });
       b.hours += h;
-      b.overtime += Math.max(0, h - 8);
-      if (calculateAttendancePolicy(s).isLate || s.isLate) b.late++;
+      b.overtime += Math.max(0, h - stdHours);
+      if (calculateAttendancePolicy(s, hrSettings, liveNowMs).isLate || s.isLate) b.late++;
       buckets.set(key, b);
     });
     if (weekly) cursor.setDate(cursor.getDate() - cursor.getDay());
@@ -393,7 +463,7 @@ export default function ReportsPage() {
       guard++;
     }
     return { days, weekly };
-  }, [rangeSessions, start, end]);
+  }, [rangeSessions, start, end, hrSettings, liveNowMs, stdHours]);
 
   const trendAvg = useMemo(() => {
     const activeDays = trend.days.filter((d) => d.hours > 0);
@@ -404,14 +474,60 @@ export default function ReportsPage() {
   /* Per-worker table */
   const workerRows = useMemo(() => {
     const payEnd = end > new Date() ? new Date() : end;
+    const sYmd = cairoYmd(start);
+    const eYmd = cairoYmd(payEnd);
+    const wknd = hrSettings.weekendDays || [5, 6];
     const rows = teamWorkers.map((w) => {
       const ws = rangeSessions.filter((s) => s.workerId === w.id);
-      const pay = computePayrollForWorker(ws, Number(w.hourlyRate) || 0, start, payEnd);
-      const done = completedInRange.filter((t) => getAssigneeIds(t.assignedTo).includes(w.id)).length;
-      const absent = Math.max(
-        0,
-        getExpectedWorkDaysInPeriod(start, payEnd) - new Set(ws.map((s) => sessionDateYmd(s))).size,
+      const leaveReqs = approvedRequests.filter(
+        (r) =>
+          r.workerId === w.id &&
+          (r.type === "annual_leave" ||
+            r.type === "unpaid_leave" ||
+            r.type === "sick_leave" ||
+            r.type === "emergency_leave" ||
+            r.type === "absence" ||
+            r.type === "absent") &&
+          r.exceptionDate >= sYmd &&
+          r.exceptionDate <= eYmd,
       );
+      const unpaidLeaveDays = leaveReqs
+        .filter((r) => r.type === "unpaid_leave" || r.leaveType === "unpaid")
+        .reduce((sum, r) => sum + effectiveLeaveDaysForRequest(r, wknd, holidays), 0);
+      const paidLeaveDays = leaveReqs
+        .filter((r) => r.type !== "unpaid_leave" && r.leaveType !== "unpaid")
+        .reduce((sum, r) => sum + effectiveLeaveDaysForRequest(r, wknd, holidays), 0);
+      const fallbackStart = w.createdAt?.toDate ? cairoYmd(w.createdAt.toDate()) : null;
+
+      const pay = computePayrollForWorker(
+        ws,
+        Number(w.hourlyRate) || hrSettings.defaultHourlyRate || 0,
+        start,
+        payEnd,
+        {
+          weekendDays: hrSettings.weekendDays,
+          holidays,
+          settings: hrSettings,
+          permissionLedger: effectiveLedger.filter(
+            (l) => l.workerId === w.id && l.date >= sYmd && l.date <= eYmd,
+          ),
+          approvedOvertime: approvedRequests
+            .filter(
+              (r) =>
+                r.workerId === w.id &&
+                r.type === "overtime" &&
+                r.exceptionDate >= sYmd &&
+                r.exceptionDate <= eYmd,
+            )
+            .map((r) => ({ date: r.exceptionDate, minutes: Number(r.lateMinutes) || 0 })),
+          approvedLeaveDays: paidLeaveDays + unpaidLeaveDays,
+          paidLeaveDays,
+          unpaidLeaveDays,
+          workerStartDate: w.attendanceStartDate || w.hireDate || fallbackStart,
+          capAtToday: true,
+        },
+      );
+      const done = completedInRange.filter((t) => getAssigneeIds(t.assignedTo).includes(w.id)).length;
       return {
         id: w.id,
         name: name(w),
@@ -420,7 +536,7 @@ export default function ReportsPage() {
         hours: pay.totalHours,
         overtime: pay.overtimeHours,
         late: pay.lateDays + pay.veryLateDays,
-        absent,
+        absent: pay.absentDays,
         tasks: done,
         pay: pay.totalPay,
         rate: pay.hourlyRate,
@@ -440,7 +556,19 @@ export default function ReportsPage() {
       if (k === "name") return a.name.localeCompare(b.name) * dir;
       return ((a[k] as number) - (b[k] as number)) * dir;
     });
-  }, [teamWorkers, rangeSessions, completedInRange, start, end, workerSort, workerSearch]);
+  }, [
+    teamWorkers,
+    rangeSessions,
+    completedInRange,
+    start,
+    end,
+    workerSort,
+    workerSearch,
+    hrSettings,
+    holidays,
+    effectiveLedger,
+    approvedRequests,
+  ]);
 
   const maxHours = Math.max(1, ...workerRows.map((r) => r.hours));
   const totalPay = workerRows.reduce((s, r) => s + Math.max(0, r.pay), 0);
@@ -451,9 +579,9 @@ export default function ReportsPage() {
     rangeSessions.forEach((s) => {
       const d = s.department ?? workerMap.get(s.workerId ?? "")?.department ?? "unassigned";
       const r = map.get(d) ?? { hours: 0, people: new Set<string>(), late: 0 };
-      r.hours += sessionHours(s);
+      r.hours += sessionHours(s, liveNowMs, { standardHours: stdHours });
       if (s.workerId) r.people.add(s.workerId);
-      if (calculateAttendancePolicy(s).isLate || s.isLate) r.late++;
+      if (calculateAttendancePolicy(s, hrSettings, liveNowMs).isLate || s.isLate) r.late++;
       map.set(d, r);
     });
     return Array.from(map.entries())
@@ -466,7 +594,7 @@ export default function ReportsPage() {
         color: DEPT_HEX[i % DEPT_HEX.length],
       }))
       .sort((a, b) => b.hours - a.hours);
-  }, [rangeSessions, workerMap]);
+  }, [rangeSessions, workerMap, hrSettings, liveNowMs, stdHours]);
 
   /* Projects */
   const projectRows = useMemo(() => {

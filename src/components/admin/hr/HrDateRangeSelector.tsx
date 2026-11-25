@@ -1,6 +1,7 @@
 "use client";
 
 import { type HrSettings, type HolidayItem, getExpectedWorkDaysInPeriod } from "@/lib/admin/hrReports";
+import { CAIRO_TZ, cairoEndOfDayMs, cairoStartOfDayMs, cairoYmd } from "@/lib/admin/cairoTime";
 import { useHrLang } from "@/lib/admin/hrI18n";
 
 interface Props {
@@ -30,27 +31,29 @@ export default function HrDateRangeSelector({
     holidays,
   });
 
-  const periodStartYmd = periodStart.toISOString().split("T")[0];
-  const periodEndYmd = periodEnd.toISOString().split("T")[0];
+  const periodStartYmd = cairoYmd(periodStart);
+  const periodEndYmd = cairoYmd(periodEnd);
 
   const handleFromChange = (val: string) => {
     if (!val) return;
-    const start = new Date(val + "T00:00:00");
-    onCustomDatesChange(start, periodEnd);
+    const ms = cairoStartOfDayMs(val);
+    if (!Number.isFinite(ms)) return;
+    onCustomDatesChange(new Date(ms), periodEnd);
   };
 
   const handleToChange = (val: string) => {
     if (!val) return;
-    const end = new Date(val + "T23:59:59");
-    onCustomDatesChange(periodStart, end);
+    const ms = cairoEndOfDayMs(val);
+    if (!Number.isFinite(ms)) return;
+    onCustomDatesChange(periodStart, new Date(ms));
   };
 
   return (
-    <div dir={dir} className="p-3 bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 shadow-[3px_3px_0px_0px_#09090b] rounded-lg space-y-3 font-mono text-xs">
+    <div dir={dir} className="ui-card p-3.5 space-y-3 text-xs">
       <div className="flex flex-wrap items-center justify-between gap-3">
         {/* Preset Buttons */}
         <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-[10px] uppercase font-bold text-zinc-400 me-1">
+          <span className="text-[11px] uppercase font-semibold text-zinc-400 me-1">
             {t("الفترة:", "Period:")}
           </span>
           {[
@@ -64,10 +67,10 @@ export default function HrDateRangeSelector({
               key={item.key}
               type="button"
               onClick={() => onRangeKeyChange(item.key)}
-              className={`px-3 py-1.5 rounded border text-xs font-bold transition-all cursor-pointer ${
+              className={`px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
                 rangeKey === item.key
-                  ? "bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950 border-zinc-950 dark:border-zinc-100 shadow-sm"
-                  : "bg-zinc-50 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-700"
+                  ? "bg-zinc-900 text-white border-zinc-900 shadow-2xs"
+                  : "bg-zinc-50/80 text-zinc-700 border-zinc-200 hover:bg-zinc-100"
               }`}
             >
               {isAr ? item.ar : item.en}
@@ -79,14 +82,14 @@ export default function HrDateRangeSelector({
         <button
           type="button"
           onClick={onOpenPolicyModal}
-          className="text-zinc-600 dark:text-zinc-300 hover:text-red-600 dark:hover:text-red-400 font-bold flex items-center gap-1 cursor-pointer text-[11px]"
+          className="text-zinc-600 hover:text-red-600 font-semibold flex items-center gap-1 cursor-pointer text-xs"
         >
           <span>{t(`⚙️ تغيير يوم بداية الشهر (${settings.monthStartDay})`, `⚙️ Change Cutoff Day (${settings.monthStartDay})`)}</span>
         </button>
       </div>
 
       {/* Dynamic Date Inputs & Active Period Badge */}
-      <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-zinc-200 dark:border-zinc-800">
+      <div className="flex flex-wrap items-center justify-between gap-3 pt-2.5 border-t border-zinc-100">
         <div className="flex flex-wrap items-center gap-2">
           {rangeKey === "custom" ? (
             <div className="flex items-center gap-2">
@@ -94,23 +97,23 @@ export default function HrDateRangeSelector({
                 type="date"
                 value={periodStartYmd}
                 onChange={(e) => handleFromChange(e.target.value)}
-                className="bg-white dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 px-2 py-1 text-xs font-bold text-zinc-900 dark:text-zinc-100 rounded focus:outline-none focus:ring-1 focus:ring-red-600"
+                className="bg-white border border-zinc-200 px-2.5 py-1 text-xs font-code font-semibold text-zinc-900 rounded-lg focus:outline-none focus:border-zinc-900"
               />
-              <span className="font-bold text-zinc-400">→</span>
+              <span className="font-semibold text-zinc-400">→</span>
               <input
                 type="date"
                 value={periodEndYmd}
                 min={periodStartYmd}
                 onChange={(e) => handleToChange(e.target.value)}
-                className="bg-white dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 px-2 py-1 text-xs font-bold text-zinc-900 dark:text-zinc-100 rounded focus:outline-none focus:ring-1 focus:ring-red-600"
+                className="bg-white border border-zinc-200 px-2.5 py-1 text-xs font-code font-semibold text-zinc-900 rounded-lg focus:outline-none focus:border-zinc-900"
               />
             </div>
           ) : (
-            <div className="text-zinc-900 dark:text-white font-bold text-xs flex items-center gap-1.5">
+            <div className="text-zinc-900 font-semibold text-xs flex items-center gap-1.5">
               <span>📅</span>
-              <span dir="ltr">
-                {periodStart.toLocaleDateString("en-US", { month: "short", day: "numeric" })} –{" "}
-                {periodEnd.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+              <span dir="ltr" className="font-code">
+                {periodStart.toLocaleDateString("en-US", { timeZone: CAIRO_TZ, month: "short", day: "numeric" })} –{" "}
+                {periodEnd.toLocaleDateString("en-US", { timeZone: CAIRO_TZ, month: "short", day: "numeric", year: "numeric" })}
               </span>
             </div>
           )}
@@ -118,10 +121,10 @@ export default function HrDateRangeSelector({
 
         {/* Expected Workdays Pill */}
         <div className="flex items-center gap-2 text-[11px]">
-          <span className="px-2 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 font-bold">
+          <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 font-semibold">
             {t(`${expectedDays} يوم عمل فعلي`, `${expectedDays} Expected Workdays`)}
           </span>
-          <span className="px-2 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 font-bold">
+          <span className="px-2.5 py-0.5 rounded-full bg-zinc-100 border border-zinc-200 text-zinc-600 font-medium">
             {t(`${settings.weekendDays.length} يوم راحة أسبوعي`, `${settings.weekendDays.length} Weekly Rest Day(s)`)}
           </span>
         </div>

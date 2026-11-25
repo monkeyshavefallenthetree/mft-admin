@@ -21,6 +21,7 @@ import { notifyAdmins } from "@/lib/adminNotifications";
 import { logActivity } from "@/lib/admin/activity";
 import { toast, confirmDialog } from "@/lib/admin/feedback";
 import { useHrLang } from "@/lib/admin/hrI18n";
+import { cairoYmd } from "@/lib/admin/cairoTime";
 
 interface WorkerItem {
   id: string;
@@ -83,7 +84,7 @@ export default function HrDisciplinaryCatalog({
   const [selectedWorkerId, setSelectedWorkerId] = useState<string>(workers[0]?.id ?? "");
   const [selectedTier, setSelectedTier] = useState<OffenseTier>(1);
   const [customAmount, setCustomAmount] = useState<number | "">("");
-  const [customDate, setCustomDate] = useState(() => new Date().toISOString().split("T")[0]);
+  const [customDate, setCustomDate] = useState(() => cairoYmd());
   const [adminNote, setAdminNote] = useState("");
   const [sendWorkerAlert, setSendWorkerAlert] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -336,20 +337,20 @@ export default function HrDisciplinaryCatalog({
     categoryFilter === "all" ? ["attendance", "operations", "conduct"] : [categoryFilter];
 
   return (
-    <div dir={dir} className="space-y-5 font-mono">
+    <div dir={dir} className="space-y-5">
       {/* ── Top Control & Explanation Banner ── */}
-      <div className="p-5 bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 shadow-[4px_4px_0px_0px_#09090b] rounded-lg space-y-4">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 border-b-2 border-zinc-200 dark:border-zinc-800 pb-4">
+      <div className="p-5 ui-card space-y-4">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 border-b border-zinc-200 dark:border-zinc-800 pb-4">
           <div className="space-y-1">
             <div className="flex items-center gap-2">
-              <span className="px-2.5 py-0.5 bg-red-600 text-white text-[10px] font-black uppercase rounded">
+              <span className="px-2.5 py-0.5 bg-red-600 text-white text-[10px] font-semibold uppercase rounded-full">
                 {t("⚖️ لائحة الجزاءات التأديبية الرسمية", "⚖️ OFFICIAL DISCIPLINARY SCHEDULE")}
               </span>
-              <span className="text-xs font-bold text-zinc-500">
+              <span className="text-xs font-medium text-zinc-500">
                 {t(`إجمالي البنود: ${DISCIPLINARY_RULES.length} مادة لائحية`, `${DISCIPLINARY_RULES.length} Articles`)}
               </span>
             </div>
-            <h3 className="text-lg sm:text-xl font-black text-zinc-950 dark:text-white">
+            <h3 className="text-lg sm:text-xl font-bold tracking-tight text-zinc-950 dark:text-white">
               {t(
                 "جدول المخالفات والجزاءات المتدرجة (أول مرة ← رابع مرة)",
                 "Progressive Disciplinary Violations & Penalties Schedule (1st → 4th Offense)",
@@ -366,7 +367,7 @@ export default function HrDisciplinaryCatalog({
           <button
             type="button"
             onClick={() => openApplyModalForRule(DISCIPLINARY_RULES[0]!)}
-            className="px-4 py-3 bg-red-600 hover:bg-red-700 text-white text-xs font-black uppercase border-2 border-zinc-900 rounded-lg shadow-[3px_3px_0px_0px_#09090b] cursor-pointer shrink-0 flex items-center justify-center gap-2 transition-transform active:scale-95"
+            className="px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-xl shadow-xs cursor-pointer shrink-0 flex items-center justify-center gap-2 transition-colors"
           >
             <span>⚖️</span>
             <span>{t("+ توقيع جزاء لائحي على موظف", "+ Apply Disciplinary Penalty")}</span>
@@ -379,10 +380,10 @@ export default function HrDisciplinaryCatalog({
             <button
               type="button"
               onClick={() => setCategoryFilter("all")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold border cursor-pointer transition-all ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold border cursor-pointer transition-all ${
                 categoryFilter === "all"
-                  ? "bg-zinc-950 text-white dark:bg-white dark:text-zinc-950 border-zinc-950"
-                  : "bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700 hover:bg-zinc-200"
+                  ? "bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 border-zinc-900 dark:border-white"
+                  : "bg-zinc-50 dark:bg-zinc-800/80 text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100"
               }`}
             >
               {t(`الكل (${DISCIPLINARY_RULES.length})`, `All (${DISCIPLINARY_RULES.length})`)}
@@ -396,10 +397,10 @@ export default function HrDisciplinaryCatalog({
                   key={catKey}
                   type="button"
                   onClick={() => setCategoryFilter(catKey)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold border cursor-pointer transition-all flex items-center gap-1.5 ${
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold border cursor-pointer transition-all flex items-center gap-1.5 ${
                     active
-                      ? "bg-red-600 text-white border-red-700 shadow-sm"
-                      : "bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100"
+                      ? "bg-red-600 text-white border-red-600 shadow-xs"
+                      : "bg-white dark:bg-zinc-800/80 text-zinc-700 dark:text-zinc-300 border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50"
                   }`}
                 >
                   <span>{cat.icon}</span>
@@ -417,7 +418,7 @@ export default function HrDisciplinaryCatalog({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={t("🔍 ابحث برقم البند أو نوع المخالفة...", "🔍 Search by rule # or violation text...")}
-              className="w-full bg-zinc-50 dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 px-3 py-2 text-xs font-bold text-zinc-950 dark:text-zinc-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-600"
+              className="w-full brutal-input px-3 py-2 text-xs font-semibold"
             />
           </div>
         </div>
@@ -425,9 +426,9 @@ export default function HrDisciplinaryCatalog({
 
       {/* ── Active Applied Disciplinary Penalties Log (If Any) ── */}
       {disciplinaryAdjustments.length > 0 && (
-        <div className="p-4 bg-red-50/70 dark:bg-red-950/25 border-2 border-red-600 rounded-lg space-y-3">
+        <div className="p-4 bg-red-50/60 dark:bg-red-950/20 border border-red-200 dark:border-red-900/60 rounded-2xl space-y-3">
           <div className="flex items-center justify-between">
-            <h4 className="text-xs sm:text-sm font-black text-red-950 dark:text-red-200 flex items-center gap-2">
+            <h4 className="text-xs sm:text-sm font-bold text-red-950 dark:text-red-200 flex items-center gap-2">
               <span>📋</span>
               <span>
                 {t(
@@ -441,22 +442,22 @@ export default function HrDisciplinaryCatalog({
             {disciplinaryAdjustments.map((adj) => (
               <div
                 key={adj.id}
-                className="p-3 bg-white dark:bg-zinc-900 border border-red-300 dark:border-red-800 rounded-lg flex items-start justify-between gap-3 text-xs shadow-xs"
+                className="p-3 bg-white dark:bg-zinc-900 border border-red-200/80 dark:border-red-800/60 rounded-xl flex items-start justify-between gap-3 text-xs shadow-2xs"
               >
                 <div className="space-y-1 min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-black text-zinc-950 dark:text-white">{adj.workerName || "موظف"}</span>
-                    <span className="px-2 py-0.5 rounded bg-red-600 text-white text-[10px] font-black">
+                    <span className="font-bold text-zinc-950 dark:text-white">{adj.workerName || "موظف"}</span>
+                    <span className="px-2 py-0.5 rounded-full bg-red-600 text-white text-[10px] font-bold font-code">
                       -EGP {adj.amount}
                     </span>
-                    <span className="text-[10px] text-zinc-400">{adj.date}</span>
+                    <span className="text-[10px] text-zinc-400 font-code">{adj.date}</span>
                   </div>
                   <p className="text-[11px] text-zinc-700 dark:text-zinc-300 leading-relaxed">{adj.reason}</p>
                 </div>
                 <button
                   type="button"
                   onClick={() => void handleRevokeDisciplinaryAdjustment(adj)}
-                  className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-[10px] font-bold cursor-pointer shrink-0"
+                  className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg text-[10px] font-semibold cursor-pointer shrink-0 transition-colors"
                 >
                   {t("✕ شيل الجزاء", "✕ Revoke")}
                 </button>
@@ -475,58 +476,64 @@ export default function HrDisciplinaryCatalog({
         return (
           <div
             key={catKey}
-            className="bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 shadow-[3px_3px_0px_0px_#09090b] rounded-lg overflow-hidden"
+            className="ui-card overflow-hidden"
           >
             {/* Category Header */}
-            <div className="p-4 bg-zinc-950 text-white dark:bg-zinc-800 flex flex-wrap items-center justify-between gap-2 border-b-2 border-zinc-900">
+            <div className="p-4 bg-zinc-900 text-white dark:bg-zinc-800/90 flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800">
               <div className="flex items-center gap-2.5">
                 <span className="text-xl">{catInfo.icon}</span>
                 <div>
-                  <h4 className="font-black text-sm sm:text-base">{isAr ? catInfo.titleAr : catInfo.titleEn}</h4>
+                  <h4 id={`disc-cat-${catKey}`} className="font-bold text-sm sm:text-base">{isAr ? catInfo.titleAr : catInfo.titleEn}</h4>
                   <p className="text-[11px] text-zinc-300 mt-0.5">{catInfo.subtitleAr}</p>
                 </div>
               </div>
-              <span className="px-2.5 py-1 rounded bg-white/10 text-white text-xs font-bold">
+              <span className="px-2.5 py-1 rounded-full bg-white/10 text-white text-xs font-semibold">
                 {t(`${rules.length} بند`, `${rules.length} items`)}
               </span>
             </div>
 
             {/* Table */}
-            <div className="overflow-x-auto">
-              <table className="w-full text-start divide-y divide-zinc-200 dark:divide-zinc-800 text-xs">
-                <thead className="bg-zinc-100 dark:bg-zinc-800/90 text-[11px] font-black text-zinc-700 dark:text-zinc-300">
+            <div
+              tabIndex={0}
+              role="region"
+              aria-labelledby={`disc-cat-${catKey}`}
+              className="mft-table-wrapper"
+            >
+              <table className="w-full text-start divide-y divide-zinc-200/80 dark:divide-zinc-800 text-xs">
+                <caption className="sr-only">{isAr ? catInfo.titleAr : catInfo.titleEn}</caption>
+                <thead className="bg-zinc-50/90 dark:bg-zinc-900/90 text-[11px] font-semibold text-zinc-600 dark:text-zinc-400">
                   <tr>
-                    <th className="py-3 px-3 text-center w-16">{t("م", "#")}</th>
-                    <th className="py-3 px-4 text-start min-w-[260px]">{t("نوع المخالفة", "Violation Description")}</th>
-                    <th className="py-3 px-3 text-center min-w-[110px] bg-amber-50/60 dark:bg-amber-950/20">
+                    <th scope="col" className="py-3 px-3 text-center w-16">{t("م", "#")}</th>
+                    <th scope="col" className="py-3 px-4 text-start min-w-[260px]">{t("نوع المخالفة", "Violation Description")}</th>
+                    <th scope="col" className="py-3 px-3 text-center min-w-[110px] bg-amber-50/60 dark:bg-amber-950/20">
                       {t("أول مرة", "1st Time")}
                     </th>
-                    <th className="py-3 px-3 text-center min-w-[110px] bg-orange-50/60 dark:bg-orange-950/20">
+                    <th scope="col" className="py-3 px-3 text-center min-w-[110px] bg-orange-50/60 dark:bg-orange-950/20">
                       {t("ثاني مرة", "2nd Time")}
                     </th>
-                    <th className="py-3 px-3 text-center min-w-[110px] bg-red-50/60 dark:bg-red-950/20">
+                    <th scope="col" className="py-3 px-3 text-center min-w-[110px] bg-red-50/60 dark:bg-red-950/20">
                       {t("ثالث مرة", "3rd Time")}
                     </th>
-                    <th className="py-3 px-3 text-center min-w-[110px] bg-rose-50/60 dark:bg-rose-950/20">
+                    <th scope="col" className="py-3 px-3 text-center min-w-[110px] bg-rose-50/60 dark:bg-rose-950/20">
                       {t("رابع مرة", "4th Time")}
                     </th>
-                    <th className="py-3 px-3 text-start min-w-[180px]">{t("ملاحظات", "Notes")}</th>
-                    <th className="py-3 px-3 text-center w-36">{t("تطبيق الجزاء", "Action")}</th>
+                    <th scope="col" className="py-3 px-3 text-start min-w-[180px]">{t("ملاحظات", "Notes")}</th>
+                    <th scope="col" className="py-3 px-3 text-center w-36">{t("تطبيق الجزاء", "Action")}</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+                <tbody className="divide-y divide-zinc-200/70 dark:divide-zinc-800/80">
                   {rules.map((rule) => (
                     <tr
                       key={rule.code}
-                      className="hover:bg-zinc-50/90 dark:hover:bg-zinc-800/50 transition-colors"
+                      className="hover:bg-zinc-50/80 dark:hover:bg-zinc-800/40 transition-colors"
                     >
                       <td className="py-3.5 px-3 text-center">
-                        <span className="inline-flex items-center justify-center h-7 w-9 rounded bg-zinc-900 text-white dark:bg-zinc-700 text-xs font-black">
+                        <span className="inline-flex items-center justify-center h-7 w-9 rounded-lg bg-zinc-900 text-white dark:bg-zinc-700 text-xs font-bold font-code">
                           #{rule.code}
                         </span>
                       </td>
                       <td className="py-3.5 px-4">
-                        <div className="font-bold text-zinc-950 dark:text-white leading-relaxed">
+                        <div className="font-semibold text-zinc-950 dark:text-white leading-relaxed">
                           {isAr ? rule.titleAr : rule.titleEn}
                         </div>
                         {!isAr && (
@@ -538,7 +545,7 @@ export default function HrDisciplinaryCatalog({
                         return (
                           <td key={tierNum} className="py-3.5 px-2.5 text-center">
                             <span
-                              className={`inline-block px-2.5 py-1 rounded-md border text-[11px] font-extrabold leading-snug ${tierBadgeClass(
+                              className={`inline-block px-2.5 py-1 rounded-lg border text-[11px] font-semibold leading-snug ${tierBadgeClass(
                                 spec,
                               )}`}
                             >
@@ -549,7 +556,7 @@ export default function HrDisciplinaryCatalog({
                       })}
                       <td className="py-3.5 px-3 text-[11px] text-zinc-600 dark:text-zinc-400 leading-relaxed">
                         {rule.notesAr ? (
-                          <span className="inline-block px-2 py-1 rounded bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 font-semibold text-zinc-800 dark:text-zinc-200">
+                          <span className="inline-block px-2 py-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 font-medium text-zinc-800 dark:text-zinc-200">
                             {isAr ? rule.notesAr : rule.notesEn || rule.notesAr}
                           </span>
                         ) : (
@@ -560,7 +567,7 @@ export default function HrDisciplinaryCatalog({
                         <button
                           type="button"
                           onClick={() => openApplyModalForRule(rule)}
-                          className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-md text-[11px] font-extrabold cursor-pointer shadow-[2px_2px_0px_0px_#09090b] transition-transform active:scale-95 whitespace-nowrap"
+                          className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-[11px] font-semibold cursor-pointer shadow-2xs transition-colors whitespace-nowrap"
                         >
                           {t("⚖️ توقيع الجزاء", "⚖️ Apply")}
                         </button>
@@ -580,27 +587,31 @@ export default function HrDisciplinaryCatalog({
       {applyOpen && (
         <ModalPortal onClose={() => setApplyOpen(false)}>
           <div
-            className="fixed inset-0 z-[130] bg-zinc-950/65 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in"
+            className="fixed inset-0 z-[130] bg-zinc-950/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto animate-fade-in"
             onClick={() => setApplyOpen(false)}
           >
             <div
               dir={dir}
-              className="bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 shadow-2xl w-full max-w-xl max-h-[92vh] overflow-y-auto p-6 animate-scale-in text-zinc-950 dark:text-zinc-100 font-mono rounded-xl"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="apply-disciplinary-modal-title"
+              className="ui-card shadow-2xl w-full max-w-xl max-h-[92vh] overflow-y-auto p-6 animate-scale-in text-zinc-950 dark:text-zinc-100"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="flex items-start justify-between pb-3 border-b-2 border-zinc-900 dark:border-zinc-700 mb-4">
+              <div className="flex items-start justify-between pb-3 border-b border-zinc-200 dark:border-zinc-800 mb-4">
                 <div>
-                  <span className="px-2 py-0.5 bg-red-600 text-white text-[10px] font-black uppercase rounded">
+                  <span className="px-2.5 py-0.5 bg-red-600 text-white text-[10px] font-semibold uppercase rounded-full">
                     {t("تطبيق لائحة الجزاءات على شيت الرواتب", "DISCIPLINARY PENALTY ENFORCEMENT")}
                   </span>
-                  <h3 className="text-lg sm:text-xl font-black text-zinc-950 dark:text-white mt-1">
+                  <h3 id="apply-disciplinary-modal-title" className="text-lg sm:text-xl font-bold text-zinc-950 dark:text-white mt-1.5">
                     {t("⚖️ توقيع جزاء إداري من اللائحة على موظف", "⚖️ Apply Official Disciplinary Penalty")}
                   </h3>
                 </div>
                 <button
                   type="button"
                   onClick={() => setApplyOpen(false)}
-                  className="text-2xl font-bold text-zinc-400 hover:text-red-600 cursor-pointer"
+                  aria-label="Close"
+                  className="h-8 w-8 rounded-lg flex items-center justify-center text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer"
                 >
                   &times;
                 </button>
@@ -609,13 +620,13 @@ export default function HrDisciplinaryCatalog({
               <form onSubmit={handleApplyPenalty} className="space-y-4 text-xs">
                 {/* 1. Select Worker */}
                 <div>
-                  <label className="block font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                  <label className="block font-semibold text-zinc-700 dark:text-zinc-300 mb-1.5">
                     {t("١. اختر الموظف *", "1. Select Employee *")}
                   </label>
                   <select
                     value={selectedWorkerId}
                     onChange={(e) => handleWorkerChange(e.target.value)}
-                    className="w-full bg-white dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 px-3 py-2 text-zinc-950 dark:text-zinc-100 font-bold rounded-lg"
+                    className="w-full brutal-input px-3 py-2 font-semibold cursor-pointer"
                   >
                     {workers.map((w) => {
                       const wWage = computeWorkerDailyWageEgp(w, defaultHourlyRate, standardHours);
@@ -630,13 +641,13 @@ export default function HrDisciplinaryCatalog({
 
                 {/* 2. Select Violation Rule */}
                 <div>
-                  <label className="block font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                  <label className="block font-semibold text-zinc-700 dark:text-zinc-300 mb-1.5">
                     {t("٢. البند ونوع المخالفة من اللائحة *", "2. Violation Article *")}
                   </label>
                   <select
                     value={selectedRuleCode}
                     onChange={(e) => handleRuleChange(Number(e.target.value))}
-                    className="w-full bg-white dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 px-3 py-2 text-zinc-950 dark:text-zinc-100 font-bold rounded-lg"
+                    className="w-full brutal-input px-3 py-2 font-semibold cursor-pointer"
                   >
                     {DISCIPLINARY_RULES.map((r) => (
                       <option key={r.code} value={r.code}>
@@ -644,12 +655,12 @@ export default function HrDisciplinaryCatalog({
                       </option>
                     ))}
                   </select>
-                  <div className="mt-2 p-2.5 rounded-lg bg-zinc-50 dark:bg-zinc-800/70 border border-zinc-300 dark:border-zinc-700 text-[11px] leading-relaxed">
-                    <div className="font-bold text-zinc-900 dark:text-white">
+                  <div className="mt-2 p-3 rounded-xl bg-zinc-50 dark:bg-zinc-800/70 border border-zinc-200/80 dark:border-zinc-700 text-[11px] leading-relaxed">
+                    <div className="font-semibold text-zinc-900 dark:text-white">
                       بند #{selectedRule.code}: {selectedRule.titleAr}
                     </div>
                     {selectedRule.notesAr && (
-                      <div className="text-amber-800 dark:text-amber-300 font-semibold mt-1">
+                      <div className="text-amber-800 dark:text-amber-300 font-medium mt-1">
                         📌 ملاحظة اللائحة: {selectedRule.notesAr}
                       </div>
                     )}
@@ -659,10 +670,10 @@ export default function HrDisciplinaryCatalog({
                 {/* 3. Select Offense Tier (1st, 2nd, 3rd, 4th) */}
                 <div>
                   <div className="flex items-center justify-between mb-1.5">
-                    <label className="font-bold text-zinc-700 dark:text-zinc-300">
+                    <label className="font-semibold text-zinc-700 dark:text-zinc-300">
                       {t("٣. درجة تكرار المخالفة *", "3. Offense Repetition Tier *")}
                     </label>
-                    <span className="px-2 py-0.5 rounded bg-sky-100 dark:bg-sky-950 text-sky-900 dark:text-sky-200 text-[10px] font-bold">
+                    <span className="px-2 py-0.5 rounded-full bg-sky-100 dark:bg-sky-950 text-sky-900 dark:text-sky-200 text-[10px] font-semibold">
                       {priorOffenseCount === 0
                         ? t("لم تُسجل عليه هذه المخالفة سابقاً (مقترح: أول مرة)", "0 prior offenses (Suggested: 1st Time)")
                         : t(
@@ -685,19 +696,19 @@ export default function HrDisciplinaryCatalog({
                             setSelectedTier(tierNum);
                             setCustomAmount("");
                           }}
-                          className={`p-2.5 rounded-lg border-2 text-center cursor-pointer transition-all ${
+                          className={`p-2.5 rounded-xl border text-center cursor-pointer transition-all ${
                             active
-                              ? "border-red-600 bg-red-50 dark:bg-red-950/40 ring-2 ring-red-600/20 font-black"
-                              : "border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:bg-zinc-50"
+                              ? "border-red-500 bg-red-50 dark:bg-red-950/40 ring-2 ring-red-500/20 font-bold"
+                              : "border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:bg-zinc-50"
                           }`}
                         >
-                          <div className="text-[10px] text-zinc-500 font-bold">
+                          <div className="text-[10px] text-zinc-500 font-semibold">
                             {isAr ? TIER_NAMES[tierNum].ar : TIER_NAMES[tierNum].en}
                           </div>
-                          <div className="text-xs font-extrabold text-zinc-950 dark:text-white mt-0.5">
+                          <div className="text-xs font-bold text-zinc-950 dark:text-white mt-0.5">
                             {isAr ? spec.labelAr : spec.labelEn}
                           </div>
-                          <div className="text-[10px] font-bold text-red-600 dark:text-red-400 mt-0.5">
+                          <div className="text-[10px] font-semibold font-code text-red-600 dark:text-red-400 mt-0.5">
                             {egpVal > 0 ? `-${egpVal} ج.م` : "0 ج.م (إنذار)"}
                           </div>
                         </button>
@@ -707,13 +718,13 @@ export default function HrDisciplinaryCatalog({
                 </div>
 
                 {/* 4. Calculated Financial Impact & Date */}
-                <div className="p-3.5 rounded-xl bg-red-50/70 dark:bg-red-950/25 border-2 border-red-300 dark:border-red-800 space-y-3">
+                <div className="p-3.5 rounded-xl bg-red-50/60 dark:bg-red-950/20 border border-red-200 dark:border-red-800/60 space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
                     <div>
                       <span className="text-zinc-600 dark:text-zinc-400">
                         {t("أجر اليوم الفعلي للموظف:", "Worker Daily Wage:")}
                       </span>{" "}
-                      <strong className="text-zinc-950 dark:text-white">{dailyWageEgp} ج.م / يوم</strong>
+                      <strong className="text-zinc-950 dark:text-white font-code">{dailyWageEgp} ج.م / يوم</strong>
                     </div>
                     <div>
                       <span className="text-zinc-600 dark:text-zinc-400">
@@ -727,7 +738,7 @@ export default function HrDisciplinaryCatalog({
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                     <div>
-                      <label className="block text-[11px] font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                      <label className="block text-[11px] font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
                         {t("مبلغ الخصم في شيت الرواتب (ج.م)", "Payroll Deduction Amount (EGP)")}
                       </label>
                       <input
@@ -738,11 +749,11 @@ export default function HrDisciplinaryCatalog({
                         onChange={(e) =>
                           setCustomAmount(e.target.value === "" ? "" : Math.max(0, Number(e.target.value)))
                         }
-                        className="w-full bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 px-3 py-2 text-sm font-black text-red-600 rounded-lg"
+                        className="w-full brutal-input px-3 py-2 text-sm font-bold font-code text-red-600"
                       />
                     </div>
                     <div>
-                      <label className="block text-[11px] font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                      <label className="block text-[11px] font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
                         {t("تاريخ المخالفة *", "Violation Date *")}
                       </label>
                       <input
@@ -750,7 +761,7 @@ export default function HrDisciplinaryCatalog({
                         required
                         value={customDate}
                         onChange={(e) => setCustomDate(e.target.value)}
-                        className="w-full bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 px-3 py-2 text-xs font-bold rounded-lg"
+                        className="w-full brutal-input px-3 py-2 text-xs font-semibold"
                       />
                     </div>
                   </div>
@@ -758,7 +769,7 @@ export default function HrDisciplinaryCatalog({
 
                 {/* 5. Extra HR Note & Alert Checkbox */}
                 <div>
-                  <label className="block font-bold text-zinc-700 dark:text-zinc-300 mb-1">
+                  <label className="block font-semibold text-zinc-700 dark:text-zinc-300 mb-1.5">
                     {t("ملاحظات إضافية من الـ HR (اختياري)", "Additional HR Notes (Optional)")}
                   </label>
                   <input
@@ -766,18 +777,18 @@ export default function HrDisciplinaryCatalog({
                     value={adminNote}
                     onChange={(e) => setAdminNote(e.target.value)}
                     placeholder={t("مثال: تأخير بدون إذن يوم الثلاثاء...", "e.g. Incident details...")}
-                    className="w-full bg-white dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 px-3 py-2 text-xs font-bold rounded-lg"
+                    className="w-full brutal-input px-3 py-2 text-xs font-semibold"
                   />
                 </div>
 
-                <label className="flex items-center gap-2.5 p-3 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/50 cursor-pointer">
+                <label className="flex items-center gap-2.5 p-3 rounded-xl border border-zinc-200/80 dark:border-zinc-700 bg-zinc-50/70 dark:bg-zinc-800/50 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={sendWorkerAlert}
                     onChange={(e) => setSendWorkerAlert(e.target.checked)}
                     className="h-4 w-4 accent-red-600 cursor-pointer"
                   />
-                  <span className="text-xs font-bold text-zinc-900 dark:text-white">
+                  <span className="text-xs font-semibold text-zinc-900 dark:text-white">
                     {t(
                       "🔔 إرسال إشعار رسمي بالمخالفة والجزاء إلى حساب الموظف فوراً",
                       "🔔 Send official disciplinary notice to the employee's Alerts tab immediately",
@@ -785,18 +796,18 @@ export default function HrDisciplinaryCatalog({
                   </span>
                 </label>
 
-                <div className="flex items-center justify-end gap-2 pt-3 border-t-2 border-zinc-900 dark:border-zinc-700">
+                <div className="flex items-center justify-end gap-2 pt-3 border-t border-zinc-200 dark:border-zinc-800">
                   <button
                     type="button"
                     onClick={() => setApplyOpen(false)}
-                    className="px-4 py-2 border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-xs font-bold rounded-lg cursor-pointer"
+                    className="brutal-btn-outline px-4 py-2 text-xs cursor-pointer"
                   >
                     {t("إلغاء", "Cancel")}
                   </button>
                   <button
                     type="submit"
                     disabled={submitting}
-                    className="px-5 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-black uppercase border-2 border-zinc-900 rounded-lg shadow-[2px_2px_0px_0px_#09090b] cursor-pointer disabled:opacity-50"
+                    className="px-5 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-lg shadow-xs cursor-pointer disabled:opacity-50 transition-colors"
                   >
                     {submitting
                       ? t("جاري الحفظ...", "Applying...")

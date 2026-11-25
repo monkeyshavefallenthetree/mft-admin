@@ -35,6 +35,24 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
   return outputArray;
 }
 
+function uint8ArraysEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.byteLength !== b.byteLength) return false;
+  for (let i = 0; i < a.byteLength; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+function subscriptionKeyMatches(sub: PushSubscription, expectedVapidKey: Uint8Array): boolean {
+  try {
+    const existing = sub.options?.applicationServerKey;
+    if (!existing) return true; // Some browsers omit applicationServerKey on older subs
+    return uint8ArraysEqual(new Uint8Array(existing), expectedVapidKey);
+  } catch {
+    return false;
+  }
+}
+
 const EMPTY: AdminBadges = {
   unreadChats: 0,
   pendingWorkers: 0,
@@ -61,75 +79,108 @@ export function desktopNotifyEnabled() {
   );
 }
 
+async function persistAdminPushSubscription(entry: StoredPushSubscription): Promise<boolean> {
+  try {
+    localStorage.setItem(ADMIN_LOCAL_SUB_KEY, JSON.stringify(entry));
+  } catch {
+    /* ignore */
+  }
+
+  const u = auth.currentUser;
+  if (!u) return false;
+
+  const role = getAdminRole(u.email);
+  const fallbackRef = doc(db, "alerts", `admin_push_${u.uid}`);
+  const primaryRef = doc(db, "adminPushSubscriptions", u.uid);
+  const existingPrimary = await getDoc(primaryRef).catch(() => null);
+  const existingFallback = await getDoc(fallbackRef).catch(() => null);
+  const existingList: StoredPushSubscription[] = Array.isArray(existingPrimary?.data()?.subscriptions)
+    ? existingPrimary!.data()!.subscriptions
+    : Array.isArray(existingFallback?.data()?.subscriptions)
+      ? existingFallback!.data()!.subscriptions
+      : [];
+  const filtered = existingList.filter(
+    (s) => s && typeof s.endpoint === "string" && s.endpoint !== entry.endpoint,
+  );
+  const subscriptions = [entry, ...filtered].slice(0, 5);
+
+  const docData = {
+    uid: u.uid,
+    email: u.email ?? "",
+    role,
+    subscription: entry,
+    subscriptions,
+    updatedAt: serverTimestamp(),
+  };
+
+  const [primaryRes, fallbackRes] = await Promise.allSettled([
+    setDoc(primaryRef, docData, { merge: true }),
+    setDoc(
+      fallbackRef,
+      {
+        ...docData,
+        type: "admin_push_sub",
+        isRead: true,
+        hasPenalty: false,
+      },
+      { merge: true },
+    ),
+  ]);
+
+  if (primaryRes.status === "rejected" && fallbackRes.status === "rejected") {
+    console.error("[AdminWebPush] Failed to persist subscription to Firestore:", primaryRes.reason, fallbackRes.reason);
+    return false;
+  }
+  return true;
+}
+
 export async function syncAdminWebPush(): Promise<boolean> {
   if (typeof window === "undefined" || !("serviceWorker" in navigator)) return false;
   try {
-    const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+    const reg = await navigator.serviceWorker.register("/sw.js", {
+      scope: "/",
+      updateViaCache: "none",
+    });
     void reg.update().catch(() => {});
     await navigator.serviceWorker.ready;
     if (!("PushManager" in window) || Notification.permission !== "granted") return false;
 
+    const appServerKey = urlBase64ToUint8Array(DEFAULT_VAPID_PUBLIC_KEY);
     let sub = await reg.pushManager.getSubscription();
+
+    // Unsubscribe and re-subscribe if VAPID key rotated or subscription expired
+    if (sub) {
+      const expired = typeof sub.expirationTime === "number" && sub.expirationTime > 0 && sub.expirationTime <= Date.now();
+      const keyMatches = subscriptionKeyMatches(sub, appServerKey);
+      if (expired || !keyMatches) {
+        await sub.unsubscribe().catch(() => {});
+        sub = null;
+      }
+    }
+
     if (!sub) {
-      const appServerKey = urlBase64ToUint8Array(DEFAULT_VAPID_PUBLIC_KEY);
       sub = await reg.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: appServerKey.buffer as ArrayBuffer,
       });
     }
-    const u = auth.currentUser;
+
     const subJson = sub.toJSON();
-    if (subJson.endpoint && subJson.keys?.p256dh && subJson.keys?.auth) {
-      const entry: StoredPushSubscription = {
-        endpoint: subJson.endpoint,
-        expirationTime: subJson.expirationTime ?? null,
-        keys: { p256dh: subJson.keys.p256dh, auth: subJson.keys.auth },
-        userAgent: typeof navigator !== "undefined" ? navigator.userAgent.slice(0, 160) : "",
-        createdAt: new Date().toISOString(),
-      };
-      try {
-        localStorage.setItem(ADMIN_LOCAL_SUB_KEY, JSON.stringify(entry));
-      } catch {
-        /* ignore */
-      }
-
-      if (u) {
-        const role = getAdminRole(u.email);
-        const fallbackRef = doc(db, "alerts", `admin_push_${u.uid}`);
-        const existingFallback = await getDoc(fallbackRef).catch(() => null);
-        const existingPrimary = await getDoc(doc(db, "adminPushSubscriptions", u.uid)).catch(() => null);
-        const existingList: StoredPushSubscription[] = Array.isArray(existingPrimary?.data()?.subscriptions)
-          ? existingPrimary!.data()!.subscriptions
-          : Array.isArray(existingFallback?.data()?.subscriptions)
-          ? existingFallback!.data()!.subscriptions
-          : [];
-        const filtered = existingList.filter((s) => s && typeof s.endpoint === "string" && s.endpoint !== entry.endpoint);
-        const subscriptions = [entry, ...filtered].slice(0, 5);
-
-        const docData = {
-          uid: u.uid,
-          email: u.email ?? "",
-          role,
-          subscription: entry,
-          subscriptions,
-          updatedAt: serverTimestamp(),
-        };
-
-        await setDoc(
-          fallbackRef,
-          {
-            ...docData,
-            type: "admin_push_sub",
-            isRead: true,
-            hasPenalty: false,
-          },
-          { merge: true },
-        ).catch(() => {});
-
-        await setDoc(doc(db, "adminPushSubscriptions", u.uid), docData, { merge: true }).catch(() => {});
-      }
+    if (!subJson.endpoint || !subJson.keys?.p256dh || !subJson.keys?.auth) {
+      return false;
     }
-    return true;
+
+    const entry: StoredPushSubscription = {
+      endpoint: subJson.endpoint,
+      expirationTime: subJson.expirationTime ?? null,
+      keys: { p256dh: subJson.keys.p256dh, auth: subJson.keys.auth },
+      userAgent: typeof navigator !== "undefined" ? navigator.userAgent.slice(0, 160) : "",
+      platform: typeof navigator !== "undefined" ? (navigator.platform || "").slice(0, 40) : "",
+      createdAt: new Date().toISOString(),
+    };
+
+    const saved = await persistAdminPushSubscription(entry);
+    return auth.currentUser ? saved : true;
   } catch (err) {
     console.warn("[AdminWebPush] sync failed:", err);
     return false;
@@ -137,7 +188,9 @@ export async function syncAdminWebPush(): Promise<boolean> {
 }
 
 export async function testAdminLockScreenPush(): Promise<boolean> {
-  await setDesktopNotify(true);
+  const synced = await setDesktopNotify(true);
+  if (!synced) return false;
+
   const subs: StoredPushSubscription[] = [];
   try {
     const raw = localStorage.getItem(ADMIN_LOCAL_SUB_KEY);
@@ -155,6 +208,7 @@ export async function testAdminLockScreenPush(): Promise<boolean> {
     const res = await fetch("/api/web-push", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      keepalive: true,
       body: JSON.stringify({
         subscriptions: subs,
         delayMs: 4000,
@@ -162,11 +216,25 @@ export async function testAdminLockScreenPush(): Promise<boolean> {
           title: "MFT Admin Lock Screen Alert 🔔",
           body: "Lock-screen & background push notifications are active on your device!",
           url: "/admin",
+          tag: "mft-admin-test",
+          dedupe: true,
           urgent: true,
+          requireInteraction: true,
         },
       }),
     });
-    return res.ok;
+    if (!res.ok) return false;
+    const data = (await res.json()) as { sent?: number; goneEndpoints?: string[] };
+    if (Array.isArray(data.goneEndpoints) && data.goneEndpoints.length > 0) {
+      try {
+        localStorage.removeItem(ADMIN_LOCAL_SUB_KEY);
+      } catch {
+        /* ignore */
+      }
+      void syncAdminWebPush();
+      return false;
+    }
+    return (data.sent ?? 0) > 0;
   } catch {
     return false;
   }
@@ -182,10 +250,11 @@ export async function setDesktopNotify(on: boolean): Promise<boolean> {
   const perm = Notification.permission === "default" ? await Notification.requestPermission() : Notification.permission;
   const ok = perm === "granted";
   localStorage.setItem(DESKTOP_KEY, ok ? "1" : "0");
-  if (ok) {
-    await syncAdminWebPush();
+  if (!ok) return false;
+  if ("serviceWorker" in navigator && "PushManager" in window) {
+    return await syncAdminWebPush();
   }
-  return ok;
+  return true;
 }
 
 const ALERT_COPY: Partial<Record<BadgeKey, { title: string; body: (n: number) => string; href: string }>> = {
@@ -197,8 +266,14 @@ const ALERT_COPY: Partial<Record<BadgeKey, { title: string; body: (n: number) =>
   pendingReimbursements: { title: "Reimbursement claim", body: (n) => `${n} claim${n === 1 ? "" : "s"} awaiting review`, href: FILTERED_LINKS.pendingReimbursements },
 };
 
-async function showSwOrDesktopNotification(title: string, body: string, tag: string, href: string) {
-  const uniqueTag = `${tag}-${Date.now()}`;
+async function showSwOrDesktopNotification(
+  title: string,
+  body: string,
+  tag: string,
+  href: string,
+  dedupe = true,
+) {
+  const effectiveTag = dedupe ? tag : `${tag}-${Date.now()}`;
   try {
     const reg = await navigator.serviceWorker?.getRegistration("/");
     if (reg && typeof reg.showNotification === "function") {
@@ -207,7 +282,8 @@ async function showSwOrDesktopNotification(title: string, body: string, tag: str
           body,
           icon: "/icons/icon-192.png",
           badge: "/icons/icon-192.png",
-          tag: uniqueTag,
+          tag: effectiveTag,
+          requireInteraction: true,
           silent: false,
           data: { url: href },
         });
@@ -216,6 +292,7 @@ async function showSwOrDesktopNotification(title: string, body: string, tag: str
         await reg.showNotification(title, {
           body,
           icon: "/icons/icon-192.png",
+          tag: effectiveTag,
           data: { url: href },
         });
         return;
@@ -224,7 +301,7 @@ async function showSwOrDesktopNotification(title: string, body: string, tag: str
     if (reg?.active) {
       reg.active.postMessage({
         type: "SHOW_LOCAL_NOTIFICATION",
-        payload: { title, body, tag: uniqueTag, url: href },
+        payload: { title, body, tag: effectiveTag, dedupe, url: href, requireInteraction: true },
       });
       return;
     }
@@ -232,7 +309,7 @@ async function showSwOrDesktopNotification(title: string, body: string, tag: str
     /* fallback below */
   }
   try {
-    const n = new Notification(title, { body, tag: uniqueTag, icon: "/icons/icon-192.png" });
+    const n = new Notification(title, { body, tag: effectiveTag, icon: "/icons/icon-192.png" });
     n.onclick = () => {
       window.focus();
       navigateTo(href);
@@ -250,19 +327,31 @@ function notifyIncrease(key: BadgeKey, count: number) {
     description: copy.body(count),
     action: { label: "View", onClick: () => navigateTo(copy.href) },
   });
-  if (desktopNotifyEnabled()) {
-    void showSwOrDesktopNotification(`MFT · ${copy.title}`, copy.body(count), `mft-${key}`, copy.href);
+  // Only show local fallback notification if Web Push is not already subscribed on this device
+  const hasWebPushSub = (() => {
+    try {
+      return Boolean(localStorage.getItem(ADMIN_LOCAL_SUB_KEY));
+    } catch {
+      return false;
+    }
+  })();
+  if (desktopNotifyEnabled() && !hasWebPushSub) {
+    void showSwOrDesktopNotification(`MFT · ${copy.title}`, copy.body(count), `mft-${key}`, copy.href, true);
   }
 }
 
 /** Live counters + role-scoped event feed that power sidebar badges + the notification bell. */
 export function useAdminBadges(enabled: boolean, role: AdminRole = "super_admin"): AdminBadges {
-  const [badges, setBadges] = useState<AdminBadges>(EMPTY);
+  const scopeKey = enabled ? role : "__disabled__";
+  const [scopedBadges, setScopedBadges] = useState<{ scope: string; data: AdminBadges }>({
+    scope: scopeKey,
+    data: EMPTY,
+  });
+  const badges = scopedBadges.scope === scopeKey ? scopedBadges.data : EMPTY;
   const prev = useRef<Partial<Record<BadgeKey, number>>>({});
   const seenNotifIds = useRef<Set<string> | null>(null);
 
   useEffect(() => {
-    setBadges(EMPTY);
     prev.current = {};
     seenNotifIds.current = null;
     if (!enabled) return;
@@ -273,6 +362,22 @@ export function useAdminBadges(enabled: boolean, role: AdminRole = "super_admin"
     const onSwMessage = (ev: MessageEvent) => {
       if (ev.data?.type === "MFT_NOTIFICATION_CLICK" && typeof ev.data.url === "string") {
         navigateTo(ev.data.url);
+      } else if (ev.data?.type === "MFT_PUSH_SUBSCRIPTION_CHANGED" && ev.data.subscription) {
+        const subJson = ev.data.subscription as {
+          endpoint?: string;
+          expirationTime?: number | null;
+          keys?: { p256dh?: string; auth?: string };
+        };
+        if (subJson.endpoint && subJson.keys?.p256dh && subJson.keys?.auth) {
+          void persistAdminPushSubscription({
+            endpoint: subJson.endpoint,
+            expirationTime: subJson.expirationTime ?? null,
+            keys: { p256dh: subJson.keys.p256dh, auth: subJson.keys.auth },
+            userAgent: typeof navigator !== "undefined" ? navigator.userAgent.slice(0, 160) : "",
+            platform: typeof navigator !== "undefined" ? (navigator.platform || "").slice(0, 40) : "",
+            createdAt: new Date().toISOString(),
+          });
+        }
       }
     };
     navigator.serviceWorker?.addEventListener("message", onSwMessage);
@@ -280,7 +385,11 @@ export function useAdminBadges(enabled: boolean, role: AdminRole = "super_admin"
     const canOps = role === "super_admin" || role === "ops_admin";
     const canHr = role === "super_admin" || role === "hr_admin";
 
-    const set = (patch: Partial<AdminBadges>) => setBadges((b) => ({ ...b, ...patch }));
+    const set = (patch: Partial<AdminBadges>) =>
+      setScopedBadges((cur) => ({
+        scope: scopeKey,
+        data: { ...(cur.scope === scopeKey ? cur.data : EMPTY), ...patch },
+      }));
     const unsubs: Array<() => void> = [
       () => navigator.serviceWorker?.removeEventListener("message", onSwMessage),
     ];
@@ -322,8 +431,9 @@ export function useAdminBadges(enabled: boolean, role: AdminRole = "super_admin"
                   description: item.body,
                   action: { label: "View", onClick: () => navigateTo(item.href) },
                 });
+                // Use identical stable tag `mft-ev-${item.id}` so any concurrent Web Push collapses instead of duplicating
                 if (desktopNotifyEnabled()) {
-                  void showSwOrDesktopNotification(item.title, item.body, `mft-ev-${item.id}`, item.href);
+                  void showSwOrDesktopNotification(item.title, item.body, `mft-ev-${item.id}`, item.href, true);
                 }
               }
             }
@@ -388,10 +498,44 @@ export function useAdminBadges(enabled: boolean, role: AdminRole = "super_admin"
           () => {},
         ),
       );
+
+      // Live Admin Fallback Shift Watchdog: triggers server-side shift reconciliation every 60s
+      // using the signed-in HR/Super Admin's Firebase ID token (throttled across tabs via localStorage)
+      const RECONCILE_THROTTLE_KEY = "mft.admin.lastShiftReconcileMs";
+      const runReconcile = async () => {
+        try {
+          if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+          const now = Date.now();
+          try {
+            const last = Number(localStorage.getItem(RECONCILE_THROTTLE_KEY) || "0");
+            if (now - last < 45_000) return;
+            localStorage.setItem(RECONCILE_THROTTLE_KEY, String(now));
+          } catch {
+            /* ignore storage errors */
+          }
+          const user = auth.currentUser;
+          if (!user) return;
+          const idToken = await user.getIdToken();
+          await fetch("/api/cron/reconcile-shifts", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${idToken}`,
+            },
+          });
+        } catch {
+          /* non-fatal background reconciliation */
+        }
+      };
+      const initialTimer = window.setTimeout(() => void runReconcile(), 5_000);
+      const intervalId = window.setInterval(() => void runReconcile(), 60_000);
+      unsubs.push(() => {
+        window.clearTimeout(initialTimer);
+        window.clearInterval(intervalId);
+      });
     }
 
     return () => unsubs.forEach((u) => u());
-  }, [enabled, role]);
+  }, [enabled, role, scopeKey]);
 
   return badges;
 }

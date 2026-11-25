@@ -92,30 +92,34 @@ export default function HrExcuseModal({ worker, date, adminEmail, onClose, onExc
   return (
     <ModalPortal onClose={onClose}>
       <div
-        className="fixed inset-0 z-[120] bg-zinc-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in"
+        className="fixed inset-0 z-[120] bg-zinc-950/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto animate-fade-in"
         onClick={onClose}
       >
         <div
-          className="bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 shadow-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto p-6 md:p-8 animate-scale-in text-zinc-950 dark:text-zinc-100 font-mono"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="excuse-absence-modal-title"
+          className="ui-card shadow-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto p-6 md:p-7 animate-scale-in text-zinc-950 dark:text-zinc-100"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
-          <div className="flex items-start justify-between pb-3 border-b-2 border-zinc-900 dark:border-zinc-700 mb-4">
+          <div className="flex items-start justify-between pb-3 border-b border-zinc-200 dark:border-zinc-800 mb-4">
             <div>
-              <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 px-2 py-0.5 rounded">
-                {"// EXCUSE ABSENCE"}
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 px-2.5 py-0.5 rounded-full">
+                EXCUSE ABSENCE
               </span>
-              <h3 className="text-xl font-bold font-heading uppercase tracking-wide text-zinc-950 dark:text-white mt-1">
+              <h3 id="excuse-absence-modal-title" className="text-xl font-bold tracking-tight text-zinc-950 dark:text-white mt-1.5">
                 Pardon / Excuse Worker Absence
               </h3>
-              <p className="text-xs text-zinc-600 dark:text-zinc-400 mt-0.5">
-                Exempts <strong>{workerFullName}</strong> from absence deduction on <strong>{date}</strong>.
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+                Exempts <strong>{workerFullName}</strong> from absence deduction on <strong className="font-code">{date}</strong>.
               </p>
             </div>
             <button
               type="button"
+              aria-label="Close"
               onClick={onClose}
-              className="text-zinc-400 hover:text-zinc-950 dark:hover:text-white text-2xl font-bold leading-none p-1 cursor-pointer"
+              className="h-8 w-8 rounded-lg flex items-center justify-center text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer"
             >
               &times;
             </button>
@@ -123,7 +127,7 @@ export default function HrExcuseModal({ worker, date, adminEmail, onClose, onExc
 
           <form onSubmit={handleExcuse} className="space-y-4 text-xs">
             <div>
-              <label className="block font-bold uppercase text-zinc-700 dark:text-zinc-300 mb-1.5">
+              <label className="block font-semibold uppercase text-zinc-700 dark:text-zinc-300 mb-1.5">
                 Leave / Excuse Category (نوع الإجازة أو العذر) *
               </label>
               <div className="space-y-2">
@@ -132,14 +136,14 @@ export default function HrExcuseModal({ worker, date, adminEmail, onClose, onExc
                     key={lt.id}
                     type="button"
                     onClick={() => setLeaveType(lt.id)}
-                    className={`w-full p-2.5 rounded border text-left flex items-center justify-between cursor-pointer transition-all ${
+                    className={`w-full p-3 rounded-xl border text-left flex items-center justify-between cursor-pointer transition-all ${
                       leaveType === lt.id
-                        ? "border-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 ring-2 ring-emerald-600/20 font-bold"
+                        ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 ring-2 ring-emerald-500/20 font-semibold"
                         : "border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:bg-zinc-50"
                     }`}
                   >
                     <div>
-                      <div className="text-xs">{lt.label}</div>
+                      <div className="text-xs font-semibold">{lt.label}</div>
                       <div className="text-[10px] text-zinc-500 mt-0.5">{lt.desc}</div>
                     </div>
                     <span>{leaveType === lt.id ? "✓" : "○"}</span>
@@ -149,7 +153,7 @@ export default function HrExcuseModal({ worker, date, adminEmail, onClose, onExc
             </div>
 
             <div>
-              <label className="block font-bold uppercase text-zinc-700 dark:text-zinc-300 mb-1">
+              <label className="block font-semibold uppercase text-zinc-700 dark:text-zinc-300 mb-1.5">
                 Reason &amp; Documentation Note * (السبب والملاحظات)
               </label>
               <textarea
@@ -158,26 +162,26 @@ export default function HrExcuseModal({ worker, date, adminEmail, onClose, onExc
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
                 placeholder="e.g. Worker notified management in advance regarding medical appointment, or approved annual leave..."
-                className="w-full bg-white dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 px-3 py-2 text-zinc-950 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-600 resize-none"
+                className="w-full brutal-input px-3 py-2 resize-none"
               />
             </div>
 
-            <div className="p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 rounded text-[11px] text-amber-900 dark:text-amber-200">
+            <div className="p-3 bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl text-[11px] text-amber-900 dark:text-amber-200">
               💡 <strong>Effect:</strong> An approved record will be saved in `exceptionRequests`. The absence penalty will not be deducted from their payroll for this day.
             </div>
 
-            <div className="flex justify-end gap-2 pt-2 border-t-2 border-zinc-900 dark:border-zinc-700">
+            <div className="flex justify-end gap-2 pt-2 border-t border-zinc-200 dark:border-zinc-800">
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 text-zinc-950 dark:text-zinc-100 font-bold uppercase cursor-pointer"
+                className="brutal-btn-outline px-4 py-2 text-xs cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={saving}
-                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold uppercase tracking-wider border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] cursor-pointer disabled:opacity-50"
+                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs rounded-lg shadow-xs cursor-pointer disabled:opacity-50 transition-colors"
               >
                 {saving ? "Excusing..." : "Approve & Excuse Absence"}
               </button>

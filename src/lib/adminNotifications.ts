@@ -3,6 +3,7 @@ import {
   arrayUnion,
   collection,
   doc,
+  getDoc,
   getDocs,
   onSnapshot,
   query,
@@ -51,6 +52,51 @@ export interface NotifyAdminsInput {
   urgent?: boolean;
 }
 
+type AdminSubRef = { collectionName: "adminPushSubscriptions" | "alerts"; docId: string };
+
+async function pruneDeadAdminSubscriptions(
+  db: Firestore,
+  refsByEndpoint: Map<string, AdminSubRef[]>,
+  goneEndpoints: string[],
+): Promise<void> {
+  if (goneEndpoints.length === 0) return;
+  const goneSet = new Set(goneEndpoints);
+  const uniqueDocs = new Map<string, AdminSubRef>();
+  for (const ep of goneEndpoints) {
+    for (const ref of refsByEndpoint.get(ep) ?? []) {
+      uniqueDocs.set(`${ref.collectionName}/${ref.docId}`, ref);
+    }
+  }
+
+  await Promise.all(
+    Array.from(uniqueDocs.values()).map(async ({ collectionName, docId }) => {
+      try {
+        const ref = doc(db, collectionName, docId);
+        const snap = await getDoc(ref);
+        if (!snap.exists()) return;
+        const data = snap.data();
+        const existingList: StoredPushSubscription[] = Array.isArray(data.subscriptions)
+          ? data.subscriptions
+          : data.subscription
+            ? [data.subscription as StoredPushSubscription]
+            : [];
+        const cleaned = existingList.filter(
+          (s) => s && typeof s.endpoint === "string" && !goneSet.has(s.endpoint),
+        );
+        if (cleaned.length !== existingList.length) {
+          await updateDoc(ref, {
+            subscriptions: cleaned,
+            subscription: cleaned[0] ?? null,
+            updatedAt: serverTimestamp(),
+          });
+        }
+      } catch (err) {
+        console.warn("[AdminNotifications] failed pruning dead endpoint:", collectionName, docId, err);
+      }
+    }),
+  );
+}
+
 export async function sendWebPushToAdminsFromAdmin(
   db: Firestore,
   opts: {
@@ -60,21 +106,46 @@ export async function sendWebPushToAdminsFromAdmin(
     body: string;
     url?: string;
     taskId?: string;
+    tag?: string;
+    dedupe?: boolean;
     urgent?: boolean;
+    requireInteraction?: boolean;
     delayMs?: number;
   },
 ): Promise<void> {
   const subMap = new Map<string, StoredPushSubscription>();
+  const refsByEndpoint = new Map<string, AdminSubRef[]>();
 
-  const collectDoc = (_docId: string, data: Record<string, unknown> | undefined) => {
+  const collectDoc = (
+    collectionName: "adminPushSubscriptions" | "alerts",
+    docId: string,
+    data: Record<string, unknown> | undefined,
+  ) => {
     if (!data) return;
+    // Honor excludeUid so an admin doesn't receive push self-spam for their own action
+    if (
+      opts.excludeUid &&
+      (docId === opts.excludeUid ||
+        docId === `admin_push_${opts.excludeUid}` ||
+        data.uid === opts.excludeUid)
+    ) {
+      return;
+    }
+
     const role = data.role as AdminRole | undefined;
     if (role && !opts.roles.includes(role)) return;
+
+    const addSub = (s: StoredPushSubscription) => {
+      subMap.set(s.endpoint, s);
+      const list = refsByEndpoint.get(s.endpoint) ?? [];
+      list.push({ collectionName, docId });
+      refsByEndpoint.set(s.endpoint, list);
+    };
 
     if (Array.isArray(data.subscriptions)) {
       for (const s of data.subscriptions) {
         if (s && typeof s.endpoint === "string" && s.keys?.p256dh && s.keys?.auth) {
-          subMap.set(s.endpoint, s as StoredPushSubscription);
+          addSub(s as StoredPushSubscription);
         }
       }
     } else if (
@@ -83,14 +154,13 @@ export async function sendWebPushToAdminsFromAdmin(
       (data.subscription as StoredPushSubscription).keys?.p256dh &&
       (data.subscription as StoredPushSubscription).keys?.auth
     ) {
-      const s = data.subscription as StoredPushSubscription;
-      subMap.set(s.endpoint, s);
+      addSub(data.subscription as StoredPushSubscription);
     }
   };
 
   try {
     const snap = await getDocs(collection(db, "adminPushSubscriptions"));
-    snap.forEach((d) => collectDoc(d.id, d.data() as Record<string, unknown>));
+    snap.forEach((d) => collectDoc("adminPushSubscriptions", d.id, d.data() as Record<string, unknown>));
   } catch {
     /* ignore */
   }
@@ -99,7 +169,7 @@ export async function sendWebPushToAdminsFromAdmin(
     const fallbackSnap = await getDocs(
       query(collection(db, "alerts"), where("type", "==", "admin_push_sub")),
     );
-    fallbackSnap.forEach((d) => collectDoc(d.id, d.data() as Record<string, unknown>));
+    fallbackSnap.forEach((d) => collectDoc("alerts", d.id, d.data() as Record<string, unknown>));
   } catch {
     /* ignore */
   }
@@ -108,9 +178,10 @@ export async function sendWebPushToAdminsFromAdmin(
   if (allSubs.length === 0) return;
 
   try {
-    await fetch("/api/web-push", {
+    const res = await fetch("/api/web-push", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      keepalive: true,
       body: JSON.stringify({
         subscriptions: allSubs,
         delayMs: opts.delayMs,
@@ -119,10 +190,19 @@ export async function sendWebPushToAdminsFromAdmin(
           body: opts.body,
           url: opts.url || "/admin",
           taskId: opts.taskId,
+          tag: opts.tag,
+          dedupe: opts.dedupe,
           urgent: opts.urgent,
+          requireInteraction: opts.requireInteraction !== false,
         },
       }),
     });
+    if (res.ok) {
+      const json = (await res.json()) as { goneEndpoints?: string[] };
+      if (Array.isArray(json.goneEndpoints) && json.goneEndpoints.length > 0) {
+        void pruneDeadAdminSubscriptions(db, refsByEndpoint, json.goneEndpoints);
+      }
+    }
   } catch (err) {
     console.warn("[AdminNotifications] Web push failed:", err);
   }
@@ -147,17 +227,20 @@ export async function notifyAdmins(db: Firestore, input: NotifyAdminsInput): Pro
     createdAt: serverTimestamp(),
   };
 
+  let createdId: string | null = null;
   try {
-    await addDoc(collection(db, "adminNotifications"), payload);
+    const ref = await addDoc(collection(db, "adminNotifications"), payload);
+    createdId = ref.id;
   } catch {
     try {
-      await addDoc(collection(db, "alerts"), {
+      const ref = await addDoc(collection(db, "alerts"), {
         ...payload,
         type: "schedule",
         isRead: false,
         hasPenalty: false,
         adminNotif: true,
       });
+      createdId = ref.id;
     } catch (err2) {
       console.warn("[AdminNotifications] Could not create adminNotification:", err2);
     }
@@ -170,7 +253,10 @@ export async function notifyAdmins(db: Firestore, input: NotifyAdminsInput): Pro
     body: input.body,
     url: input.href,
     taskId: input.taskId,
+    tag: createdId ? `mft-ev-${createdId}` : undefined,
+    dedupe: Boolean(createdId),
     urgent: input.urgent,
+    requireInteraction: true,
   });
 }
 

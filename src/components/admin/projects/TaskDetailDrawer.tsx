@@ -299,41 +299,41 @@ export default function TaskDetailDrawer({
   return (
     <ModalPortal onClose={onClose}>
       <div
-        className="fixed inset-0 z-[120] bg-zinc-950/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-fade-in"
+        className="fixed inset-0 z-[120] bg-zinc-950/55 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-fade-in"
         onClick={onClose}
       >
         <div
-          className="bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 shadow-2xl rounded-xl w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden text-zinc-950 dark:text-zinc-100 font-sans animate-scale-in"
+          className="ui-card shadow-2xl rounded-2xl w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden text-zinc-950 font-sans animate-scale-in"
           onClick={(e) => e.stopPropagation()}
         >
         {/* Drawer Top Header Bar */}
-        <div className="px-6 py-3.5 bg-zinc-50 border-b-2 border-zinc-900 flex items-center justify-between gap-4 flex-wrap">
+        <div className="px-6 py-3.5 bg-zinc-50/80 border-b border-zinc-100 flex items-center justify-between gap-4 flex-wrap">
           {/* Breadcrumb & Task Status Dropdown */}
-          <div className="flex items-center gap-3 flex-wrap">
-            <span className="text-[11px] font-mono font-bold uppercase text-zinc-500">
-              {projectName || "Project"} / Task #{task.id.slice(-6)}
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <span className="font-code text-xs font-semibold text-zinc-500">
+              {projectName || "Project"} · #{task.id.slice(-6)}
             </span>
 
-            {/* ClickUp Status Dropdown */}
+            {/* Status Dropdown */}
             <select
               value={task.status}
               onChange={(e) => onUpdateTask({ status: e.target.value })}
-              className={`px-2.5 py-1 rounded text-xs font-bold uppercase tracking-wider border cursor-pointer ${
-                STATUS_CONFIG[task.status]?.badge || "bg-zinc-100 text-zinc-800 border-zinc-300"
+              className={`px-2.5 py-1 rounded-full text-[11px] font-semibold uppercase tracking-wider border cursor-pointer ${
+                STATUS_CONFIG[task.status]?.badge || "bg-zinc-100 text-zinc-800 border-zinc-200"
               }`}
             >
-              <option value="assigned">TO DO / ASSIGNED</option>
-              <option value="in-progress">IN PROGRESS</option>
-              <option value="pending-approval">PENDING REVIEW</option>
-              <option value="completed">COMPLETED</option>
+              <option value="assigned">Assigned</option>
+              <option value="in-progress">In Progress</option>
+              <option value="pending-approval">Pending Review</option>
+              <option value="completed">Completed</option>
             </select>
 
             {/* Priority Selector */}
             <select
               value={task.priority}
               onChange={(e) => onUpdateTask({ priority: e.target.value })}
-              className={`px-2 py-1 rounded text-xs font-bold uppercase tracking-wider border cursor-pointer ${
-                PRIORITY_CONFIG[task.priority]?.badge || "bg-zinc-100 text-zinc-800 border-zinc-300"
+              className={`px-2.5 py-1 rounded-full text-[11px] font-semibold uppercase tracking-wider border cursor-pointer ${
+                PRIORITY_CONFIG[task.priority]?.badge || "bg-zinc-100 text-zinc-800 border-zinc-200"
               }`}
             >
               <option value="urgent">🔴 Urgent</option>
@@ -346,7 +346,7 @@ export default function TaskDetailDrawer({
             <select
               value={task.department || "general"}
               onChange={(e) => onUpdateTask({ department: e.target.value })}
-              className="px-2 py-1 rounded text-xs font-mono font-bold uppercase bg-zinc-100 border border-zinc-300 text-zinc-700 cursor-pointer"
+              className="px-2.5 py-1 rounded-full text-[11px] font-semibold capitalize bg-zinc-100 border border-zinc-200 text-zinc-700 cursor-pointer"
             >
               {TASK_DEPARTMENTS.map((d) => (
                 <option key={d} value={d}>
@@ -361,14 +361,15 @@ export default function TaskDetailDrawer({
             <button
               type="button"
               onClick={() => onDeleteTask(task.id)}
-              className="px-2.5 py-1 text-xs font-bold uppercase text-red-700 hover:bg-red-50 border border-red-300 rounded cursor-pointer transition-colors"
+              className="px-2.5 py-1 text-xs font-semibold text-red-700 hover:bg-red-50 border border-red-200 rounded-lg cursor-pointer transition-colors"
             >
               Delete
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="w-7 h-7 rounded bg-zinc-200 hover:bg-zinc-900 hover:text-white flex items-center justify-center text-sm font-bold transition-colors cursor-pointer"
+              aria-label="Close drawer"
+              className="w-7 h-7 rounded-lg bg-zinc-100 hover:bg-zinc-900 hover:text-white flex items-center justify-center text-sm font-bold transition-colors cursor-pointer"
             >
               &times;
             </button>
@@ -378,7 +379,7 @@ export default function TaskDetailDrawer({
         {/* Drawer Body (Dual Column) */}
         <div className="flex-1 overflow-hidden grid grid-cols-1 lg:grid-cols-12">
           {/* Left Column: Directive Content & Proof (7 Cols) */}
-          <div className="lg:col-span-7 p-6 overflow-y-auto space-y-5 border-b lg:border-b-0 lg:border-r border-zinc-200">
+          <div className="lg:col-span-7 p-6 overflow-y-auto space-y-5 border-b lg:border-b-0 lg:border-r border-zinc-100">
             {/* Title */}
             <div>
               {isEditingTitle ? (
@@ -715,10 +716,10 @@ export default function TaskDetailDrawer({
             {/* Proof / Attached Photo Gallery */}
             {task.photo && (
               <div>
-                <label className="text-[10px] font-bold font-mono uppercase tracking-widest text-zinc-500 block mb-2">
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 block mb-2">
                   Proof of Work / Inspection Media
                 </label>
-                <div className="relative group rounded-lg overflow-hidden border-2 border-zinc-900 shadow-[3px_3px_0px_0px_#09090b] max-w-md">
+                <div className="relative group rounded-xl overflow-hidden border border-zinc-200 shadow-sm max-w-md">
                   <img
                     src={task.photo}
                     alt="Task submission proof"
@@ -726,7 +727,7 @@ export default function TaskDetailDrawer({
                     onClick={() => setZoomedImage(task.photo || null)}
                   />
                   <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
-                    <span className="px-3 py-1 bg-white text-zinc-950 font-bold font-mono text-xs uppercase rounded shadow">
+                    <span className="px-3 py-1 bg-white text-zinc-950 font-semibold text-xs rounded-lg shadow">
                       🔍 Click to Zoom Full Screen
                     </span>
                   </div>
@@ -735,8 +736,8 @@ export default function TaskDetailDrawer({
             )}
 
             {/* Quick Dispatch Worker Mobile Alert */}
-            <div className="p-3.5 bg-zinc-50 border border-zinc-200 rounded-lg space-y-2">
-              <label className="text-[10px] font-bold font-mono uppercase tracking-widest text-zinc-500 block">
+            <div className="p-3.5 bg-zinc-50/70 border border-zinc-200/80 rounded-xl space-y-2">
+              <label className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 block">
                 Dispatch Mobile Push Alert to Assigned Workers
               </label>
               <div className="flex gap-2">
@@ -745,13 +746,13 @@ export default function TaskDetailDrawer({
                   value={pushAlertInput}
                   onChange={(e) => setPushAlertInput(e.target.value)}
                   placeholder="Notification text sent to worker device..."
-                  className="flex-1 text-xs px-3 py-1.5 bg-white border border-zinc-300 rounded font-mono"
+                  className="flex-1 text-xs px-3 py-1.5 bg-white border border-zinc-200 rounded-lg focus:outline-none focus:border-zinc-900"
                 />
                 <button
                   type="button"
                   onClick={handleSendCustomAlert}
                   disabled={isSendingAlert || !pushAlertInput.trim()}
-                  className="px-3 py-1.5 bg-zinc-900 hover:bg-black text-white text-xs font-bold uppercase rounded disabled:opacity-40 cursor-pointer"
+                  className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-semibold rounded-lg disabled:opacity-40 cursor-pointer"
                 >
                   {isSendingAlert ? "..." : "Send Alert"}
                 </button>
@@ -760,21 +761,27 @@ export default function TaskDetailDrawer({
           </div>
 
           {/* Right Column: Metadata & Comms Chat (5 Cols) */}
-          <div className="lg:col-span-5 bg-zinc-50 flex flex-col h-full overflow-hidden">
-            {/* Tabs */}
-            <div className="px-4 pt-3 border-b border-zinc-200 flex items-center gap-2 bg-zinc-100/70">
+          <div className="lg:col-span-5 bg-zinc-50/60 flex flex-col h-full overflow-hidden">
+            {/* Accessible Tabs (modern-web-guidance: tabs) */}
+            <div
+              role="tablist"
+              aria-label="Directive details and communications"
+              className="px-4 pt-2.5 border-b border-zinc-200/80 flex items-center gap-1 bg-zinc-100/60"
+            >
               <button
                 type="button"
+                role="tab"
+                aria-selected={activeTab === "chat"}
                 onClick={() => setActiveTab("chat")}
-                className={`px-3 py-2 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
+                className={`mft-tab-btn px-3 py-2 text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
                   activeTab === "chat"
-                    ? "border-red-600 text-red-600 font-bold"
-                    : "border-transparent text-zinc-500 hover:text-zinc-900"
+                    ? "text-red-600"
+                    : "text-zinc-500 hover:text-zinc-900"
                 }`}
               >
                 <span>💬 Live Comms</span>
                 {messages.length > 0 && (
-                  <span className="text-[10px] px-1.5 py-0.2 bg-zinc-200 text-zinc-700 rounded-full font-mono">
+                  <span className="text-[10px] px-1.5 py-0.2 bg-zinc-200/80 text-zinc-700 rounded-full font-code font-semibold">
                     {messages.length}
                   </span>
                 )}
@@ -782,11 +789,13 @@ export default function TaskDetailDrawer({
 
               <button
                 type="button"
+                role="tab"
+                aria-selected={activeTab === "assignees"}
                 onClick={() => setActiveTab("assignees")}
-                className={`px-3 py-2 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
+                className={`mft-tab-btn px-3 py-2 text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
                   activeTab === "assignees"
-                    ? "border-red-600 text-red-600 font-bold"
-                    : "border-transparent text-zinc-500 hover:text-zinc-900"
+                    ? "text-red-600"
+                    : "text-zinc-500 hover:text-zinc-900"
                 }`}
               >
                 <span>👤 Assignees ({assignedIds.length})</span>
@@ -794,11 +803,13 @@ export default function TaskDetailDrawer({
 
               <button
                 type="button"
+                role="tab"
+                aria-selected={activeTab === "details"}
                 onClick={() => setActiveTab("details")}
-                className={`px-3 py-2 text-xs font-bold uppercase tracking-wider border-b-2 transition-all cursor-pointer ${
+                className={`mft-tab-btn px-3 py-2 text-xs font-semibold transition-all cursor-pointer ${
                   activeTab === "details"
-                    ? "border-red-600 text-red-600 font-bold"
-                    : "border-transparent text-zinc-500 hover:text-zinc-900"
+                    ? "text-red-600"
+                    : "text-zinc-500 hover:text-zinc-900"
                 }`}
               >
                 <span>📅 Schedule</span>

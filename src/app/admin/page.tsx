@@ -6,12 +6,14 @@ import { collection, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { FILTERED_LINKS, ICONS, STRAPI_CMS_ADMIN } from "@/lib/admin/nav";
 import { effectiveSessionWorkMs, type SessionLike } from "@/lib/admin/workTime";
-import { formatDepartment } from "@/lib/admin/hrReports";
+import { cairoYmd } from "@/lib/admin/cairoTime";
+import { DEFAULT_HR_SETTINGS, formatDepartment, isLateTodayHtml, type HrSettings } from "@/lib/admin/hrReports";
+import { subscribeHrSettings } from "@/lib/admin/hrSettings";
 import { subscribeClientPortals } from "@/lib/admin/clientPortalStore";
 import { ARC_DEFAULT_PORTAL, type ClientRolloutPortal } from "@/lib/admin/clientPortalTypes";
+import { CellColumnTrend } from "@/components/admin/ui/CellColumnTrend";
 import {
   AttendanceHeatmap,
-  CellColumnTrend,
   ChartCard,
   ConcentricRingsChart,
   DonutBreakdownChart,
@@ -87,8 +89,7 @@ function toDate(v: TS): Date | null {
   return null;
 }
 
-const ymd = (d: Date) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const ymd = (d: Date) => cairoYmd(d);
 
 const hours = (ms: number) => Math.round((ms / 3_600_000) * 10) / 10;
 
@@ -180,7 +181,10 @@ export default function AdminOverviewPage() {
   const [sessions] = useCollection<Session>("workSessions");
   const [exceptions] = useCollection<ExceptionReq>("exceptionRequests");
   const [submissions] = useCollection<Submission>("submissions");
+  const [hrSettings, setHrSettings] = useState<HrSettings>(DEFAULT_HR_SETTINGS);
   const [portalData, setPortalData] = useState<ClientRolloutPortal>(ARC_DEFAULT_PORTAL);
+
+  useEffect(() => subscribeHrSettings(setHrSettings), []);
 
   useEffect(() => {
     const unsub = subscribeClientPortals((portalsMap) => {
@@ -224,9 +228,16 @@ export default function AdminOverviewPage() {
     const activeProjects = projects.filter((p) => (p.status || "active") === "active");
     const completedProjects = projects.filter((p) => p.status === "completed");
 
+    const stdHours = hrSettings.standardHours || 8;
+    const isSessionLate = (x: Session) =>
+      x.startTime || x.loginTime ? isLateTodayHtml(x, hrSettings) : Boolean(x.isLate);
+
     const todaySessions = sessions.filter((x) => x.date === today);
-    const todayMs = todaySessions.reduce((a, x) => a + effectiveSessionWorkMs(x, now.getTime()), 0);
-    const lateToday = todaySessions.filter((x) => x.isLate).length;
+    const todayMs = todaySessions.reduce(
+      (a, x) => a + effectiveSessionWorkMs(x, now.getTime(), { standardHours: stdHours }),
+      0,
+    );
+    const lateToday = todaySessions.filter((x) => !x.isExternalMission && isSessionLate(x)).length;
     const activeSessions = todaySessions.filter((x) => x.isActive);
     const idleSessions = activeSessions.filter((x) => x.presenceStatus === "idle");
     const activeTodayWorkerIds = new Set(activeSessions.map((x) => x.workerId).filter(Boolean));
@@ -253,10 +264,12 @@ export default function AdminOverviewPage() {
       let dayOtH = 0;
       let dayLate = 0;
       for (const sess of daySessions) {
-        const h = hours(effectiveSessionWorkMs(sess, key === today ? now.getTime() : undefined));
+        const h = hours(
+          effectiveSessionWorkMs(sess, key === today ? now.getTime() : undefined, { standardHours: stdHours }),
+        );
         dayTotalH += h;
-        dayOtH += Math.max(0, h - 8);
-        if (sess.isLate) dayLate++;
+        dayOtH += Math.max(0, h - stdHours);
+        if (!sess.isExternalMission && isSessionLate(sess)) dayLate++;
       }
       const dayTasksDone = completedTasks.filter((t) => {
         const td = toDate(t.updatedAt) || toDate(t.createdAt);
@@ -302,7 +315,9 @@ export default function AdminOverviewPage() {
     for (const sess of sessions) {
       if ((sess.date ?? "") < cutoff28) continue;
       const dept = sess.department || workerMap.get(sess.workerId ?? "")?.department || "general";
-      const h = hours(effectiveSessionWorkMs(sess, sess.date === today ? now.getTime() : undefined));
+      const h = hours(
+        effectiveSessionWorkMs(sess, sess.date === today ? now.getTime() : undefined, { standardHours: stdHours }),
+      );
       deptMap.set(dept, (deptMap.get(dept) ?? 0) + h);
     }
     const deptSlices = Array.from(deptMap.entries())
@@ -418,7 +433,7 @@ export default function AdminOverviewPage() {
       activity: acts.slice(0, 8),
       todaySessions,
     };
-  }, [workers, projects, tasks, sessions, exceptions, submissions, now]);
+  }, [workers, projects, tasks, sessions, exceptions, submissions, now, hrSettings]);
 
   // Client Rollout Portal live metrics
   const portalStats = useMemo(() => {

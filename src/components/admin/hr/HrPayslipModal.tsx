@@ -100,23 +100,26 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
   return (
     <ModalPortal onClose={onClose}>
       <div
-        className="fixed inset-0 z-[120] bg-zinc-950/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-fade-in print:p-0 print:bg-white"
+        className="fixed inset-0 z-[120] bg-zinc-950/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-fade-in print:p-0 print:bg-white"
         onClick={onClose}
       >
         <div
           dir={dir}
-          className="bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 shadow-2xl w-full max-w-2xl max-h-[92vh] overflow-y-auto p-6 md:p-8 animate-scale-in text-zinc-950 dark:text-zinc-100 font-mono rounded-lg print:border-none print:shadow-none print:max-w-none print:max-h-none print:p-8"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="payslip-modal-title"
+          className="ui-card shadow-2xl w-full max-w-2xl max-h-[92vh] overflow-y-auto p-6 md:p-8 animate-scale-in text-zinc-950 dark:text-zinc-100 print:border-none print:shadow-none print:max-w-none print:max-h-none print:p-8"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
-          <div className="flex items-start justify-between gap-3 pb-4 border-b-2 border-zinc-900 dark:border-zinc-700 mb-6">
+          <div className="flex items-start justify-between gap-3 pb-4 border-b border-zinc-200 dark:border-zinc-800 mb-6">
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 px-2 py-0.5 rounded">
+                <span className="text-[10px] font-semibold uppercase tracking-widest text-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 px-2.5 py-0.5 rounded-full">
                   {t("بيان راتب رسمي · HR-POL-2026", "OFFICIAL PAY STATEMENT")}
                 </span>
               </div>
-              <h3 className="text-2xl font-black font-heading tracking-wide text-zinc-950 dark:text-white mt-1">
+              <h3 id="payslip-modal-title" className="text-2xl font-bold tracking-tight text-zinc-950 dark:text-white mt-1.5">
                 {t("كشف راتب ومستحقات الموظف", "Employee Compensation Payslip")}
               </h3>
               <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
@@ -127,14 +130,15 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
               <button
                 type="button"
                 onClick={toggleLang}
-                className="px-2.5 py-1 border-2 border-zinc-900 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 text-xs font-bold rounded cursor-pointer hover:bg-red-600 hover:text-white"
+                className="brutal-btn-outline px-3 py-1.5 text-xs cursor-pointer"
               >
                 {isAr ? "English" : "العربية"}
               </button>
               <button
                 type="button"
+                aria-label="Close"
                 onClick={onClose}
-                className="text-zinc-400 hover:text-zinc-950 dark:hover:text-white text-2xl font-bold leading-none p-1 cursor-pointer"
+                className="h-8 w-8 rounded-lg flex items-center justify-center text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer"
               >
                 &times;
               </button>
@@ -142,19 +146,19 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
           </div>
 
           {/* Worker Identity Card */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-300 dark:border-zinc-700 rounded-lg text-xs mb-6">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 bg-zinc-50/80 dark:bg-zinc-800/50 border border-zinc-200/80 dark:border-zinc-800 rounded-xl text-xs mb-6">
             <div>
-              <span className="text-zinc-500 dark:text-zinc-400 block text-[10px] uppercase font-bold">
+              <span className="text-zinc-500 dark:text-zinc-400 block text-[10px] uppercase font-semibold">
                 {t("الموظف", "Employee")}
               </span>
               <strong className="text-zinc-900 dark:text-white text-sm block mt-0.5">
                 {workerFullName}
               </strong>
-              <span className="text-[10px] text-zinc-400">ID: {worker.id}</span>
+              <span className="text-[10px] text-zinc-400 font-code">ID: {worker.id}</span>
             </div>
 
             <div>
-              <span className="text-zinc-500 dark:text-zinc-400 block text-[10px] uppercase font-bold">
+              <span className="text-zinc-500 dark:text-zinc-400 block text-[10px] uppercase font-semibold">
                 {t("القسم والوظيفة", "Department & Role")}
               </span>
               <strong className="text-zinc-900 dark:text-white block mt-0.5">
@@ -164,20 +168,20 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
             </div>
 
             <div>
-              <span className="text-zinc-500 dark:text-zinc-400 block text-[10px] uppercase font-bold">
+              <span className="text-zinc-500 dark:text-zinc-400 block text-[10px] uppercase font-semibold">
                 {t("أجر الساعة", "Hourly Rate")}
               </span>
-              <strong className="text-emerald-700 dark:text-emerald-400 text-sm block mt-0.5">
+              <strong className="text-emerald-700 dark:text-emerald-400 text-sm font-code block mt-0.5">
                 {payroll.hourlyRate} {t("ج.م / س", "EGP / hr")}
               </strong>
               <span className="text-[10px] text-zinc-400">{formatEmploymentType(worker.employmentType)}</span>
             </div>
 
             <div>
-              <span className="text-zinc-500 dark:text-zinc-400 block text-[10px] uppercase font-bold">
+              <span className="text-zinc-500 dark:text-zinc-400 block text-[10px] uppercase font-semibold">
                 {t("أيام العمل", "Attendance Ratio")}
               </span>
-              <strong className="text-zinc-900 dark:text-white block mt-0.5">
+              <strong className="text-zinc-900 dark:text-white font-code block mt-0.5">
                 {payroll.daysWorked} / {payroll.expectedWorkDays} {t("يوم", "days")}
               </strong>
               <span className="text-[10px] text-zinc-500">
@@ -190,14 +194,14 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
           {/* Breakdown Section */}
           <div className="space-y-4 text-xs">
             {/* 1. Earnings */}
-            <div className="border border-zinc-300 dark:border-zinc-700 rounded-lg overflow-hidden">
-              <div className="bg-zinc-100 dark:bg-zinc-800 px-4 py-2 border-b border-zinc-300 dark:border-zinc-700 font-bold tracking-wider text-zinc-900 dark:text-white flex items-center justify-between">
+            <div className="border border-zinc-200/80 dark:border-zinc-800 rounded-xl overflow-hidden">
+              <div className="bg-zinc-50 dark:bg-zinc-800/80 px-4 py-2.5 border-b border-zinc-200/80 dark:border-zinc-800 font-bold text-zinc-900 dark:text-white flex items-center justify-between">
                 <span>{t("١. إجمالي المستحقات (Gross Earnings)", "1. Gross Earnings (المستحقات)")}</span>
-                <span className="text-emerald-700 dark:text-emerald-400">
+                <span className="text-emerald-700 dark:text-emerald-400 font-code">
                   +EGP {payroll.basePay + payroll.overtimePay + payroll.allowances + payroll.manualBonuses}
                 </span>
               </div>
-              <div className="divide-y divide-zinc-200 dark:divide-zinc-800 p-2 text-zinc-800 dark:text-zinc-200">
+              <div className="divide-y divide-zinc-200/70 dark:divide-zinc-800 p-2 text-zinc-800 dark:text-zinc-200">
                 <div className="flex justify-between py-1.5 px-2">
                   <span>
                     {t(
@@ -205,7 +209,7 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
                       `Regular Base Hours (${payroll.totalHours} hrs @ EGP ${payroll.hourlyRate}/h)`,
                     )}
                   </span>
-                  <span className="font-bold">EGP {Math.max(0, payroll.basePay - (payroll.paidLeavePay || 0))}</span>
+                  <span className="font-bold font-code">EGP {Math.max(0, payroll.basePay - (payroll.paidLeavePay || 0))}</span>
                 </div>
                 {payroll.paidLeaveDays > 0 && (
                   <div className="flex justify-between py-1.5 px-2 text-emerald-800 dark:text-emerald-300">
@@ -215,7 +219,7 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
                         `🌴 Approved Paid Leave (${payroll.paidLeaveDays} day(s))`,
                       )}
                     </span>
-                    <span className="font-bold">+EGP {payroll.paidLeavePay}</span>
+                    <span className="font-bold font-code">+EGP {payroll.paidLeavePay}</span>
                   </div>
                 )}
                 {payroll.unpaidLeaveDays > 0 && (
@@ -226,7 +230,7 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
                         `📅 Approved Unpaid Leave (${payroll.unpaidLeaveDays} day(s) — exempted from 2x penalty)`,
                       )}
                     </span>
-                    <span className="font-bold">EGP 0</span>
+                    <span className="font-bold font-code">EGP 0</span>
                   </div>
                 )}
                 {payroll.policyApplied ? (
@@ -238,7 +242,7 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
                           `☀️ Approved Overtime · Day 06:00–18:00 (${payroll.otDayHours} hrs @ 1.35x)`,
                         )}
                       </span>
-                      <span className="font-bold text-emerald-700 dark:text-emerald-400">+EGP {payroll.otDayPay}</span>
+                      <span className="font-bold font-code text-emerald-700 dark:text-emerald-400">+EGP {payroll.otDayPay}</span>
                     </div>
                     <div className="flex justify-between py-1.5 px-2">
                       <span>
@@ -247,18 +251,18 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
                           `🌙 Approved Overtime · Night 18:00–06:00 (${payroll.otNightHours} hrs @ 1.70x)`,
                         )}
                       </span>
-                      <span className="font-bold text-emerald-700 dark:text-emerald-400">+EGP {payroll.otNightPay}</span>
+                      <span className="font-bold font-code text-emerald-700 dark:text-emerald-400">+EGP {payroll.otNightPay}</span>
                     </div>
                     {payroll.nightAllowance > 0 && (
                       <div className="flex justify-between py-1.5 px-2">
                         <span>{t("بدل وردية ليلية", "Night Shift Allowance")}</span>
-                        <span className="font-bold text-emerald-700 dark:text-emerald-400">+EGP {payroll.nightAllowance}</span>
+                        <span className="font-bold font-code text-emerald-700 dark:text-emerald-400">+EGP {payroll.nightAllowance}</span>
                       </div>
                     )}
                     {payroll.legacyOvertimePay > 0 && (
                       <div className="flex justify-between py-1.5 px-2">
                         <span>{t("إضافي قبل تاريخ سريان اللائحة (1.5x)", "Overtime before policy effective date (1.5x)")}</span>
-                        <span className="font-bold text-emerald-700 dark:text-emerald-400">+EGP {payroll.legacyOvertimePay}</span>
+                        <span className="font-bold font-code text-emerald-700 dark:text-emerald-400">+EGP {payroll.legacyOvertimePay}</span>
                       </div>
                     )}
                     {payroll.unapprovedOtMinutes > 0 && (
@@ -269,7 +273,7 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
                             `Extra time without prior assignment (${payroll.unapprovedOtMinutes} min) — not payable`,
                           )}
                         </span>
-                        <span>EGP 0</span>
+                        <span className="font-code">EGP 0</span>
                       </div>
                     )}
                   </>
@@ -281,7 +285,7 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
                         `Overtime Pay (${payroll.overtimeHours} hrs @ 1.5x multiplier)`,
                       )}
                     </span>
-                    <span className="font-bold text-emerald-700 dark:text-emerald-400">
+                    <span className="font-bold font-code text-emerald-700 dark:text-emerald-400">
                       +EGP {payroll.overtimePay}
                     </span>
                   </div>
@@ -293,7 +297,7 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
                         {t("البدلات والمصروفات المعتمدة (مأموريات / مشتريات)", "Allowances & Approved Reimbursements")}
                         {payroll.reimbursements > 0 && ` (${t("منها مصروفات:", "reimb:")} EGP ${payroll.reimbursements})`}
                       </span>
-                      <span className="font-bold text-emerald-700 dark:text-emerald-400">
+                      <span className="font-bold font-code text-emerald-700 dark:text-emerald-400">
                         +EGP {payroll.allowances}
                       </span>
                     </div>
@@ -306,7 +310,7 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
                             <button
                               type="button"
                               onClick={() => onRemoveAdjustment(a)}
-                              className="print:hidden px-1.5 py-0.5 text-[10px] font-bold text-red-600 hover:bg-red-600 hover:text-white border border-red-300 rounded cursor-pointer"
+                              className="print:hidden px-1.5 py-0.5 text-[10px] font-semibold text-red-600 hover:bg-red-600 hover:text-white border border-red-200 rounded-md cursor-pointer"
                             >
                               {t("🗑️ شيل", "Remove")}
                             </button>
@@ -319,7 +323,7 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
                   <div className="py-1.5 px-2 bg-emerald-50/50 dark:bg-emerald-950/20 space-y-1">
                     <div className="flex justify-between">
                       <span>{t("🎁 مكافآت الأداء والتميز (Bonuses)", "🎁 Performance & Exceptional Bonuses")}</span>
-                      <span className="font-bold text-emerald-700 dark:text-emerald-400">
+                      <span className="font-bold font-code text-emerald-700 dark:text-emerald-400">
                         +EGP {payroll.manualBonuses}
                       </span>
                     </div>
@@ -332,7 +336,7 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
                             <button
                               type="button"
                               onClick={() => onRemoveAdjustment(a)}
-                              className="print:hidden px-1.5 py-0.5 text-[10px] font-bold text-red-600 hover:bg-red-600 hover:text-white border border-red-300 rounded cursor-pointer"
+                              className="print:hidden px-1.5 py-0.5 text-[10px] font-semibold text-red-600 hover:bg-red-600 hover:text-white border border-red-200 rounded-md cursor-pointer"
                             >
                               {t("🗑️ شيل البونص", "Remove")}
                             </button>
@@ -345,14 +349,14 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
             </div>
 
             {/* 2. Deductions */}
-            <div className="border border-zinc-300 dark:border-zinc-700 rounded-lg overflow-hidden">
-              <div className="bg-zinc-100 dark:bg-zinc-800 px-4 py-2 border-b border-zinc-300 dark:border-zinc-700 font-bold tracking-wider text-zinc-900 dark:text-white flex items-center justify-between">
+            <div className="border border-zinc-200/80 dark:border-zinc-800 rounded-xl overflow-hidden">
+              <div className="bg-zinc-50 dark:bg-zinc-800/80 px-4 py-2.5 border-b border-zinc-200/80 dark:border-zinc-800 font-bold text-zinc-900 dark:text-white flex items-center justify-between">
                 <span>{t("٢. الاستقطاعات والسلف (Deductions & Advances)", "2. Deductions & Advances (الاستقطاعات والسلف)")}</span>
-                <span className="text-red-600 dark:text-red-400">
+                <span className="text-red-600 dark:text-red-400 font-code">
                   -EGP {payroll.absencePenalty + payroll.totalLatePenaltyEgp + payroll.shortfallDeduction + payroll.salaryAdvances + payroll.manualDeductions}
                 </span>
               </div>
-              <div className="divide-y divide-zinc-200 dark:divide-zinc-800 p-2 text-zinc-800 dark:text-zinc-200">
+              <div className="divide-y divide-zinc-200/70 dark:divide-zinc-800 p-2 text-zinc-800 dark:text-zinc-200">
                 {payroll.absencePenalty > 0 ? (
                   <div className="flex justify-between py-1.5 px-2 text-red-700 dark:text-red-400">
                     <span>
@@ -361,12 +365,12 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
                         `Absence Deductions (${payroll.absentDays} unexcused day(s))`,
                       )}
                     </span>
-                    <span className="font-bold">-EGP {payroll.absencePenalty}</span>
+                    <span className="font-bold font-code">-EGP {payroll.absencePenalty}</span>
                   </div>
                 ) : (
                   <div className="flex justify-between py-1.5 px-2 text-zinc-500 italic">
                     <span>{t("خصم الغياب (لا يوجد غياب غير مبرر)", "Absence Deductions (No unexcused absences)")}</span>
-                    <span>EGP 0</span>
+                    <span className="font-code">EGP 0</span>
                   </div>
                 )}
 
@@ -383,12 +387,12 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
                             `Late Check-in Penalties (${payroll.lateDays} late, ${payroll.veryLateDays} very late)`,
                           )}
                     </span>
-                    <span className="font-bold">-EGP {payroll.totalLatePenaltyEgp}</span>
+                    <span className="font-bold font-code">-EGP {payroll.totalLatePenaltyEgp}</span>
                   </div>
                 ) : (
                   <div className="flex justify-between py-1.5 px-2 text-zinc-500 italic">
                     <span>{t("جزاءات التأخير", "Late Check-in Penalties")}</span>
-                    <span>EGP 0</span>
+                    <span className="font-code">EGP 0</span>
                   </div>
                 )}
 
@@ -400,7 +404,7 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
                         `Monthly permissions used: ${payroll.permissionsUsed} / 4 · ${payroll.permissionMinutesUsed} / 240 min (${payroll.coveredLateCount} late arrival(s) covered)`,
                       )}
                     </span>
-                    <span>EGP 0</span>
+                    <span className="font-code">EGP 0</span>
                   </div>
                 )}
 
@@ -412,7 +416,7 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
                         `Early leave without permission: ${payroll.shortfallMinutes} min unpaid (already excluded from base pay)`,
                       )}
                     </span>
-                    <span>EGP 0</span>
+                    <span className="font-code">EGP 0</span>
                   </div>
                 )}
 
@@ -420,7 +424,7 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
                   <div className="py-1.5 px-2 bg-red-50/50 dark:bg-red-950/20 text-red-700 dark:text-red-400 font-semibold space-y-1">
                     <div className="flex justify-between">
                       <span>{t("سلف نقدية مستردة خلال الشهر", "Mid-month Cash Advances Recovered (سلف)")}</span>
-                      <span className="font-bold">-EGP {payroll.salaryAdvances}</span>
+                      <span className="font-bold font-code">-EGP {payroll.salaryAdvances}</span>
                     </div>
                     {adjustments
                       .filter((a) => a.type === "advance" && a.status !== "cancelled")
@@ -431,7 +435,7 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
                             <button
                               type="button"
                               onClick={() => onRemoveAdjustment(a)}
-                              className="print:hidden px-1.5 py-0.5 text-[10px] font-bold text-red-600 hover:bg-red-600 hover:text-white border border-red-300 rounded cursor-pointer"
+                              className="print:hidden px-1.5 py-0.5 text-[10px] font-semibold text-red-600 hover:bg-red-600 hover:text-white border border-red-200 rounded-md cursor-pointer"
                             >
                               {t("🗑️ شيل السلفة", "Remove")}
                             </button>
@@ -445,7 +449,7 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
                   <div className="py-1.5 px-2 bg-red-50/50 dark:bg-red-950/20 text-red-700 dark:text-red-400 font-semibold space-y-1">
                     <div className="flex justify-between">
                       <span>{t("⛔ خصومات وجزاءات إدارية (Admin Deductions)", "⛔ Disciplinary & Admin Deductions")}</span>
-                      <span className="font-bold">-EGP {payroll.manualDeductions}</span>
+                      <span className="font-bold font-code">-EGP {payroll.manualDeductions}</span>
                     </div>
                     {adjustments
                       .filter((a) => a.type === "deduction" && a.status !== "cancelled")
@@ -456,7 +460,7 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
                             <button
                               type="button"
                               onClick={() => onRemoveAdjustment(a)}
-                              className="print:hidden px-1.5 py-0.5 text-[10px] font-bold text-red-600 hover:bg-red-600 hover:text-white border border-red-300 rounded cursor-pointer"
+                              className="print:hidden px-1.5 py-0.5 text-[10px] font-semibold text-red-600 hover:bg-red-600 hover:text-white border border-red-200 rounded-md cursor-pointer"
                             >
                               {t("🗑️ شيل الخصم", "Remove Deduction")}
                             </button>
@@ -469,7 +473,7 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
             </div>
 
             {/* 3. Net Payable Summary Banner */}
-            <div className="p-4 bg-emerald-50 dark:bg-emerald-950/50 border-2 border-emerald-600 rounded-lg flex flex-col sm:flex-row items-center justify-between gap-3 shadow-[3px_3px_0px_0px_#059669]">
+            <div className="p-4 bg-emerald-50/80 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/80 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3">
               <div>
                 <span className="text-xs uppercase font-bold text-emerald-800 dark:text-emerald-300 tracking-wider">
                   {t("صافي الراتب المستحق للصرف (Net Payable)", "Net Amount Payable (صافي المستحق للصرف)")}
@@ -482,7 +486,7 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
                 </p>
               </div>
               <div className="text-end">
-                <span className="text-3xl font-black font-heading text-emerald-800 dark:text-emerald-300">
+                <span className="text-3xl font-bold font-code text-emerald-800 dark:text-emerald-300">
                   EGP {payroll.netPayable}
                 </span>
               </div>
@@ -490,21 +494,21 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
           </div>
 
           {/* Footer & Actions */}
-          <div className="mt-8 pt-4 border-t-2 border-zinc-900 dark:border-zinc-700 flex flex-wrap items-center justify-between gap-3 print:hidden">
+          <div className="mt-6 pt-4 border-t border-zinc-200 dark:border-zinc-800 flex flex-wrap items-center justify-between gap-3 print:hidden">
             <div className="flex flex-wrap gap-2">
               {onOpenAddAdjustment && (
                 <>
                   <button
                     type="button"
                     onClick={() => onOpenAddAdjustment("bonus")}
-                    className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-mono text-xs font-bold uppercase tracking-wider border-2 border-zinc-900 cursor-pointer rounded"
+                    className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg shadow-2xs cursor-pointer transition-colors"
                   >
                     {t("🎁 + بونص", "🎁 + Bonus")}
                   </button>
                   <button
                     type="button"
                     onClick={() => onOpenAddAdjustment("deduction")}
-                    className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white font-mono text-xs font-bold uppercase tracking-wider border-2 border-zinc-900 cursor-pointer rounded"
+                    className="px-3.5 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-lg shadow-2xs cursor-pointer transition-colors"
                   >
                     {t("⛔ + خصم", "⛔ + Deduction")}
                   </button>
@@ -513,14 +517,14 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
               <button
                 type="button"
                 onClick={handleCopySummary}
-                className="px-3.5 py-2 border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 text-zinc-950 dark:text-zinc-100 font-mono text-xs font-bold uppercase tracking-wider cursor-pointer rounded"
+                className="brutal-btn-outline px-3.5 py-2 text-xs cursor-pointer"
               >
                 {t("📋 نسخ الملخص", "📋 Copy Summary")}
               </button>
               <button
                 type="button"
                 onClick={handlePrint}
-                className="px-3.5 py-2 border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 text-zinc-950 dark:text-zinc-100 font-mono text-xs font-bold uppercase tracking-wider cursor-pointer rounded"
+                className="brutal-btn-outline px-3.5 py-2 text-xs cursor-pointer"
               >
                 {t("🖨️ طباعة كشف الراتب", "🖨️ Print Payslip")}
               </button>
@@ -529,7 +533,7 @@ NET PAYABLE DUE: EGP ${payroll.netPayable}
             <button
               type="button"
               onClick={onClose}
-              className="px-5 py-2 bg-zinc-900 hover:bg-zinc-800 text-white font-mono text-xs font-bold uppercase tracking-wider border-2 border-zinc-900 cursor-pointer rounded"
+              className="px-5 py-2 bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 text-white text-xs font-semibold rounded-lg cursor-pointer transition-colors"
             >
               {t("إغلاق", "Close")}
             </button>

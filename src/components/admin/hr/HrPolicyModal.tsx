@@ -31,12 +31,12 @@ const WEEKEND_OPTIONS = [
 ];
 
 const INPUT_CLS =
-  "w-full bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 px-2.5 py-1.5 text-zinc-950 dark:text-zinc-100 font-bold focus:outline-none focus:ring-2 focus:ring-red-600 rounded";
+  "w-full brutal-input px-2.5 py-1.5 font-semibold";
 
 function PolicyField({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="block text-[11px] font-bold text-zinc-700 dark:text-zinc-300 mb-1">{label}</span>
+      <span className="block text-[11px] font-semibold text-zinc-700 dark:text-zinc-300 mb-1">{label}</span>
       {children}
       {hint && <span className="block text-[10px] text-zinc-400 mt-0.5">{hint}</span>}
     </label>
@@ -521,21 +521,24 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
   return (
     <ModalPortal onClose={onClose}>
       <div
-        className="fixed inset-0 z-[120] bg-zinc-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in"
+        className="fixed inset-0 z-[120] bg-zinc-950/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto animate-fade-in"
         onClick={onClose}
       >
         <div
           dir={dir}
-          className="bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 shadow-2xl w-full max-w-2xl max-h-[92vh] overflow-y-auto p-6 md:p-7 animate-scale-in text-zinc-950 dark:text-zinc-100 font-mono rounded-lg"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="hr-policy-modal-title"
+          className="ui-card shadow-2xl w-full max-w-2xl max-h-[92vh] overflow-y-auto p-6 md:p-7 animate-scale-in text-zinc-950 dark:text-zinc-100"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
-          <div className="flex items-start justify-between gap-3 pb-4 border-b-2 border-zinc-900 dark:border-zinc-700 mb-5">
+          <div className="flex items-start justify-between gap-3 pb-4 border-b border-zinc-200 dark:border-zinc-800 mb-5">
             <div>
-              <span className="text-[10px] font-bold uppercase tracking-widest text-red-600 bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-900 px-2 py-0.5 rounded">
-                {t("إعدادات لائحة العمل والرواتب · HR-POL-2026", "// HR & PAYROLL POLICY SETTINGS")}
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-red-600 bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-900 px-2.5 py-0.5 rounded-full">
+                {t("إعدادات لائحة العمل والرواتب · HR-POL-2026", "HR & PAYROLL POLICY SETTINGS")}
               </span>
-              <h3 className="text-xl md:text-2xl font-bold font-heading tracking-wide mt-1 text-zinc-950 dark:text-white">
+              <h3 id="hr-policy-modal-title" className="text-xl md:text-2xl font-bold tracking-tight mt-1.5 text-zinc-950 dark:text-white">
                 {t("إعدادات الموارد البشرية والرواتب", "HR & Payroll Policy Settings")}
               </h3>
               <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
@@ -549,14 +552,15 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
               <button
                 type="button"
                 onClick={toggleLang}
-                className="px-2.5 py-1 border-2 border-zinc-900 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 text-xs font-bold rounded cursor-pointer hover:bg-red-600 hover:text-white transition-colors"
+                className="brutal-btn-outline px-3 py-1.5 text-xs cursor-pointer"
               >
                 {isAr ? "English" : "العربية"}
               </button>
               <button
                 type="button"
+                aria-label="Close"
                 onClick={onClose}
-                className="text-zinc-400 hover:text-zinc-950 dark:hover:text-white text-2xl font-bold leading-none p-1 cursor-pointer"
+                className="h-8 w-8 rounded-lg flex items-center justify-center text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer"
               >
                 &times;
               </button>
@@ -566,10 +570,10 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
           <form onSubmit={handleSave} className="space-y-5 text-xs">
             {/* Master HR-POL-2026 Switch Banner */}
             <div
-              className={`p-4 border-2 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+              className={`p-4 border rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
                 settings.policy2026Enabled
-                  ? "border-emerald-600 bg-emerald-50/70 dark:bg-emerald-950/25"
-                  : "border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/60"
+                  ? "border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/25"
+                  : "border-zinc-200 dark:border-zinc-700 bg-zinc-50/70 dark:bg-zinc-800/50"
               }`}
             >
               <div className="space-y-1">
@@ -591,7 +595,7 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
               </div>
               <div className="flex items-center gap-3 shrink-0">
                 <div className="w-36">
-                  <label className="block text-[10px] font-bold text-zinc-600 dark:text-zinc-300 mb-0.5">
+                  <label className="block text-[10px] font-semibold text-zinc-600 dark:text-zinc-300 mb-0.5">
                     {t("تاريخ بدء التطبيق", "Effective From")}
                   </label>
                   <input
@@ -607,12 +611,14 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
                   role="switch"
                   aria-checked={!!settings.policy2026Enabled}
                   onClick={() => setSettings({ ...settings, policy2026Enabled: !settings.policy2026Enabled })}
-                  className={`relative shrink-0 h-7 w-12 rounded-full border-2 border-zinc-900 transition-colors cursor-pointer ${
-                    settings.policy2026Enabled ? "bg-emerald-500" : "bg-zinc-300 dark:bg-zinc-700"
+                  className={`relative shrink-0 h-7 w-12 rounded-full border transition-colors cursor-pointer ${
+                    settings.policy2026Enabled
+                      ? "bg-emerald-500 border-emerald-600"
+                      : "bg-zinc-300 dark:bg-zinc-700 border-zinc-400 dark:border-zinc-600"
                   }`}
                 >
                   <span
-                    className={`absolute top-0.5 h-4.5 w-4.5 rounded-full bg-white border border-zinc-900 transition-all ${
+                    className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-xs transition-all ${
                       settings.policy2026Enabled ? "left-[22px]" : "left-0.5"
                     }`}
                   />
@@ -621,7 +627,7 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
             </div>
 
             {/* 1. Monthly Cycle & Rest Days */}
-            <div className="p-4 bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-300 dark:border-zinc-700 rounded-lg space-y-3">
+            <div className="p-4 bg-zinc-50/70 dark:bg-zinc-800/40 border border-zinc-200/80 dark:border-zinc-800 rounded-xl space-y-3">
               <div className="flex items-center justify-between">
                 <div>
                   <h4 className="font-bold text-sm text-zinc-900 dark:text-white flex items-center gap-2">
@@ -635,7 +641,7 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
                     )}
                   </p>
                 </div>
-                <span className="px-2.5 py-1 bg-red-600 text-white font-bold rounded text-xs shrink-0">
+                <span className="px-2.5 py-1 bg-red-600 text-white font-semibold rounded-full text-xs shrink-0">
                   {t(`يوم ${settings.monthStartDay}`, `Day ${settings.monthStartDay}`)}
                 </span>
               </div>
@@ -651,18 +657,18 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
                     key={preset.day}
                     type="button"
                     onClick={() => setSettings({ ...settings, monthStartDay: preset.day })}
-                    className={`p-2 rounded border text-start cursor-pointer transition-all ${
+                    className={`p-2.5 rounded-xl border text-start cursor-pointer transition-all ${
                       settings.monthStartDay === preset.day
-                        ? "border-red-600 bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 ring-2 ring-red-600/20 font-bold"
-                        : "border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100"
+                        ? "border-red-500 bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-300 ring-2 ring-red-500/20 font-semibold"
+                        : "border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100"
                     }`}
                   >
-                    <div className="font-bold text-xs">{isAr ? preset.ar : preset.en}</div>
+                    <div className="font-semibold text-xs">{isAr ? preset.ar : preset.en}</div>
                     <div className="text-[10px] text-zinc-400 mt-0.5">{isAr ? preset.subAr : preset.subEn}</div>
                   </button>
                 ))}
-                <div className="p-2 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 flex flex-col justify-between">
-                  <span className="text-[10px] font-bold text-zinc-500">
+                <div className="p-2.5 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 flex flex-col justify-between">
+                  <span className="text-[10px] font-semibold text-zinc-500">
                     {t("يوم مخصص (1–28):", "Custom Day (1–28):")}
                   </span>
                   <input
@@ -676,13 +682,13 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
                         monthStartDay: Math.min(28, Math.max(1, parseInt(e.target.value, 10) || 1)),
                       })
                     }
-                    className="mt-1 w-full px-2 py-1 bg-zinc-50 dark:bg-zinc-800 border border-zinc-400 text-center font-bold text-xs rounded"
+                    className="mt-1 w-full px-2 py-1 brutal-input text-center font-bold font-code text-xs"
                   />
                 </div>
               </div>
 
               <div className="pt-2">
-                <span className="block text-[11px] font-bold text-zinc-700 dark:text-zinc-300 mb-1.5">
+                <span className="block text-[11px] font-semibold text-zinc-700 dark:text-zinc-300 mb-1.5">
                   {t("أيام العطلة الأسبوعية (لا يُحسب فيها غياب):", "Weekly Rest Days (Excluded from absences):")}
                 </span>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -693,10 +699,10 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
                         key={opt.value}
                         type="button"
                         onClick={() => toggleWeekend(opt.value)}
-                        className={`p-2 rounded border text-start flex items-center justify-between cursor-pointer transition-all ${
+                        className={`p-2.5 rounded-xl border text-start flex items-center justify-between cursor-pointer transition-all ${
                           checked
-                            ? "border-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 font-bold"
-                            : "border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400"
+                            ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 font-semibold"
+                            : "border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-600 dark:text-zinc-400"
                         }`}
                       >
                         <span>{isAr ? opt.ar : opt.en}</span>
@@ -709,7 +715,7 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
             </div>
 
             {/* 2. Shift Schedule & Monthly Permissions */}
-            <div className="p-4 bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-300 dark:border-zinc-700 rounded-lg space-y-3">
+            <div className="p-4 bg-zinc-50/70 dark:bg-zinc-800/40 border border-zinc-200/80 dark:border-zinc-800 rounded-xl space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <h4 className="font-bold text-sm text-zinc-900 dark:text-white flex items-center gap-2">
@@ -723,7 +729,7 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
                     )}
                   </p>
                 </div>
-                <span className="px-2 py-0.5 bg-amber-100 text-amber-900 border border-amber-300 rounded text-[11px] font-bold">
+                <span className="px-2.5 py-0.5 bg-amber-100 text-amber-900 border border-amber-200 rounded-full text-[11px] font-semibold font-code">
                   {t(`حد التأخير: ${lateCutoff}`, `Late Cutoff: ${lateCutoff}`)}
                 </span>
               </div>
@@ -819,8 +825,8 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
               )}
             </div>
 
-            {/* 3. Unified Overtime & Absence Rules (NO DUPLICATE DAY OT CONTROLS) */}
-            <div className="p-4 bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-300 dark:border-zinc-700 rounded-lg space-y-3">
+            {/* 3. Unified Overtime & Absence Rules */}
+            <div className="p-4 bg-zinc-50/70 dark:bg-zinc-800/40 border border-zinc-200/80 dark:border-zinc-800 rounded-xl space-y-3">
               <div>
                 <h4 className="font-bold text-sm text-zinc-900 dark:text-white flex items-center gap-2">
                   <span className="text-red-600">٣.</span>
@@ -842,7 +848,7 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
               {settings.policy2026Enabled ? (
                 <div className="space-y-3">
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div className="p-3 bg-amber-50/70 dark:bg-amber-950/20 border border-amber-300 dark:border-amber-800 rounded">
+                    <div className="p-3 bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-xl">
                       <NumField
                         label={t("☀️ مضاعف الإضافي النهاري (Day OT ×)", "☀️ Day Overtime Multiplier (×)")}
                         hint={t(`من ${settings.dayWindowStart ?? "06:00"} إلى ${settings.nightWindowStart ?? "18:00"} (افتراضي 1.35x)`, `Window ${settings.dayWindowStart ?? "06:00"}–${settings.nightWindowStart ?? "18:00"} (Default 1.35x)`)}
@@ -852,7 +858,7 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
                         onChange={(v) => setSettings({ ...settings, dayOtMultiplier: v })}
                       />
                     </div>
-                    <div className="p-3 bg-indigo-50/70 dark:bg-indigo-950/20 border border-indigo-300 dark:border-indigo-800 rounded">
+                    <div className="p-3 bg-indigo-50/70 dark:bg-indigo-950/20 border border-indigo-200 dark:border-indigo-800 rounded-xl">
                       <NumField
                         label={t("🌙 مضاعف الإضافي الليلي (Night OT ×)", "🌙 Night Overtime Multiplier (×)")}
                         hint={t(`من ${settings.nightWindowStart ?? "18:00"} إلى ${settings.dayWindowStart ?? "06:00"} (افتراضي 1.70x)`, `Window ${settings.nightWindowStart ?? "18:00"}–${settings.dayWindowStart ?? "06:00"} (Default 1.70x)`)}
@@ -862,7 +868,7 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
                         onChange={(v) => setSettings({ ...settings, nightOtMultiplier: v })}
                       />
                     </div>
-                    <div className="p-3 bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded">
+                    <div className="p-3 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-xl">
                       <NumField
                         label={t("بدل الوردية الليلية (ج.م/يوم)", "Night Shift Allowance (EGP)")}
                         hint={t("مبلغ إضافي ثابت لليوم الليلي", "Extra flat EGP per night-OT day")}
@@ -940,7 +946,7 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
 
             {/* 4. Annual Leave Accrual & Reimbursements */}
             {settings.policy2026Enabled && (
-              <div className="p-4 bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-300 dark:border-zinc-700 rounded-lg space-y-3">
+              <div className="p-4 bg-zinc-50/70 dark:bg-zinc-800/40 border border-zinc-200/80 dark:border-zinc-800 rounded-xl space-y-3">
                 <div>
                   <h4 className="font-bold text-sm text-zinc-900 dark:text-white flex items-center gap-2">
                     <span className="text-red-600">٤.</span>
@@ -997,7 +1003,7 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
             )}
 
             {/* 5. Non-GPS Office Attendance & External Mission Gate */}
-            <div className="p-4 bg-zinc-50 dark:bg-zinc-800/60 border-2 border-zinc-900 dark:border-zinc-700 rounded-lg space-y-3">
+            <div className="p-4 bg-zinc-50/70 dark:bg-zinc-800/40 border border-zinc-200/80 dark:border-zinc-800 rounded-xl space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <h4 className="font-bold text-sm text-zinc-900 dark:text-white flex items-center gap-2">
@@ -1017,14 +1023,14 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
                   </p>
                 </div>
 
-                <label className="flex items-center gap-2 px-3 py-1.5 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 cursor-pointer">
+                <label className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={settings.enforceGeofence !== false}
                     onChange={(e) => setSettings({ ...settings, enforceGeofence: e.target.checked })}
                     className="h-4 w-4 accent-emerald-600 cursor-pointer"
                   />
-                  <span className="text-[11px] font-bold">
+                  <span className="text-[11px] font-semibold">
                     {t("إلزام بوابة حضور الشركة لبدء الشيفت", "Enforce Office Attendance Gate")}
                   </span>
                 </label>
@@ -1033,10 +1039,10 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
               {/* ── Non-GPS Office Verification Channels (Wi-Fi IP + Office PIN + Trusted PC) ── */}
               <div className="pt-2 space-y-3">
                 {/* Method 1: Company Wi-Fi / Public IP Whitelist */}
-                <div className="p-3 bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded space-y-2.5">
+                <div className="p-3.5 bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 rounded-xl space-y-2.5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
-                      <span className="text-xs font-extrabold text-zinc-900 dark:text-white">
+                      <span className="text-xs font-bold text-zinc-900 dark:text-white">
                         {t("١. التحقق التلقائي عبر شبكة إنترنت الشركة (Office Wi-Fi / IP)", "1. Automatic Office Wi-Fi / Public IP Verification")}
                       </span>
                       <p className="text-[10px] text-zinc-500">
@@ -1051,7 +1057,7 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
                         type="button"
                         onClick={handleAddCurrentOfficeIp}
                         disabled={loadingIp || !currentPublicIp}
-                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[11px] font-bold cursor-pointer shadow-[2px_2px_0px_0px_#09090b] disabled:opacity-50"
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-semibold cursor-pointer shadow-2xs disabled:opacity-50 transition-colors"
                       >
                         {loadingIp
                           ? t("⏳ جاري قراءة الـ IP...", "⏳ Detecting IP...")
@@ -1065,7 +1071,7 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
                           type="button"
                           onClick={handleAddCurrentWildcardIp}
                           disabled={loadingIp}
-                          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-[11px] font-bold cursor-pointer shadow-[2px_2px_0px_0px_#09090b] disabled:opacity-50"
+                          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[11px] font-semibold cursor-pointer shadow-2xs disabled:opacity-50 transition-colors"
                           title={t(
                             "يثبت أول مجموعتين ويقبل أي أرقام في آخر مجموعتين حتى لو عملت راستر للراوتر",
                             "Fixes the first two octets and accepts any last two octets after router restarts",
@@ -1109,7 +1115,7 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
                     <button
                       type="button"
                       onClick={handleAddCustomOfficeIp}
-                      className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-white font-bold rounded text-xs cursor-pointer"
+                      className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 text-white font-semibold rounded-lg text-xs cursor-pointer transition-colors"
                     >
                       {t("+ إضافة IP أو نطاق (*.*)", "+ Add IP / Wildcard (*.*)")}
                     </button>
@@ -1135,15 +1141,15 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
                         return (
                           <div
                             key={net.id}
-                            className={`p-2 rounded border flex flex-wrap items-center justify-between gap-2 ${
+                            className={`p-2.5 rounded-xl border flex flex-wrap items-center justify-between gap-2 ${
                               net.active !== false
-                                ? "bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-400 dark:border-emerald-800"
-                                : "bg-zinc-100 dark:bg-zinc-800 border-zinc-300 opacity-60"
+                                ? "bg-emerald-50/70 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800"
+                                : "bg-zinc-100 dark:bg-zinc-800 border-zinc-200 opacity-60"
                             }`}
                           >
                             <div className="flex flex-wrap items-center gap-2">
-                              <span className="text-xs font-bold text-zinc-900 dark:text-white">🌐 {net.name}</span>
-                              <span className="px-2 py-0.5 rounded bg-white dark:bg-zinc-900 border border-zinc-300 text-[11px] font-mono font-bold" dir="ltr">
+                              <span className="text-xs font-semibold text-zinc-900 dark:text-white">🌐 {net.name}</span>
+                              <span className="px-2 py-0.5 rounded-md bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 text-[11px] font-code font-bold" dir="ltr">
                                 {net.ip}
                               </span>
                             </div>
@@ -1152,7 +1158,7 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
                                 <button
                                   type="button"
                                   onClick={() => void handleConvertNetworkToWildcard(net.id)}
-                                  className="px-2 py-0.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-[10px] font-bold cursor-pointer"
+                                  className="px-2 py-0.5 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-[10px] font-semibold cursor-pointer"
                                   title={t(
                                     `تحويل الـ IP إلى ${rowWildcard} ليعمل حتى بعد راستر الراوتر`,
                                     `Convert to ${rowWildcard} for dynamic router restarts`,
@@ -1164,10 +1170,10 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
                               <button
                                 type="button"
                                 onClick={() => handleToggleOfficeNetwork(net.id)}
-                                className={`px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer border ${
+                                className={`px-2 py-0.5 rounded-md text-[10px] font-semibold cursor-pointer border ${
                                   net.active !== false
                                     ? "bg-emerald-600 text-white border-emerald-700"
-                                    : "bg-zinc-200 text-zinc-700 border-zinc-400"
+                                    : "bg-zinc-200 text-zinc-700 border-zinc-300"
                                 }`}
                               >
                                 {net.active !== false ? t("✓ مفعّل", "✓ Active") : t("متوقف", "Paused")}
@@ -1175,7 +1181,7 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
                               <button
                                 type="button"
                                 onClick={() => handleRemoveOfficeNetwork(net.id)}
-                                className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white rounded text-[10px] font-bold cursor-pointer"
+                                className="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white rounded-md text-[10px] font-semibold cursor-pointer"
                               >
                                 {t("🗑️ حذف", "🗑️ Remove")}
                               </button>
@@ -1188,10 +1194,10 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
                 </div>
 
                 {/* Method 2: Daily / Fixed Office Check-In PIN */}
-                <div className="p-3 bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded space-y-2.5">
+                <div className="p-3.5 bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 rounded-xl space-y-2.5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
-                      <span className="text-xs font-extrabold text-zinc-900 dark:text-white">
+                      <span className="text-xs font-bold text-zinc-900 dark:text-white">
                         {t("٢. كود حضور المكتب السريع (Office PIN Code)", "2. Office Check-In PIN Code")}
                       </span>
                       <p className="text-[10px] text-zinc-500">
@@ -1202,9 +1208,9 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
-                      <div className="px-3 py-1 rounded bg-amber-100 dark:bg-amber-950/60 border-2 border-amber-500 text-amber-950 dark:text-amber-200 flex items-center gap-2">
-                        <span className="text-[10px] font-bold">{t("كود اليوم:", "Today's PIN:")}</span>
-                        <strong className="font-mono text-base tracking-widest" dir="ltr">
+                      <div className="px-3 py-1 rounded-lg bg-amber-100 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-700 text-amber-950 dark:text-amber-200 flex items-center gap-2">
+                        <span className="text-[10px] font-semibold">{t("كود اليوم:", "Today's PIN:")}</span>
+                        <strong className="font-code text-base tracking-widest" dir="ltr">
                           {computeDailyOfficePin(settings)}
                         </strong>
                       </div>
@@ -1215,7 +1221,7 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
                           navigator.clipboard?.writeText(pin);
                           toast.success(t(`تم نسخ كود المكتب (${pin}) ✓`, `Copied Office PIN (${pin}) ✓`));
                         }}
-                        className="px-2.5 py-1.5 bg-zinc-900 text-white rounded text-[10px] font-bold cursor-pointer hover:bg-zinc-800"
+                        className="px-2.5 py-1.5 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 rounded-lg text-[10px] font-semibold cursor-pointer hover:opacity-90"
                       >
                         {t("📋 نسخ", "📋 Copy")}
                       </button>
@@ -1256,21 +1262,21 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
                         <button
                           type="button"
                           onClick={handleRegenerateDailyPin}
-                          className="w-full px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold rounded text-xs cursor-pointer border border-zinc-900"
+                          className="w-full px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold rounded-lg text-xs cursor-pointer transition-colors"
                         >
                           {t("🔄 توليد كود يومي جديد الآن", "🔄 Regenerate Today's PIN")}
                         </button>
                       </div>
                     )}
 
-                    <label className="flex items-center gap-2 px-3 py-1.5 rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 cursor-pointer">
+                    <label className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={settings.officePinEnabled !== false}
                         onChange={(e) => setSettings({ ...settings, officePinEnabled: e.target.checked })}
                         className="h-4 w-4 accent-emerald-600 cursor-pointer"
                       />
-                      <span className="text-[11px] font-bold">
+                      <span className="text-[11px] font-semibold">
                         {t("تفعيل الدخول بكود المكتب", "Enable Office PIN")}
                       </span>
                     </label>
@@ -1278,10 +1284,10 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
                 </div>
 
                 {/* Method 3: Trusted Office PC Authorization Code */}
-                <div className="p-3 bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 rounded space-y-2">
+                <div className="p-3.5 bg-white dark:bg-zinc-900 border border-zinc-200/80 dark:border-zinc-800 rounded-xl space-y-2">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
-                      <span className="text-xs font-extrabold text-zinc-900 dark:text-white">
+                      <span className="text-xs font-bold text-zinc-900 dark:text-white">
                         {t("٣. كود اعتماد أجهزة الكمبيوتر الثابتة بالشركة (Trusted Office PC Code)", "3. Trusted Office PC Setup Code")}
                       </span>
                       <p className="text-[10px] text-zinc-500">
@@ -1317,7 +1323,7 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
                           ),
                         );
                       }}
-                      className="px-3 py-1.5 bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-900 dark:text-zinc-100 font-bold rounded text-[11px] cursor-pointer border border-zinc-400"
+                      className="px-3 py-1.5 brutal-btn-outline text-[11px] cursor-pointer"
                     >
                       {t("🔒 تغيير الكود (إلغاء الأجهزة السابقة)", "🔒 Rotate Code (Revoke Old PCs)")}
                     </button>
@@ -1327,11 +1333,11 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
             </div>
 
             {/* Actions */}
-            <div className="flex items-center justify-between pt-3 border-t-2 border-zinc-900 dark:border-zinc-700">
+            <div className="flex items-center justify-between pt-3 border-t border-zinc-200 dark:border-zinc-800">
               <button
                 type="button"
                 onClick={() => setSettings(DEFAULT_HR_SETTINGS)}
-                className="text-xs text-zinc-500 hover:text-red-600 underline font-mono cursor-pointer"
+                className="text-xs text-zinc-500 hover:text-red-600 underline cursor-pointer"
               >
                 {t("إعادة الضبط للافتراضي", "Reset to Defaults")}
               </button>
@@ -1339,14 +1345,14 @@ export default function HrPolicyModal({ initialSettings, onClose, adminEmail }: 
                 <button
                   type="button"
                   onClick={onClose}
-                  className="px-4 py-2 border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 text-zinc-950 dark:text-zinc-100 font-bold uppercase cursor-pointer"
+                  className="brutal-btn-outline px-4 py-2 text-xs cursor-pointer"
                 >
                   {t("إلغاء", "Cancel")}
                 </button>
                 <button
                   type="submit"
                   disabled={saving}
-                  className="px-5 py-2 bg-red-600 hover:bg-red-700 text-white font-bold uppercase tracking-wider border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] cursor-pointer disabled:opacity-50"
+                  className="px-5 py-2 bg-red-600 hover:bg-red-700 text-white font-semibold text-xs rounded-lg shadow-xs cursor-pointer disabled:opacity-50 transition-colors"
                 >
                   {saving ? t("جارٍ الحفظ...", "Saving...") : t("حفظ السياسات ✓", "Save Policies ✓")}
                 </button>

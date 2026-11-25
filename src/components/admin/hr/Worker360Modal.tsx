@@ -21,67 +21,71 @@ export default function Worker360Modal({ worker: dashboardWorker, settings, admi
   return (
     <ModalPortal onClose={() => onClose()}>
       <div
-        className="fixed inset-0 z-[120] bg-zinc-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in font-mono"
+        className="fixed inset-0 z-[120] bg-zinc-950/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto animate-fade-in"
         onClick={() => onClose()}
       >
         <div
           dir={dir}
-          className="bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col animate-scale-in text-zinc-950 dark:text-zinc-100 rounded-lg"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="worker-360-modal-title"
+          className="ui-card shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col animate-scale-in text-zinc-950 dark:text-zinc-100"
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="p-4 border-b-2 border-zinc-900 dark:border-zinc-700 flex justify-between items-center bg-zinc-50 dark:bg-zinc-800">
+          <div className="p-4 border-b border-zinc-200 dark:border-zinc-800 flex justify-between items-center bg-zinc-50/80 dark:bg-zinc-900/80">
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-none bg-red-600 border-2 border-zinc-900 text-white flex items-center justify-center text-lg font-bold font-heading shadow-[2px_2px_0px_0px_#09090b]">
+              <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-red-500 to-rose-600 text-white flex items-center justify-center text-base font-bold shadow-xs">
                 {dashboardWorker.firstName?.[0]}
                 {dashboardWorker.lastName?.[0]}
               </div>
               <div>
-                <h3 className="text-lg font-black text-zinc-950 dark:text-white font-heading">
+                <h3 id="worker-360-modal-title" className="text-lg font-bold tracking-tight text-zinc-950 dark:text-white">
                   {workerName(dashboardWorker)}
                 </h3>
-                <p className="text-xs text-zinc-600 dark:text-zinc-400">{dashboardWorker.email}</p>
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">{dashboardWorker.email}</p>
                 <p className="text-xs mt-0.5">
-                  <span className="text-zinc-600 uppercase font-bold">{dashboardWorker.status}</span>
+                  <span className="text-zinc-600 dark:text-zinc-300 uppercase font-semibold">{dashboardWorker.status}</span>
                   {dashboardWorker.isOnline ? (
-                    <span className="ms-2 text-emerald-700 font-bold">{t("● متصل", "● Online")}</span>
+                    <span className="ms-2 text-emerald-700 dark:text-emerald-400 font-semibold">{t("● متصل", "● Online")}</span>
                   ) : (
-                    <span className="ms-2 text-zinc-400 font-bold">{t("○ غير متصل", "○ Offline")}</span>
+                    <span className="ms-2 text-zinc-400 font-medium">{t("○ غير متصل", "○ Offline")}</span>
                   )}
                 </p>
               </div>
             </div>
             <button
               type="button"
-              className="text-2xl text-zinc-500 hover:text-red-600 font-bold cursor-pointer"
+              aria-label="Close"
+              className="h-8 w-8 rounded-lg flex items-center justify-center text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer"
               onClick={() => onClose()}
             >
               &times;
             </button>
           </div>
 
-          <div className="p-4 overflow-y-auto flex-1 text-xs space-y-4">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 p-3 bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded">
+          <div className="p-5 overflow-y-auto flex-1 text-xs space-y-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 p-3.5 bg-zinc-50/80 dark:bg-zinc-800/50 border border-zinc-200/80 dark:border-zinc-800 rounded-xl">
               <div>
-                <span className="text-zinc-500">{t("القسم:", "Department:")}</span>
-                <p className="font-bold text-zinc-900 dark:text-white">
+                <span className="text-zinc-500 text-[11px]">{t("القسم:", "Department:")}</span>
+                <p className="font-semibold text-zinc-900 dark:text-white mt-0.5">
                   {formatDepartment(dashboardWorker.department)}
                 </p>
               </div>
               <div>
-                <span className="text-zinc-500">{t("نوع التعاقد:", "Employment:")}</span>
-                <p className="font-bold text-zinc-900 dark:text-white">
+                <span className="text-zinc-500 text-[11px]">{t("نوع التعاقد:", "Employment:")}</span>
+                <p className="font-semibold text-zinc-900 dark:text-white mt-0.5">
                   {formatEmploymentType(dashboardWorker.employmentType)}
                 </p>
               </div>
               <div>
-                <span className="text-zinc-500">{t("أجر الساعة:", "Hourly Rate:")}</span>
-                <p className="font-bold text-emerald-700 dark:text-emerald-400">
+                <span className="text-zinc-500 text-[11px]">{t("أجر الساعة:", "Hourly Rate:")}</span>
+                <p className="font-bold font-code text-emerald-700 dark:text-emerald-400 mt-0.5">
                   EGP {dashboardWorker.hourlyRate || settings.defaultHourlyRate}/h
                 </p>
               </div>
               <div>
-                <span className="text-zinc-500">{t("الهاتف:", "Phone:")}</span>
-                <p className="font-bold text-zinc-900 dark:text-white">{dashboardWorker.phone || "—"}</p>
+                <span className="text-zinc-500 text-[11px]">{t("الهاتف:", "Phone:")}</span>
+                <p className="font-semibold font-code text-zinc-900 dark:text-white mt-0.5">{dashboardWorker.phone || "—"}</p>
               </div>
             </div>
 
@@ -96,14 +100,14 @@ export default function Worker360Modal({ worker: dashboardWorker, settings, admi
                   onClose();
                   onOpenPayslip(w);
                 }}
-                className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold uppercase rounded cursor-pointer"
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg shadow-2xs cursor-pointer transition-colors"
               >
                 {t("عرض كشف الراتب الحالي 📄", "View Current Payslip 📄")}
               </button>
               <button
                 type="button"
                 onClick={() => onClose()}
-                className="px-4 py-1.5 border border-zinc-400 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white font-bold uppercase rounded cursor-pointer"
+                className="brutal-btn-outline px-4 py-2 cursor-pointer"
               >
                 {t("إغلاق", "Close")}
               </button>

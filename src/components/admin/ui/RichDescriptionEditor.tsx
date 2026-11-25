@@ -126,12 +126,12 @@ export default function RichDescriptionEditor({
 
   return (
     <div
-      className={`rounded-lg border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-950 overflow-hidden transition-shadow ${
-        isFocused ? "ring-2 ring-red-600/40" : ""
+      className={`rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 overflow-hidden transition-all ${
+        isFocused ? "border-zinc-900 ring-3 ring-zinc-900/5" : ""
       } ${className}`}
     >
       {/* Formatting Toolbar */}
-      <div className="flex flex-wrap items-center gap-1 border-b border-zinc-200 dark:border-zinc-800 bg-zinc-100/90 dark:bg-zinc-900 px-2 py-1.5 text-[11px] font-mono select-none">
+      <div className="flex flex-wrap items-center gap-1 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/90 dark:bg-zinc-900 px-2.5 py-1.5 text-[11px] select-none">
         {/* Headlines & Paragraph */}
         <div className="flex items-center gap-0.5 pr-1.5 border-r border-zinc-300 dark:border-zinc-700">
           <button

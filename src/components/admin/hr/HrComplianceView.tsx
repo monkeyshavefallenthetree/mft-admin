@@ -30,6 +30,7 @@ import { sendExpoPushToWorkers } from "@/lib/chatNotifications";
 import { toast, confirmDialog } from "@/lib/admin/feedback";
 import { logActivity } from "@/lib/admin/activity";
 import { useHrLang } from "@/lib/admin/hrI18n";
+import { ChartCard, BarCompare, DonutBreakdown } from "@/components/admin/ui/Charts";
 
 interface WorkerLite {
   id: string;
@@ -287,6 +288,35 @@ export default function HrComplianceView({
     return { used, minutes, uncovered, exhausted, missingHire, pendingReimb };
   }, [rows, reimbursements, cfg]);
 
+  const [showAnalytics, setShowAnalytics] = useState(true);
+  const leaveAnalytics = useMemo(() => {
+    const topLeaveRows = [...rows]
+      .filter((r) => r.accrual)
+      .slice(0, 7)
+      .map((r) => ({
+        label: r.name.length > 10 ? r.name.slice(0, 9) + "…" : r.name,
+        primary: Math.round((r.accrual?.balance ?? 0) * 10) / 10,
+        secondary: Math.round((r.accrual?.usedDays ?? 0) * 10) / 10,
+      }));
+    let probation = 0;
+    let year1 = 0;
+    let year2plus = 0;
+    for (const r of rows) {
+      if (!r.accrual) continue;
+      if (r.accrual.phase === "probation") probation++;
+      else if (r.accrual.phase === "year1") year1++;
+      else year2plus++;
+    }
+    return {
+      topLeaveRows,
+      phaseSlices: [
+        { key: "y2+", label: t("سنة ثانية+ (21 يوم)", "Year 2+ (21d)"), value: year2plus, color: "#10b981" },
+        { key: "y1", label: t("سنة أولى (15/21 يوم)", "Year 1 (15d/21d)"), value: year1, color: "#0284c7" },
+        { key: "probation", label: t("فترة اختبار", "Probation"), value: probation, color: "#f59e0b" },
+      ],
+    };
+  }, [rows, t]);
+
   const toggleEntry = async (e: PermissionLedgerDoc, name: string) => {
     const reversing = e.status === "applied";
     const ok = await confirmDialog({
@@ -363,14 +393,15 @@ export default function HrComplianceView({
     <div dir={dir} className="space-y-5">
       {/* Policy status banner */}
       <div
-        className={`p-4 border-2 rounded-lg flex flex-col md:flex-row md:items-center justify-between gap-3 ${
+        className={`p-4 border rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-3 ${
           settings.policy2026Enabled
-            ? "border-emerald-600 bg-emerald-50 dark:bg-emerald-950/30 shadow-[3px_3px_0px_0px_#059669]"
-            : "border-amber-500 bg-amber-50 dark:bg-amber-950/30 shadow-[3px_3px_0px_0px_#d97706]"
+            ? "border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/60 dark:bg-emerald-950/25"
+            : "border-amber-200 dark:border-amber-900/60 bg-amber-50/60 dark:bg-amber-950/25"
         }`}
       >
         <div className="text-xs space-y-1">
-          <div className="font-bold text-sm tracking-wide text-zinc-950 dark:text-white flex items-center gap-2">
+          <div className="font-bold text-sm tracking-tight text-zinc-950 dark:text-white flex items-center gap-2">
+            <span className={`h-2 w-2 rounded-full ${settings.policy2026Enabled ? "bg-emerald-500" : "bg-amber-500"}`} />
             <span>
               {t(
                 `لائحة HR-POL-2026 · ${settings.policy2026Enabled ? "مفعّلة" : "غير مفعّلة"}`,
@@ -393,12 +424,19 @@ export default function HrComplianceView({
         <div className="flex flex-wrap items-center gap-2 shrink-0">
           <button
             type="button"
+            onClick={() => setShowAnalytics((v) => !v)}
+            className="brutal-btn-outline px-3 py-2 text-xs cursor-pointer"
+          >
+            {showAnalytics ? t("إخفاء الرسوم البيانية", "Hide Charts") : t("عرض الرسوم البيانية", "Show Charts")}
+          </button>
+          <button
+            type="button"
             id="toggle-onboarding-mode"
             onClick={() => setOnboardingMode((v) => !v)}
-            className={`px-3 py-2 border-2 border-zinc-900 text-xs font-bold uppercase tracking-wider shadow-[2px_2px_0px_0px_#09090b] cursor-pointer rounded ${
+            className={`px-3.5 py-2 text-xs font-semibold rounded-lg shadow-2xs cursor-pointer transition-colors ${
               onboardingMode
                 ? "bg-red-600 text-white"
-                : "bg-zinc-950 text-white dark:bg-zinc-100 dark:text-zinc-950 hover:bg-zinc-800"
+                : "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900 hover:bg-zinc-800"
             }`}
           >
             {onboardingMode
@@ -408,7 +446,7 @@ export default function HrComplianceView({
           <button
             type="button"
             onClick={onOpenPolicyModal}
-            className="px-3 py-2 border-2 border-zinc-900 bg-white dark:bg-zinc-900 text-xs font-bold uppercase tracking-wider shadow-[2px_2px_0px_0px_#09090b] cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded"
+            className="brutal-btn-outline px-3.5 py-2 text-xs cursor-pointer"
           >
             {t("⚙️ إعدادات اللائحة", "⚙️ Configure Policy")}
           </button>
@@ -417,11 +455,11 @@ export default function HrComplianceView({
 
       {/* Existing Workers Migration / Onboarding Bar */}
       {(onboardingMode || kpis.missingHire > 0) && (
-        <div className="p-4 bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 rounded-lg shadow-[3px_3px_0px_0px_#dc2626] space-y-3 text-xs">
+        <div className="p-4 ui-card border-l-4 border-l-red-600 space-y-3 text-xs">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
             <div className="space-y-1">
               <div className="font-bold text-sm text-zinc-950 dark:text-white flex items-center gap-2">
-                <span className="px-2 py-0.5 bg-red-600 text-white text-[10px] uppercase rounded">
+                <span className="px-2 py-0.5 bg-red-600 text-white text-[10px] uppercase rounded-full font-semibold">
                   {t("إعداد الموظفين الحاليين", "Existing Staff Setup")}
                 </span>
                 <span>
@@ -438,21 +476,21 @@ export default function HrComplianceView({
                 )}
               </p>
             </div>
-            <div className="flex flex-wrap items-center gap-2 shrink-0 bg-zinc-50 dark:bg-zinc-800/60 p-2.5 border border-zinc-300 dark:border-zinc-700 rounded">
-              <div className="text-[10px] font-bold uppercase text-zinc-500">
+            <div className="flex flex-wrap items-center gap-2 shrink-0 bg-zinc-50 dark:bg-zinc-800/60 p-2.5 border border-zinc-200 dark:border-zinc-700 rounded-xl">
+              <div className="text-[10px] font-semibold uppercase text-zinc-500">
                 {t("تاريخ بدء النظام للجميع:", "Bulk System Start Date:")}
               </div>
               <input
                 type="date"
                 value={bulkStartDate}
                 onChange={(e) => setBulkStartDate(e.target.value)}
-                className="border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-xs font-bold rounded"
+                className="brutal-input px-2.5 py-1 text-xs font-semibold"
               />
               <button
                 type="button"
                 disabled={bulkBusy}
                 onClick={() => void handleBulkSystemStart()}
-                className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold uppercase text-[10px] border border-zinc-900 rounded cursor-pointer disabled:opacity-50"
+                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] rounded-lg cursor-pointer disabled:opacity-50 transition-colors"
               >
                 {bulkBusy
                   ? t("جارٍ التطبيق…", "Applying…")
@@ -462,7 +500,7 @@ export default function HrComplianceView({
                 <button
                   type="button"
                   onClick={() => setOnboardingMode(true)}
-                  className="px-2.5 py-1.5 bg-zinc-900 text-white font-bold uppercase text-[10px] rounded cursor-pointer"
+                  className="px-3 py-1.5 bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900 font-semibold text-[11px] rounded-lg cursor-pointer"
                 >
                   {t("فتح تعديل جميع الموظفين", "Edit All Workers Inline")}
                 </button>
@@ -514,35 +552,73 @@ export default function HrComplianceView({
         ].map((k) => (
           <div
             key={k.label}
-            className="relative overflow-hidden p-3 bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 rounded-lg shadow-[2px_2px_0px_0px_#09090b]"
+            className="relative overflow-hidden p-3.5 ui-card"
           >
             <span className={`absolute inset-x-0 top-0 h-1 ${k.bar}`} />
-            <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">{k.label}</div>
-            <div className="mt-1 text-xl font-black text-zinc-950 dark:text-white truncate">{k.value}</div>
-            <div className="text-[10px] text-zinc-400 truncate">{k.sub}</div>
+            <div className="text-[11px] font-medium text-zinc-500">{k.label}</div>
+            <div className="mt-1 text-xl font-bold font-code text-zinc-950 dark:text-white truncate">{k.value}</div>
+            <div className="text-[11px] text-zinc-400 truncate mt-0.5">{k.sub}</div>
           </div>
         ))}
       </div>
 
+      {/* Collapsible Leave & Permissions Analytics */}
+      {showAnalytics && rows.length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+          <div className="lg:col-span-7">
+            <ChartCard
+              title={t("رصيد الإجازات المتاح مقابل المستهلك", "Net Available Leave vs. Consumed Days")}
+              subtitle={t("أعلى الموظفين حسب الرصيد والإجازات المستهلكة (أيام)", "Employee annual leave balance vs. used days")}
+            >
+              <BarCompare
+                data={leaveAnalytics.topLeaveRows}
+                xKey="label"
+                series={[
+                  { key: "primary", label: t("الرصيد المتاح (يوم)", "Net Balance (d)"), color: "#10b981" },
+                  { key: "secondary", label: t("المستهلك (يوم)", "Used Leave (d)"), color: "#f59e0b" },
+                ]}
+                height={185}
+                description="Annual leave balance vs used days"
+              />
+            </ChartCard>
+          </div>
+          <div className="lg:col-span-5">
+            <ChartCard
+              title={t("توزيع الموظفين حسب شريحة الإجازات", "Workforce Leave Phase Distribution")}
+              subtitle={t("فترة الاختبار مقابل السنة الأولى وما بعدها", "Tenure phase breakdown across active staff")}
+            >
+              <DonutBreakdown
+                slices={leaveAnalytics.phaseSlices}
+                centerLabel={t("موظف", "Workers")}
+                centerValue={String(rows.length)}
+                description={t("توزيع مراحل التعيين", "Tenure phase breakdown")}
+              />
+            </ChartCard>
+          </div>
+        </div>
+      )}
+
       {/* Table */}
-      <div className="bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 rounded-lg shadow-[3px_3px_0px_0px_#09090b] overflow-hidden">
-        <div className="p-3 border-b-2 border-zinc-900 dark:border-zinc-700 flex flex-wrap items-center justify-between gap-2">
-          <h3 className="font-bold text-sm uppercase tracking-wide text-zinc-950 dark:text-white">
+      <div className="ui-card overflow-hidden">
+        <div className="p-4 border-b border-zinc-200 dark:border-zinc-800 flex flex-wrap items-center justify-between gap-2">
+          <h3 id="compliance-ledger-heading" className="font-bold text-sm text-zinc-950 dark:text-white">
             {t("سجل تواريخ التعيين والأذونات والإجازات", "Joining Dates, Permissions & Leave Ledger")}{" "}
             <span className="text-zinc-400 font-normal">({rows.length})</span>
           </h3>
           <div className="flex flex-wrap items-center gap-2">
             <Link
               href="/admin/reimbursements"
-              className="px-2.5 py-1.5 text-xs font-bold border-2 border-violet-600 bg-violet-50 dark:bg-violet-950/40 text-violet-800 dark:text-violet-300 rounded cursor-pointer hover:bg-violet-100"
+              className="px-3 py-1.5 text-xs font-semibold border border-violet-200 dark:border-violet-800 bg-violet-50 dark:bg-violet-950/40 text-violet-800 dark:text-violet-300 rounded-lg cursor-pointer hover:bg-violet-100 transition-colors"
             >
               {t(`🚕 مراجعة المصروفات والمأموريات (${kpis.pendingReimb})`, `🚕 Review Reimbursements (${kpis.pendingReimb})`)}
             </Link>
             <button
               type="button"
               onClick={() => setOnboardingMode((v) => !v)}
-              className={`px-2.5 py-1.5 text-xs font-bold uppercase border-2 border-zinc-900 rounded cursor-pointer ${
-                onboardingMode ? "bg-red-600 text-white" : "bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100"
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg border cursor-pointer transition-colors ${
+                onboardingMode
+                  ? "bg-red-600 text-white border-red-600"
+                  : "bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border-zinc-200 dark:border-zinc-700"
               }`}
             >
               {onboardingMode
@@ -554,26 +630,34 @@ export default function HrComplianceView({
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder={t("ابحث باسم الموظف…", "Search worker…")}
-              className="px-2.5 py-1.5 text-xs border-2 border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 rounded w-52 focus:outline-none focus:border-red-600"
+              className="brutal-input px-3 py-1.5 text-xs w-52"
             />
           </div>
         </div>
-        <div className="overflow-x-auto">
+        <div
+          tabIndex={0}
+          role="region"
+          aria-labelledby="compliance-ledger-heading"
+          className="mft-table-wrapper"
+        >
           <table className="w-full text-xs">
-            <thead className="bg-zinc-50 dark:bg-zinc-800/60 text-[10px] uppercase tracking-wider text-zinc-500">
+            <caption className="sr-only">
+              {t("سجل تواريخ التعيين والأذونات والإجازات", "Joining Dates, Permissions & Leave Ledger")}
+            </caption>
+            <thead className="bg-zinc-50/90 dark:bg-zinc-900/90 text-[11px] font-semibold text-zinc-500">
               <tr>
-                <th className="text-start p-3">{t("الموظف", "Worker")}</th>
-                <th className="text-start p-3">{t("تاريخ التعيين / بدء النظام", "Company Joined / System Start")}</th>
-                <th className="text-start p-3">{t("شريحة الإجازة", "Leave Phase")}</th>
-                <th className="text-end p-3">{t("رصيد الإجازات", "Leave Balance")}</th>
-                <th className="text-start p-3 w-36">{t("الأذونات (العدد)", "Permissions")}</th>
-                <th className="text-start p-3 w-36">{t("الأذونات (الدقائق)", "Minutes")}</th>
-                <th className="text-center p-3">{t("غير مغطى", "Uncovered")}</th>
-                <th className="text-center p-3">{t("مصروفات", "Expenses")}</th>
-                <th className="p-3 text-end">{t("إجراءات", "Actions")}</th>
+                <th scope="col" className="text-start p-3">{t("الموظف", "Worker")}</th>
+                <th scope="col" className="text-start p-3">{t("تاريخ التعيين / بدء النظام", "Company Joined / System Start")}</th>
+                <th scope="col" className="text-start p-3">{t("شريحة الإجازة", "Leave Phase")}</th>
+                <th scope="col" className="text-end p-3">{t("رصيد الإجازات", "Leave Balance")}</th>
+                <th scope="col" className="text-start p-3 w-36">{t("الأذونات (العدد)", "Permissions")}</th>
+                <th scope="col" className="text-start p-3 w-36">{t("الأذونات (الدقائق)", "Minutes")}</th>
+                <th scope="col" className="text-center p-3">{t("غير مغطى", "Uncovered")}</th>
+                <th scope="col" className="text-center p-3">{t("مصروفات", "Expenses")}</th>
+                <th scope="col" className="p-3 text-end">{t("إجراءات", "Actions")}</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+            <tbody className="divide-y divide-zinc-200/70 dark:divide-zinc-800/80">
               {rows.map((r) => {
                 const open = expanded === r.worker.id;
                 const isEditingRow = onboardingMode || editingRowId === r.worker.id;
@@ -595,11 +679,11 @@ export default function HrComplianceView({
                       : "bg-sky-500";
                 return (
                   <Fragment key={r.worker.id}>
-                    <tr className="hover:bg-zinc-50 dark:hover:bg-zinc-800/40">
+                    <tr className="hover:bg-zinc-50/80 dark:hover:bg-zinc-800/40 transition-colors">
                       <td className="p-3">
-                        <div className="font-bold text-zinc-950 dark:text-white">{r.name}</div>
-                        <div className="text-[10px] text-zinc-400">
-                          {r.worker.department || "—"} · EGP {r.worker.hourlyRate ?? settings.defaultHourlyRate ?? 31.25}/h
+                        <div className="font-semibold text-zinc-950 dark:text-white">{r.name}</div>
+                        <div className="text-[11px] text-zinc-400">
+                          {r.worker.department || "—"} · <span className="font-code">EGP {r.worker.hourlyRate ?? settings.defaultHourlyRate ?? 31.25}/h</span>
                         </div>
                       </td>
                       <td className="p-3">
@@ -613,7 +697,7 @@ export default function HrComplianceView({
                             <span className="text-[10px] uppercase text-zinc-400">{t("التعيين:", "Joined:")}</span>
                             {r.hire ? (
                               <span
-                                className={`font-bold group-hover:underline ${
+                                className={`font-semibold font-code group-hover:underline ${
                                   r.hireIsFallback ? "text-amber-600" : "text-zinc-900 dark:text-zinc-100"
                                 }`}
                               >
@@ -621,7 +705,7 @@ export default function HrComplianceView({
                                 {r.hireIsFallback && t(" ⚠ (تلقائي)", " ⚠ (sign-up)")}
                               </span>
                             ) : (
-                              <span className="text-amber-600 font-bold underline">
+                              <span className="text-amber-600 font-semibold underline">
                                 {t("حدد التاريخ…", "Set date…")}
                               </span>
                             )}
@@ -629,7 +713,7 @@ export default function HrComplianceView({
                           </div>
                           <div className="text-[10px] text-zinc-500">
                             {t("بدء النظام:", "MFT Start:")}{" "}
-                            <strong>{r.worker.attendanceStartDate || t("تلقائي", "Auto")}</strong>
+                            <strong className="font-code">{r.worker.attendanceStartDate || t("تلقائي", "Auto")}</strong>
                             {(r.worker.priorUsedLeaveDays ?? 0) > 0 &&
                               ` · ${t("مستهلك سابقًا:", "Prior:")} ${r.worker.priorUsedLeaveDays}d`}
                           </div>
@@ -639,16 +723,16 @@ export default function HrComplianceView({
                         {r.accrual ? (
                           <div>
                             <span
-                              className={`inline-block px-1.5 py-0.5 border rounded text-[10px] font-bold ${
+                              className={`inline-block px-2 py-0.5 border rounded-full text-[10px] font-semibold ${
                                 PHASE_STYLE[r.accrual.phase]
                               }`}
                             >
                               {isAr ? leavePhaseLabelAr(r.accrual) : leavePhaseLabelEn(r.accrual)}
                             </span>
-                            <div className="text-[10px] text-zinc-400 mt-0.5 flex flex-wrap items-center gap-1">
+                            <div className="text-[10px] text-zinc-400 mt-1 flex flex-wrap items-center gap-1">
                               <span>{isAr ? `${r.accrual.serviceMonths} شهر خدمة` : `${r.accrual.serviceMonths} mo tenure`}</span>
                               {r.accrual.leaveLawType === "legacy_21" && (
-                                <span className="px-1 py-0.2 rounded bg-violet-100 dark:bg-violet-950/60 text-violet-800 dark:text-violet-300 font-bold">
+                                <span className="px-1.5 py-0.2 rounded-full bg-violet-100 dark:bg-violet-950/60 text-violet-800 dark:text-violet-300 font-semibold">
                                   {t("⚖️ قانون قديم (21 يوم أول سنة)", "⚖️ Old Law (21d Y1)")}
                                 </span>
                               )}
@@ -658,15 +742,15 @@ export default function HrComplianceView({
                           "—"
                         )}
                       </td>
-                      <td className="p-3 text-end font-bold text-zinc-950 dark:text-white">
+                      <td className="p-3 text-end font-bold font-code text-zinc-950 dark:text-white">
                         {r.accrual ? `${r.accrual.balance} ${t("يوم", "d")}` : "—"}
                         {r.accrual && r.accrual.phase === "probation" && (
-                          <div className="text-[10px] font-normal text-zinc-400">
+                          <div className="text-[10px] font-sans font-normal text-zinc-400">
                             {t(`ينتهي الاختبار ${r.accrual.probationEndsOn}`, `until ${r.accrual.probationEndsOn}`)}
                           </div>
                         )}
                         {r.accrual && r.accrual.phase !== "probation" && (
-                          <div className="text-[10px] font-normal text-zinc-400">
+                          <div className="text-[10px] font-sans font-normal text-zinc-400">
                             {isAr
                               ? `${r.accrual.accruedDays} مستحق${r.accrual.totalCarryOverDays > 0 ? ` + ${r.accrual.totalCarryOverDays} مرحّل` : ""} − ${r.accrual.usedDays} مستخدم`
                               : `${r.accrual.accruedDays}d accrued${r.accrual.totalCarryOverDays > 0 ? ` + ${r.accrual.totalCarryOverDays}d carry` : ""} − ${r.accrual.usedDays}d used`}
@@ -676,48 +760,48 @@ export default function HrComplianceView({
                           <button
                             type="button"
                             onClick={() => setExpanded(open ? null : r.worker.id)}
-                            className="mt-1 inline-flex items-center gap-1 rounded border border-emerald-300 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800 hover:border-red-500 hover:bg-red-50 hover:text-red-700 cursor-pointer dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
+                            className="mt-1 inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-sans font-semibold text-emerald-800 hover:border-red-500 hover:bg-red-50 hover:text-red-700 cursor-pointer dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300"
                           >
                             <span>🌴 {r.workerLeaveReqs.length} {t("إجازة معتمدة (إلغاء/عرض)", "approved leave")}</span>
                           </button>
                         )}
                       </td>
                       <td className="p-3">
-                        <div className="flex justify-between mb-1">
-                          <span className="font-bold">{r.usage.count}</span>
+                        <div className="flex justify-between mb-1 font-code">
+                          <span className="font-semibold">{r.usage.count}</span>
                           <span className="text-zinc-400">/ {cfg.permissionMaxCount}</span>
                         </div>
                         <Meter value={r.usage.count} max={cfg.permissionMaxCount} tone={countTone} />
                       </td>
                       <td className="p-3">
-                        <div className="flex justify-between mb-1">
-                          <span className="font-bold">{r.usage.minutes}</span>
+                        <div className="flex justify-between mb-1 font-code">
+                          <span className="font-semibold">{r.usage.minutes}</span>
                           <span className="text-zinc-400">/ {cfg.permissionMaxMinutes}</span>
                         </div>
                         <Meter value={r.usage.minutes} max={cfg.permissionMaxMinutes} tone={minTone} />
                       </td>
                       <td className="p-3 text-center">
                         {r.uncovered > 0 ? (
-                          <span className="px-1.5 py-0.5 bg-red-600 text-white rounded font-bold">{r.uncovered}</span>
+                          <span className="px-2 py-0.5 bg-red-600 text-white rounded-full font-bold font-code text-[11px]">{r.uncovered}</span>
                         ) : (
-                          <span className="text-zinc-300">0</span>
+                          <span className="text-zinc-300 font-code">0</span>
                         )}
                       </td>
                       <td className="p-3 text-center">
                         {r.pendingReimb > 0 ? (
-                          <Link href="/admin/reimbursements" className="px-1.5 py-0.5 bg-violet-600 text-white rounded font-bold">
+                          <Link href="/admin/reimbursements" className="px-2 py-0.5 bg-violet-600 text-white rounded-full font-bold font-code text-[11px]">
                             {r.pendingReimb}
                           </Link>
                         ) : (
-                          <span className="text-zinc-300">0</span>
+                          <span className="text-zinc-300 font-code">0</span>
                         )}
                       </td>
                       <td className="p-3 text-end">
-                        <div className="flex items-center justify-end gap-1">
+                        <div className="flex items-center justify-end gap-1.5">
                           <button
                             type="button"
                             onClick={() => setEditingRowId(editingRowId === r.worker.id ? null : r.worker.id)}
-                            className="px-2 py-1 border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 rounded font-bold uppercase text-[10px] hover:border-red-600 hover:text-red-600 cursor-pointer"
+                            className="px-2.5 py-1 border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 rounded-lg font-semibold text-[11px] hover:border-red-500 hover:text-red-600 cursor-pointer transition-colors"
                           >
                             {isEditingRow && !onboardingMode
                               ? t("إغلاق", "Close")
@@ -727,7 +811,7 @@ export default function HrComplianceView({
                             type="button"
                             id={`compliance-ledger-${r.worker.id}`}
                             onClick={() => setExpanded(open ? null : r.worker.id)}
-                            className="px-2 py-1 border border-zinc-300 dark:border-zinc-700 rounded font-bold uppercase text-[10px] hover:border-red-600 hover:text-red-600 cursor-pointer"
+                            className="px-2.5 py-1 border border-zinc-200 dark:border-zinc-700 rounded-lg font-semibold text-[11px] hover:border-red-500 hover:text-red-600 cursor-pointer transition-colors"
                           >
                             {open
                               ? t("إخفاء", "Hide")
@@ -739,11 +823,11 @@ export default function HrComplianceView({
 
                     {/* Inline Editor for Company Joining Date, Labor Law Mode, System Start Date, Hourly Rate, Prior Used Leave & Carry-Over */}
                     {isEditingRow && (
-                      <tr className="bg-amber-50/50 dark:bg-zinc-950/70 border-s-4 border-red-600">
-                        <td colSpan={9} className="p-3">
+                      <tr className="bg-amber-50/40 dark:bg-zinc-950/70 border-s-4 border-red-600">
+                        <td colSpan={9} className="p-3.5">
                           <div className="flex flex-wrap items-end gap-3">
                             <div>
-                              <label className="block text-[10px] font-bold uppercase text-zinc-600 dark:text-zinc-300">
+                              <label className="block text-[10px] font-semibold uppercase text-zinc-600 dark:text-zinc-300">
                                 {t("١. تاريخ التعيين بالشركة", "1. Company Joining Date")}
                               </label>
                               <div className="flex items-center gap-1 mt-1">
@@ -751,7 +835,7 @@ export default function HrComplianceView({
                                   type="date"
                                   value={draft.hireDate}
                                   onChange={(e) => setDraftField(r.worker, { hireDate: e.target.value })}
-                                  className="border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-xs font-bold rounded"
+                                  className="brutal-input px-2.5 py-1 text-xs font-semibold"
                                 />
                                 {[
                                   { l: "6m", m: 6 },
@@ -768,7 +852,7 @@ export default function HrComplianceView({
                                         attendanceStartDate: draft.attendanceStartDate || todayYmd,
                                       })
                                     }
-                                    className="px-1.5 py-1 bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-900 hover:text-white text-[10px] font-bold rounded cursor-pointer"
+                                    className="px-2 py-1 bg-zinc-200/80 dark:bg-zinc-800 hover:bg-zinc-900 hover:text-white text-[10px] font-semibold rounded-lg cursor-pointer transition-colors"
                                   >
                                     -{p.l}
                                   </button>
@@ -777,17 +861,17 @@ export default function HrComplianceView({
                             </div>
 
                             <div>
-                              <label className="block text-[10px] font-bold uppercase text-zinc-600 dark:text-zinc-300">
+                              <label className="block text-[10px] font-semibold uppercase text-zinc-600 dark:text-zinc-300">
                                 {t("⚖️ نظام قانون العمل (أول سنة)", "⚖️ Labor Law (First Year)")}
                               </label>
                               <div className="flex items-center gap-1 mt-1">
                                 <button
                                   type="button"
                                   onClick={() => setDraftField(r.worker, { leaveLawType: "new_15" })}
-                                  className={`px-2 py-1 text-[11px] font-bold rounded border-2 cursor-pointer transition-colors ${
+                                  className={`px-2.5 py-1 text-[11px] font-semibold rounded-lg border cursor-pointer transition-colors ${
                                     draft.leaveLawType === "new_15"
                                       ? "border-red-600 bg-red-600 text-white"
-                                      : "border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300"
+                                      : "border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300"
                                   }`}
                                 >
                                   {t("قانون جديد (15 يوم أول سنة)", "New Law (15d Y1)")}
@@ -795,10 +879,10 @@ export default function HrComplianceView({
                                 <button
                                   type="button"
                                   onClick={() => setDraftField(r.worker, { leaveLawType: "legacy_21" })}
-                                  className={`px-2 py-1 text-[11px] font-bold rounded border-2 cursor-pointer transition-colors ${
+                                  className={`px-2.5 py-1 text-[11px] font-semibold rounded-lg border cursor-pointer transition-colors ${
                                     draft.leaveLawType === "legacy_21"
                                       ? "border-red-600 bg-red-600 text-white"
-                                      : "border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300"
+                                      : "border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 text-zinc-700 dark:text-zinc-300"
                                   }`}
                                 >
                                   {t("قانون عمل قديم (21 يوم أول سنة)", "Old Law (21d Y1)")}
@@ -807,7 +891,7 @@ export default function HrComplianceView({
                             </div>
 
                             <div>
-                              <label className="block text-[10px] font-bold uppercase text-zinc-600 dark:text-zinc-300">
+                              <label className="block text-[10px] font-semibold uppercase text-zinc-600 dark:text-zinc-300">
                                 {t("٢. تاريخ بدء النظام (الحضور)", "2. System Attendance Start")}
                               </label>
                               <div className="flex items-center gap-1 mt-1">
@@ -815,12 +899,12 @@ export default function HrComplianceView({
                                   type="date"
                                   value={draft.attendanceStartDate}
                                   onChange={(e) => setDraftField(r.worker, { attendanceStartDate: e.target.value })}
-                                  className="border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-xs font-bold rounded"
+                                  className="brutal-input px-2.5 py-1 text-xs font-semibold"
                                 />
                                 <button
                                   type="button"
                                   onClick={() => setDraftField(r.worker, { attendanceStartDate: todayYmd })}
-                                  className="px-1.5 py-1 bg-emerald-100 text-emerald-800 hover:bg-emerald-600 hover:text-white text-[10px] font-bold rounded cursor-pointer"
+                                  className="px-2 py-1 bg-emerald-100 text-emerald-800 hover:bg-emerald-600 hover:text-white text-[10px] font-semibold rounded-lg cursor-pointer transition-colors"
                                 >
                                   {t("اليوم", "Today")}
                                 </button>
@@ -828,7 +912,7 @@ export default function HrComplianceView({
                             </div>
 
                             <div className="w-28">
-                              <label className="block text-[10px] font-bold uppercase text-zinc-600 dark:text-zinc-300">
+                              <label className="block text-[10px] font-semibold uppercase text-zinc-600 dark:text-zinc-300">
                                 {t("٣. أجر الساعة (ج.م)", "3. Rate (EGP/h)")}
                               </label>
                               <input
@@ -839,12 +923,12 @@ export default function HrComplianceView({
                                 onChange={(e) =>
                                   setDraftField(r.worker, { hourlyRate: Math.max(0, parseFloat(e.target.value) || 0) })
                                 }
-                                className="mt-1 w-full border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-xs font-bold rounded"
+                                className="mt-1 w-full brutal-input px-2.5 py-1 text-xs font-semibold font-code"
                               />
                             </div>
 
                             <div className="w-32">
-                              <label className="block text-[10px] font-bold uppercase text-zinc-600 dark:text-zinc-300">
+                              <label className="block text-[10px] font-semibold uppercase text-zinc-600 dark:text-zinc-300">
                                 {t("٤. إجازات سابقة (يوم)", "4. Prior Used (d)")}
                               </label>
                               <input
@@ -855,12 +939,12 @@ export default function HrComplianceView({
                                 onChange={(e) =>
                                   setDraftField(r.worker, { priorUsedLeaveDays: Math.max(0, parseFloat(e.target.value) || 0) })
                                 }
-                                className="mt-1 w-full border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-xs font-bold rounded"
+                                className="mt-1 w-full brutal-input px-2.5 py-1 text-xs font-semibold font-code"
                               />
                             </div>
 
                             <div className="w-28">
-                              <label className="block text-[10px] font-bold uppercase text-zinc-600 dark:text-zinc-300">
+                              <label className="block text-[10px] font-semibold uppercase text-zinc-600 dark:text-zinc-300">
                                 {t("٥. مرحّل (يوم)", "5. Carry-Over (d)")}
                               </label>
                               <input
@@ -871,7 +955,7 @@ export default function HrComplianceView({
                                 onChange={(e) =>
                                   setDraftField(r.worker, { carriedOverLeaveDays: Math.max(0, parseFloat(e.target.value) || 0) })
                                 }
-                                className="mt-1 w-full border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-900 px-2 py-1 text-xs font-bold rounded"
+                                className="mt-1 w-full brutal-input px-2.5 py-1 text-xs font-semibold font-code"
                               />
                             </div>
 
@@ -879,7 +963,7 @@ export default function HrComplianceView({
                               type="button"
                               disabled={savingId === r.worker.id || !rowDirty}
                               onClick={() => void saveRowDraft(r.worker, r.name)}
-                              className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white font-bold uppercase text-[10px] border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] rounded cursor-pointer disabled:opacity-40"
+                              className="px-3.5 py-1.5 bg-red-600 hover:bg-red-700 text-white font-semibold text-xs rounded-lg shadow-2xs cursor-pointer disabled:opacity-40 transition-colors"
                             >
                               {savingId === r.worker.id ? t("جارٍ الحفظ…", "Saving…") : t("حفظ ✓", "Save ✓")}
                             </button>
@@ -890,10 +974,10 @@ export default function HrComplianceView({
 
                     {open && (
                       <tr className="bg-zinc-50/70 dark:bg-zinc-950/40">
-                        <td colSpan={9} className="p-3 space-y-3">
+                        <td colSpan={9} className="p-4 space-y-3">
                           {/* Approved Leave Requests with 1-Click Cancel & Restore Balance */}
                           <div>
-                            <div className="mb-1.5 text-[11px] font-bold text-emerald-800 dark:text-emerald-300">
+                            <div className="mb-1.5 text-[11px] font-semibold text-emerald-800 dark:text-emerald-300">
                               {t(
                                 "🌴 الإجازات المعتمدة المخصومة من الرصيد (يمكنك إلغاء أي إجازة لإرجاع أيامها فوراً لرصيد الموظف):",
                                 "🌴 Approved Leave Requests (Cancel any leave to immediately restore days to worker's balance):",
@@ -904,7 +988,7 @@ export default function HrComplianceView({
                                 {t("لا توجد إجازات سنوية أو عارضة معتمدة مسجلة لهذا الموظف.", "No approved leave requests recorded for this worker.")}
                               </p>
                             ) : (
-                              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                              <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
                                 {r.workerLeaveReqs.map((req) => {
                                   const effDays = effectiveLeaveDaysForRequest(req, settings.weekendDays || [5, 6]);
                                   const typeLabel =
@@ -918,16 +1002,16 @@ export default function HrComplianceView({
                                   return (
                                     <div
                                       key={req.id}
-                                      className="p-2.5 border-2 border-emerald-300 dark:border-emerald-800 bg-white dark:bg-zinc-900 rounded flex items-start justify-between gap-2"
+                                      className="p-3 border border-emerald-200 dark:border-emerald-800/70 bg-white dark:bg-zinc-900 rounded-xl flex items-start justify-between gap-2 shadow-2xs"
                                     >
                                       <div className="space-y-0.5">
-                                        <div className="font-bold text-zinc-950 dark:text-white">
+                                        <div className="font-semibold text-zinc-950 dark:text-white">
                                           🌴 {typeLabel} ·{" "}
                                           <span className="text-emerald-700 dark:text-emerald-400">
                                             {effDays} {t("يوم عمل", "working day(s)")}
                                           </span>
                                         </div>
-                                        <div className="text-[10px] text-zinc-500">
+                                        <div className="text-[10px] text-zinc-500 font-code">
                                           {req.exceptionDate}
                                           {req.endDate && req.endDate !== req.exceptionDate ? ` ← ${req.endDate}` : ""}
                                         </div>
@@ -940,7 +1024,7 @@ export default function HrComplianceView({
                                       <button
                                         type="button"
                                         onClick={() => void handleRevokeLeave(req, r.name)}
-                                        className="shrink-0 px-2 py-1 bg-red-50 hover:bg-red-600 text-red-700 hover:text-white border border-red-300 rounded text-[10px] font-bold cursor-pointer transition-colors"
+                                        className="shrink-0 px-2.5 py-1 bg-red-50 hover:bg-red-600 text-red-700 hover:text-white border border-red-200 dark:border-red-800 rounded-lg text-[10px] font-semibold cursor-pointer transition-colors"
                                       >
                                         {t("↩ إلغاء وإرجاع الرصيد", "↩ Cancel & Restore")}
                                       </button>
@@ -953,7 +1037,7 @@ export default function HrComplianceView({
 
                           {/* Monthly Permissions Ledger */}
                           <div>
-                            <div className="mb-1.5 text-[11px] font-bold text-sky-800 dark:text-sky-300">
+                            <div className="mb-1.5 text-[11px] font-semibold text-sky-800 dark:text-sky-300">
                               {t("⏱️ سجل الأذونات الشهرية في هذه الدورة:", "⏱️ Monthly Permissions Ledger in this cycle:")}
                             </div>
                           {r.cycleLedger.length === 0 ? (
@@ -961,21 +1045,21 @@ export default function HrComplianceView({
                               {t("لا توجد أذونات مسجلة في هذه الدورة.", "No permissions recorded in this cycle.")}
                             </p>
                           ) : (
-                            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                            <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
                               {r.cycleLedger.map((e) => (
                                 <div
                                   key={e.id}
-                                  className={`p-2.5 border rounded flex items-start justify-between gap-2 ${
+                                  className={`p-3 border rounded-xl flex items-start justify-between gap-2 ${
                                     e.status === "reversed"
                                       ? "border-zinc-200 dark:border-zinc-800 opacity-60"
                                       : e.covered
-                                        ? "border-sky-300 dark:border-sky-800 bg-white dark:bg-zinc-900"
-                                        : "border-red-300 dark:border-red-900 bg-red-50/60 dark:bg-red-950/30"
+                                        ? "border-sky-200 dark:border-sky-800/70 bg-white dark:bg-zinc-900"
+                                        : "border-red-200 dark:border-red-900 bg-red-50/60 dark:bg-red-950/30"
                                   }`}
                                 >
                                   <div className="space-y-0.5">
-                                    <div className="font-bold text-zinc-950 dark:text-white">
-                                      {e.date} ·{" "}
+                                    <div className="font-semibold text-zinc-950 dark:text-white">
+                                      <span className="font-code">{e.date}</span> ·{" "}
                                       {e.kind === "late"
                                         ? t("حضور متأخر", "Late arrival")
                                         : e.kind === "early_leave"
@@ -1001,7 +1085,7 @@ export default function HrComplianceView({
                                   <button
                                     type="button"
                                     onClick={() => void toggleEntry(e, r.name)}
-                                    className="shrink-0 text-[10px] font-bold uppercase text-red-600 hover:underline cursor-pointer"
+                                    className="shrink-0 text-[10px] font-semibold text-red-600 hover:underline cursor-pointer"
                                   >
                                     {e.status === "applied" ? t("إلغاء الإذن", "Reverse") : t("إعادة التطبيق", "Re-apply")}
                                   </button>
@@ -1011,7 +1095,7 @@ export default function HrComplianceView({
                           )}
                           </div>
                           {r.accrual && (
-                            <p className="mt-3 text-[10px] text-zinc-500">
+                            <p className="mt-3 text-[11px] text-zinc-500">
                               {isAr
                                 ? `تفاصيل الإجازات: المتراكم ${r.accrual.accruedDays} يوم · الرصيد المُرحّل قانونياً والمُعتمد من الإدارة ${r.accrual.totalCarryOverDays} يوم (قانوني ${r.accrual.legalCarryOverDays} + معتمد ${r.accrual.carriedOverApproved}) · المستخدم ${r.accrual.usedDays} يوم (منها ${r.accrual.priorUsedLeaveDays} يوم قبل النظام) · المعدل الحالي ${r.accrual.monthlyRate} يوم/شهر (${r.accrual.annualEntitlementDays} يوم/سنة) · استحقاق ما بعد السنة الأولى (21 يوم / 1.75 شهرياً) يبدأ في ${r.accrual.tier2StartsOn}`
                                 : `Leave: accrued ${r.accrual.accruedDays}d · carried over ${r.accrual.totalCarryOverDays}d (legal ${r.accrual.legalCarryOverDays}d + approved ${r.accrual.carriedOverApproved}d) · used ${r.accrual.usedDays}d (incl. ${r.accrual.priorUsedLeaveDays}d prior to MFT) · rate ${r.accrual.monthlyRate}/month (${r.accrual.annualEntitlementDays}d/yr) · post-Year-1 (21d / 1.75/mo) from ${r.accrual.tier2StartsOn}`}

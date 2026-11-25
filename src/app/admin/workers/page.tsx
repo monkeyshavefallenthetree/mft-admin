@@ -21,11 +21,13 @@ import { toast, confirmDialog } from "@/lib/admin/feedback";
 import { logActivity } from "@/lib/admin/activity";
 import { downloadCsv } from "@/lib/admin/csv";
 import { bulkSetSystemStartDate } from "@/lib/admin/hrSettings";
+import { cairoYmd } from "@/lib/admin/cairoTime";
 import { useHrLang } from "@/lib/admin/hrI18n";
 import { BulkBar, BulkButton, EmptyState, PageHeader, SkeletonRows, STATE_ICONS } from "@/components/admin/ui/States";
 import ModalPortal from "@/components/admin/ui/ModalPortal";
 import RichDescriptionEditor from "@/components/admin/ui/RichDescriptionEditor";
 import WorkerLeaveProfileCard from "@/components/admin/hr/WorkerLeaveProfileCard";
+import { ChartCard, BarCompare, DonutBreakdown } from "@/components/admin/ui/Charts";
 
 interface WorkerTask {
   id: string;
@@ -544,7 +546,7 @@ export default function AdminWorkersPage() {
           w.createdAt?.toDate ? w.createdAt.toDate().toLocaleDateString() : "",
         ]),
       ],
-      `workers_${new Date().toISOString().split("T")[0]}.csv`,
+      `workers_${cairoYmd()}.csv`,
     );
     toast.success(`Exported ${list.length} workers`);
   };
@@ -629,7 +631,7 @@ export default function AdminWorkersPage() {
   };
 
   const { isAr, dir, toggleLang, t } = useHrLang();
-  const todayStr = new Date().toISOString().split("T")[0];
+  const todayStr = cairoYmd();
 
   const stats = {
     total: workers.length,
@@ -730,10 +732,41 @@ export default function AdminWorkersPage() {
     whatsapp: "M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z",
   };
 
+  const [showAnalytics, setShowAnalytics] = useState(true);
+
+  const deptAnalyticsData = useMemo(() => {
+    const map = new Map<string, { dept: string; Staff: number; OpenTasks: number; Completed: number }>();
+    for (const w of workers.filter((x) => x.status === "approved")) {
+      const d = formatDepartment(w.department);
+      if (!map.has(d)) map.set(d, { dept: d, Staff: 0, OpenTasks: 0, Completed: 0 });
+      const rec = map.get(d)!;
+      rec.Staff += 1;
+      const tc = taskCounts.get(w.id) ?? { open: 0, done: 0 };
+      rec.OpenTasks += tc.open;
+      rec.Completed += tc.done;
+    }
+    return Array.from(map.values())
+      .sort((a, b) => b.Staff - a.Staff)
+      .slice(0, 7);
+  }, [workers, taskCounts]);
+
+  const presenceSlices = useMemo(() => {
+    const activeOnline = workers.filter((w) => w.isOnline && w.presenceStatus !== "idle").length;
+    const idleOnline = workers.filter((w) => w.isOnline && w.presenceStatus === "idle").length;
+    const offlineApproved = workers.filter((w) => w.status === "approved" && !w.isOnline).length;
+    const pendingCount = workers.filter((w) => w.status === "pending").length;
+    return [
+      { key: "active", label: t("نشط الآن", "Online Active"), value: activeOnline, color: "#10b981" },
+      { key: "idle", label: t("خامل", "Station Idle"), value: idleOnline, color: "#ef4444" },
+      { key: "offline", label: t("غير متصل", "Offline Approved"), value: offlineApproved, color: "#64748b" },
+      { key: "pending", label: t("بانتظار الاعتماد", "Pending Approval"), value: pendingCount, color: "#f59e0b" },
+    ];
+  }, [workers, t]);
+
   return (
     <div dir={dir} className="space-y-5 pb-24">
       <PageHeader
-        title={t("سجل الموظفين (Workers)", "Workers")}
+        title={t("سجل الموظفين (Workers)", "Workers & Team Roster")}
         description={t(
           "إدارة الموظفين، اعتماد الحسابات الجديدة، ضبط تاريخ التعيين والراتب، وإسناد المهام.",
           "Team roster, registration approvals, joining dates, hourly rates, and task assignment.",
@@ -742,18 +775,25 @@ export default function AdminWorkersPage() {
           <>
             <button
               type="button"
+              onClick={() => setShowAnalytics((v) => !v)}
+              className="brutal-btn-outline"
+            >
+              <span>{showAnalytics ? t("إخفاء التحليلات", "Hide Analytics") : t("تحليلات الفريق", "Workforce Insights")}</span>
+            </button>
+            <button
+              type="button"
               onClick={toggleLang}
-              className="rounded-lg border-2 border-red-600 bg-red-50 px-3 py-1.5 text-xs font-bold text-red-700 hover:bg-red-600 hover:text-white cursor-pointer transition-colors"
+              className="rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-600 hover:text-white cursor-pointer transition-colors"
             >
               🌐 {isAr ? "English (EN)" : "العربية (AR)"}
             </button>
             <Link
               href="/admin/hr?tab=people&sub=compliance"
-              className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-bold text-zinc-900 hover:bg-zinc-100"
+              className="brutal-btn-outline"
             >
               {t("🗓️ سجل الأذونات والإجازات", "🗓️ HR Leave & Quotas")}
             </Link>
-            <div className="flex gap-1 rounded-lg bg-zinc-100 p-1">
+            <div className="flex gap-1 rounded-xl border border-zinc-200 bg-zinc-100/80 p-0.5">
               {[
                 ["table", t("جدول", "Table"), "M3 10h18M3 14h18M3 6h18M3 18h18"],
                 ["cards", t("بطاقات", "Cards"), "M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"],
@@ -763,7 +803,7 @@ export default function AdminWorkersPage() {
                   type="button"
                   title={l}
                   onClick={() => setViewMode(k)}
-                  className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold transition-all cursor-pointer ${viewMode === k ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-800"}`}
+                  className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold transition-all cursor-pointer ${viewMode === k ? "bg-white text-zinc-900 shadow-2xs" : "text-zinc-500 hover:text-zinc-800"}`}
                 >
                   <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
                     <path strokeLinecap="round" strokeLinejoin="round" d={d} />
@@ -781,10 +821,10 @@ export default function AdminWorkersPage() {
 
       {/* Existing Staff Onboarding Banner (HR-POL-2026) */}
       {!loading && stats.approved > 0 && (
-        <div className="rounded-xl border-2 border-zinc-900 bg-white p-4 shadow-[3px_3px_0px_0px_#dc2626] flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+        <div className="ui-card p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
           <div className="space-y-1">
             <div className="flex items-center gap-2">
-              <span className="rounded bg-red-600 px-2 py-0.5 text-[10px] font-bold uppercase text-white">
+              <span className="rounded-md bg-red-600 px-2 py-0.5 text-[10px] font-semibold uppercase text-white">
                 HR-POL-2026
               </span>
               <h3 className="text-sm font-bold text-zinc-900">
@@ -794,7 +834,7 @@ export default function AdminWorkersPage() {
                 )}
               </h3>
             </div>
-            <p className="text-xs text-zinc-600">
+            <p className="text-xs text-zinc-500">
               {t(
                 `اضغط على زر «🗓️ التعيين والراتب» أمام أي موظف لتحديد تاريخ التحاقه بالشركة وأجر الساعة وتاريخ بدء الحساب بالنظام الجديد.${stats.missingHire > 0 ? ` (${stats.missingHire} موظف بحاجة لتحديد تاريخ التعيين)` : ""}`,
                 `Click "🗓️ Set Joining Date & Rate" on any worker to set their Company Joining Date, Hourly Rate, and MFT Attendance Start Date.${stats.missingHire > 0 ? ` (${stats.missingHire} worker(s) still need a joining date)` : ""}`,
@@ -806,13 +846,13 @@ export default function AdminWorkersPage() {
               type="button"
               disabled={bulkBusy}
               onClick={() => void handleBulkStartToday()}
-              className="rounded-lg bg-emerald-600 hover:bg-emerald-700 px-3 py-2 text-xs font-bold text-white cursor-pointer disabled:opacity-50"
+              className="rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3.5 py-2 text-xs font-semibold text-white cursor-pointer disabled:opacity-50 transition-colors"
             >
               {t("⚡ ضبط بدء النظام للكل = اليوم", "⚡ Set All System Start = Today")}
             </button>
             <Link
               href="/admin/hr?tab=people&sub=compliance"
-              className="rounded-lg bg-zinc-900 hover:bg-zinc-800 px-3 py-2 text-xs font-bold text-white"
+              className="brutal-btn"
             >
               {t("فتح جدول التعديل الجماعي ←", "Bulk Edit All Dates →")}
             </Link>
@@ -832,10 +872,47 @@ export default function AdminWorkersPage() {
           <button key={s.label} type="button" onClick={s.onClick} className="ui-card ui-card-hover relative overflow-hidden px-4 py-3 text-start cursor-pointer">
             <span className={`absolute start-0 top-0 h-full w-1 ${s.bar}`} />
             <p className="text-[11px] font-medium text-zinc-500">{s.label}</p>
-            <p className="mt-1 text-2xl font-bold tracking-tight text-zinc-900">{loading ? "–" : s.value}</p>
+            <p className="mt-1 font-code text-2xl font-bold tracking-tight text-zinc-900">{loading ? "–" : s.value}</p>
           </button>
         ))}
       </div>
+
+      {/* Collapsible Workforce Intelligence Charts */}
+      {showAnalytics && !loading && workers.length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 animate-fade-in">
+          <ChartCard
+            className="lg:col-span-7"
+            title={t("توزيع القوى العاملة والمهام حسب القسم", "Department Staffing & Task Load")}
+            subtitle={t("عدد الموظفين المعتمدين والمهام النشطة والمكتملة لكل قسم", "Approved headcount vs active and completed directives per department")}
+          >
+            <BarCompare
+              data={deptAnalyticsData}
+              xKey="dept"
+              series={[
+                { key: "Staff", label: t("الموظفون", "Approved Staff"), color: "#09090b" },
+                { key: "OpenTasks", label: t("مهام مفتوحة", "Open Tasks"), color: "#3b82f6" },
+                { key: "Completed", label: t("مكتملة", "Completed"), color: "#10b981" },
+              ]}
+              height={200}
+              description="Departmental staffing and task load chart"
+            />
+          </ChartCard>
+
+          <ChartCard
+            className="lg:col-span-5"
+            title={t("حالة التواجد والاعتماد المباشر", "Live Workforce Presence & Status")}
+            subtitle={t("التوزيع اللحظي لحالة اتصال الموظفين", "Real-time station presence and onboarding state")}
+          >
+            <DonutBreakdown
+              slices={presenceSlices}
+              centerLabel={t("إجمالي الفريق", "Total Roster")}
+              centerValue={String(workers.length)}
+              size={165}
+              description={t("حالة تواجد الموظفين", "Worker presence status breakdown")}
+            />
+          </ChartCard>
+        </div>
+      )}
 
       {/* Pending banner */}
       {!loading && stats.pending > 0 && statusFilter !== "pending" && (
@@ -859,21 +936,41 @@ export default function AdminWorkersPage() {
 
       {/* Tabs + filters */}
       <div className="ui-card overflow-hidden">
-        <div className="flex flex-wrap items-center gap-1 border-b border-zinc-100 px-3 pt-2">
-          {tabs.map((tab) => (
-            <button
-              key={tab.key || "all"}
-              type="button"
-              id={`workers-tab-${tab.key || "all"}`}
-              onClick={() => setStatusFilter(tab.key)}
-              className={`relative flex items-center gap-2 px-3 pb-2.5 pt-1.5 text-[13px] font-medium transition-colors cursor-pointer ${statusFilter === tab.key ? "text-zinc-900" : "text-zinc-500 hover:text-zinc-800"}`}
-            >
-              {tab.label}
-              <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${statusFilter === tab.key ? "bg-zinc-900 text-white" : tab.key === "pending" && tab.count ? "bg-amber-100 text-amber-700" : "bg-zinc-100 text-zinc-600"}`}>{tab.count}</span>
-              {statusFilter === tab.key && <span className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-red-600" />}
-            </button>
-          ))}
-          <span className="ms-auto pb-2 text-[11px] text-zinc-400">
+        <div
+          role="tablist"
+          aria-label="Worker account status filter"
+          className="flex flex-wrap items-center gap-1 border-b border-zinc-100 px-3 pt-2"
+        >
+          {tabs.map((tab) => {
+            const isSelected = statusFilter === tab.key;
+            return (
+              <button
+                key={tab.key || "all"}
+                type="button"
+                role="tab"
+                aria-selected={isSelected}
+                id={`workers-tab-${tab.key || "all"}`}
+                onClick={() => setStatusFilter(tab.key)}
+                className={`mft-tab-btn relative flex items-center gap-2 px-3 pb-2.5 pt-1.5 text-[13px] font-medium transition-colors cursor-pointer ${
+                  isSelected ? "text-zinc-900" : "text-zinc-500 hover:text-zinc-800"
+                }`}
+              >
+                {tab.label}
+                <span
+                  className={`rounded-full px-1.5 py-0.5 font-code text-[10px] font-semibold ${
+                    isSelected
+                      ? "bg-zinc-900 text-white"
+                      : tab.key === "pending" && tab.count
+                      ? "bg-amber-100 text-amber-700"
+                      : "bg-zinc-100 text-zinc-600"
+                  }`}
+                >
+                  {tab.count}
+                </span>
+              </button>
+            );
+          })}
+          <span className="ms-auto pb-2 font-code text-[11px] text-zinc-400">
             {filteredWorkers.length} / {workers.length}
           </span>
         </div>
@@ -900,12 +997,12 @@ export default function AdminWorkersPage() {
               </option>
             ))}
           </select>
-          <label className="flex shrink-0 cursor-pointer items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-xs font-medium text-zinc-600">
+          <label className="flex shrink-0 cursor-pointer items-center gap-2 rounded-xl border border-zinc-200 px-3 py-2 text-xs font-medium text-zinc-600">
             <input type="checkbox" className="mft-check" checked={!!onlineOnly} onChange={(e) => setOnlineOnly(e.target.checked ? "1" : "")} />
             {t("المتصلون فقط", "Online only")}
           </label>
           {hasFilters && (
-            <button type="button" onClick={clearWorkerFilters} className="px-2 text-xs font-medium text-zinc-500 hover:text-zinc-900 cursor-pointer">
+            <button type="button" onClick={clearWorkerFilters} className="px-2 text-xs font-semibold text-red-600 hover:underline cursor-pointer">
               {t("إعادة ضبط", "Reset")}
             </button>
           )}
@@ -974,19 +1071,19 @@ export default function AdminWorkersPage() {
                       )}
                     </span>
                   </button>
-                  <span className={`shrink-0 rounded-md border px-2 py-0.5 text-[10px] font-semibold capitalize ${STATUS_CHIP[worker.status] ?? STATUS_CHIP.pending}`}>{worker.status}</span>
+                  <span className={`shrink-0 rounded-full border px-2.5 py-0.5 text-[10px] font-semibold capitalize ${STATUS_CHIP[worker.status] ?? STATUS_CHIP.pending}`}>{worker.status}</span>
                 </div>
-                <div className="mt-4 grid grid-cols-3 gap-2 rounded-lg bg-zinc-50 p-2.5 text-center">
+                <div className="mt-4 grid grid-cols-3 gap-2 rounded-xl bg-zinc-50/80 border border-zinc-100 p-2.5 text-center">
                   <div>
-                    <p className="text-sm font-semibold text-zinc-900">{tc.open}</p>
+                    <p className="font-code text-sm font-semibold text-zinc-900">{tc.open}</p>
                     <p className="text-[10px] text-zinc-500">{t("مهام مفتوحة", "Open tasks")}</p>
                   </div>
                   <div>
-                    <p className="text-sm font-semibold text-emerald-600">{tc.done}</p>
+                    <p className="font-code text-sm font-semibold text-emerald-600">{tc.done}</p>
                     <p className="text-[10px] text-zinc-500">{t("مكتملة", "Completed")}</p>
                   </div>
                   <div>
-                    <p className="text-sm font-semibold text-zinc-900">{worker.hourlyRate ?? 31.25}</p>
+                    <p className="font-code text-sm font-semibold text-zinc-900">{worker.hourlyRate ?? 31.25}</p>
                     <p className="text-[10px] text-zinc-500">{t("ج.م / ساعة", "EGP / h")}</p>
                   </div>
                 </div>
@@ -1000,17 +1097,17 @@ export default function AdminWorkersPage() {
                     {worker.skills.length > 4 && <span className="text-[10px] text-zinc-400">+{worker.skills.length - 4}</span>}
                   </div>
                 )}
-                <div className="mt-3 flex items-center justify-between rounded-lg border border-zinc-200 bg-zinc-50/70 px-2.5 py-1.5 text-xs">
+                <div className="mt-3 flex items-center justify-between rounded-xl border border-zinc-200/80 bg-zinc-50/70 px-3 py-1.5 text-xs">
                   <span className="text-zinc-500">
                     {t("التعيين:", "Joined:")}{" "}
-                    <strong className={worker.hireDate ? "text-zinc-900" : "text-amber-600"}>
+                    <strong className={worker.hireDate ? "font-code text-zinc-900" : "text-amber-600"}>
                       {worker.hireDate || t("غير محدد ⚠", "Not set ⚠")}
                     </strong>
                   </span>
                   <button
                     type="button"
                     onClick={() => setOnboardWorker(worker)}
-                    className="text-[11px] font-bold text-red-600 hover:underline cursor-pointer"
+                    className="text-[11px] font-semibold text-red-600 hover:underline cursor-pointer"
                   >
                     🗓️ {t("تحديد التعيين والراتب", "Set Date & Rate")}
                   </button>
@@ -1018,15 +1115,15 @@ export default function AdminWorkersPage() {
                 <div className="mt-auto flex items-center gap-1 border-t border-zinc-100 pt-3 mt-3">
                   {worker.status === "pending" ? (
                     <>
-                      <button type="button" disabled={bulkBusy} onClick={() => setOnboardWorker(worker)} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 cursor-pointer">
+                      <button type="button" disabled={bulkBusy} onClick={() => setOnboardWorker(worker)} className="rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 cursor-pointer">
                         {t("اعتماد وتحديد التعيين", "Approve & Set Date")}
                       </button>
-                      <button type="button" disabled={bulkBusy} onClick={() => void rejectWorker(worker.id)} className="rounded-lg px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50 cursor-pointer">
+                      <button type="button" disabled={bulkBusy} onClick={() => void rejectWorker(worker.id)} className="rounded-xl px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50 cursor-pointer">
                         {t("رفض", "Reject")}
                       </button>
                     </>
                   ) : (
-                    <button type="button" onClick={() => openAssignModal(worker)} className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-zinc-800 cursor-pointer">
+                    <button type="button" onClick={() => openAssignModal(worker)} className="rounded-xl bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-zinc-800 cursor-pointer">
                       {t("إسناد مهمة", "Assign task")}
                     </button>
                   )}
@@ -1047,24 +1144,31 @@ export default function AdminWorkersPage() {
           })}
         </div>
       ) : (
-        <div className="ui-card overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[980px] text-sm">
-              <thead className="border-b border-zinc-100 bg-zinc-50 text-start text-[11px] font-semibold text-zinc-500">
-                <tr>
-                  <th className="w-10 px-4 py-2.5">
-                    <input type="checkbox" className="mft-check" checked={allSelected} onChange={() => setSelected(allSelected ? new Set() : new Set(filteredWorkers.map((w) => w.id)))} aria-label="Select all" />
-                  </th>
-                  <th className="px-2 py-2.5">{t("الموظف", "Worker")}</th>
-                  <th className="px-4 py-2.5">{t("الوظيفة والقسم", "Role & department")}</th>
-                  <th className="px-4 py-2.5">{t("تاريخ التعيين والراتب", "Joined & Rate")}</th>
-                  <th className="px-4 py-2.5">{t("الحالة", "Status")}</th>
-                  <th className="px-4 py-2.5">{t("المهام", "Tasks")}</th>
-                  <th className="px-4 py-2.5">{t("الموقع", "Location")}</th>
-                  <th className="px-4 py-2.5">{t("آخر ظهور", "Last seen")}</th>
-                  <th className="px-4 py-2.5 text-end">{t("إجراءات", "Actions")}</th>
-                </tr>
-              </thead>
+        <div
+          tabIndex={0}
+          role="region"
+          aria-labelledby="workers-roster-caption"
+          className="ui-card mft-table-wrapper"
+        >
+          <table className="w-full min-w-[980px] text-sm">
+            <caption id="workers-roster-caption" className="sr-only">
+              Studio workforce directory and status table
+            </caption>
+            <thead className="border-b border-zinc-100 bg-zinc-50/95 text-start text-[11px] font-semibold text-zinc-500">
+              <tr>
+                <th scope="col" className="w-10 px-4 py-2.5">
+                  <input type="checkbox" className="mft-check" checked={allSelected} onChange={() => setSelected(allSelected ? new Set() : new Set(filteredWorkers.map((w) => w.id)))} aria-label="Select all" />
+                </th>
+                <th scope="col" className="px-2 py-2.5">{t("الموظف", "Worker")}</th>
+                <th scope="col" className="px-4 py-2.5">{t("الوظيفة والقسم", "Role & department")}</th>
+                <th scope="col" className="px-4 py-2.5">{t("تاريخ التعيين والراتب", "Joined & Rate")}</th>
+                <th scope="col" className="px-4 py-2.5">{t("الحالة", "Status")}</th>
+                <th scope="col" className="px-4 py-2.5">{t("المهام", "Tasks")}</th>
+                <th scope="col" className="px-4 py-2.5">{t("الموقع", "Location")}</th>
+                <th scope="col" className="px-4 py-2.5">{t("آخر ظهور", "Last seen")}</th>
+                <th scope="col" className="px-4 py-2.5 text-end">{t("إجراءات", "Actions")}</th>
+              </tr>
+            </thead>
               <tbody className="divide-y divide-zinc-100">
                 {filteredWorkers.map((worker) => {
                   const tc = taskCounts.get(worker.id) ?? { open: 0, done: 0 };
@@ -1188,7 +1292,6 @@ export default function AdminWorkersPage() {
                 })}
               </tbody>
             </table>
-          </div>
         </div>
       )}
 
@@ -1207,793 +1310,803 @@ export default function AdminWorkersPage() {
         </BulkButton>
       </BulkBar>
 
-
       {/* Complete Worker 360 Detail Modal */}
       {detailWorker && (
         <ModalPortal onClose={() => setDetailWorker(null)}>
           <div
-            className="fixed inset-0 z-[120] bg-zinc-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in"
+            className="fixed inset-0 z-[120] bg-zinc-950/55 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in"
             onClick={() => setDetailWorker(null)}
           >
             <div
-              className="border-2 border-zinc-900 bg-white dark:bg-zinc-900 w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 shadow-2xl text-zinc-950 dark:text-zinc-100 font-mono animate-scale-in"
+              className="ui-card rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 shadow-2xl text-zinc-950 animate-scale-in"
               onClick={(e) => e.stopPropagation()}
             >
-            {/* Modal Header */}
-            <div className="flex items-start justify-between pb-4 border-b-2 border-zinc-900 mb-5">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 bg-red-600 text-white border-2 border-zinc-900 flex items-center justify-center text-lg font-bold font-heading shadow-[2px_2px_0px_0px_#09090b]">
-                  {detailWorker.firstName?.[0]}
-                  {detailWorker.lastName?.[0]}
-                </div>
-                <div>
-                  <h3 className="text-xl font-black font-heading text-zinc-950 uppercase tracking-wide">
-                    {detailWorker.firstName} {detailWorker.lastName}
-                  </h3>
-                  <div className="flex flex-wrap items-center gap-2 mt-1 text-xs">
-                    <span className="font-bold text-red-600 bg-red-50 border border-red-300 px-2 py-0.5">
-                      {formatRole(detailWorker.role)}
-                    </span>
-                    <span className="font-bold text-zinc-800 bg-zinc-100 border border-zinc-300 px-2 py-0.5">
-                      {formatDepartment(detailWorker.department)}
-                    </span>
-                    <span
-                      className={`px-2 py-0.5 font-bold border ${
-                        detailWorker.isOnline
+              {/* Modal Header */}
+              <div className="flex items-start justify-between pb-4 border-b border-zinc-100 mb-5">
+                <div className="flex items-center gap-3.5">
+                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-red-500 to-red-700 text-white flex items-center justify-center text-base font-bold shadow-sm">
+                    {detailWorker.firstName?.[0]}
+                    {detailWorker.lastName?.[0]}
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-zinc-950">
+                      {detailWorker.firstName} {detailWorker.lastName}
+                    </h3>
+                    <div className="flex flex-wrap items-center gap-1.5 mt-1 text-xs">
+                      <span className="font-semibold text-red-700 bg-red-50 border border-red-200 px-2.5 py-0.5 rounded-full">
+                        {formatRole(detailWorker.role)}
+                      </span>
+                      <span className="font-medium text-zinc-700 bg-zinc-100 border border-zinc-200 px-2.5 py-0.5 rounded-full">
+                        {formatDepartment(detailWorker.department)}
+                      </span>
+                      <span
+                        className={`px-2.5 py-0.5 font-semibold border rounded-full ${
+                          detailWorker.isOnline
+                            ? detailWorker.presenceStatus === "idle"
+                              ? "bg-red-50 text-red-700 border-red-200"
+                              : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                            : "bg-zinc-100 text-zinc-500 border-zinc-200"
+                        }`}
+                      >
+                        {detailWorker.isOnline
                           ? detailWorker.presenceStatus === "idle"
-                            ? "bg-red-50 text-red-800 border-red-300 animate-pulse"
-                            : "bg-emerald-50 text-emerald-800 border-emerald-300"
-                          : "bg-zinc-100 text-zinc-600 border-zinc-300"
-                      }`}
-                    >
-                      {detailWorker.isOnline
-                        ? detailWorker.presenceStatus === "idle"
-                          ? "⚠️ IDLE (MISSED 2H CHECK)"
-                          : "● ONLINE (2H ACTIVE)"
-                        : "○ OFFLINE"}
-                    </span>
+                            ? "⚠️ Idle (Missed 2h Check)"
+                            : "● Online (2h Active)"
+                          : "○ Offline"}
+                      </span>
+                    </div>
                   </div>
                 </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setDetailWorker(null)}
-                className="text-2xl font-bold text-zinc-500 hover:text-red-600 cursor-pointer"
-              >
-                &times;
-              </button>
-            </div>
-
-            {/* Active Presence Banner in Drawer */}
-            {detailWorker.isOnline && (
-              <div
-                className={`mb-5 p-3.5 border-2 ${
-                  detailWorker.presenceStatus === "idle"
-                    ? "bg-red-50 border-red-500 text-red-950"
-                    : "bg-emerald-50 border-emerald-500 text-emerald-950"
-                }`}
-              >
-                <div className="flex items-center justify-between text-xs font-mono font-bold uppercase tracking-wider mb-1.5">
-                  <span className="flex items-center gap-1.5">
-                    <span className={`h-2 w-2 rounded-full ${detailWorker.presenceStatus === "idle" ? "bg-red-600 animate-ping" : "bg-emerald-600"}`} />
-                    2-Hour Presence Status
-                  </span>
-                  <span className="font-extrabold">{detailWorker.presenceStatus === "idle" ? "Station Idle / Unresponsive" : "Active & Verified"}</span>
-                </div>
-                {detailWorker.currentTaskTitle ? (
-                  <p className="text-xs font-semibold">
-                    Current Task: <span className="font-normal">{detailWorker.currentTaskTitle}</span>
-                  </p>
-                ) : (
-                  <p className="text-xs text-zinc-600">Currently active on general shift operations.</p>
-                )}
-                {detailWorker.currentTaskNote && (
-                  <p className="text-xs italic text-zinc-600 mt-1 font-mono">
-                    Note: &ldquo;{detailWorker.currentTaskNote}&rdquo;
-                  </p>
-                )}
-              </div>
-            )}
-
-            {/* Quick Action Toolbar */}
-            <div className="flex flex-wrap gap-2 mb-5 p-3 bg-zinc-50 border border-zinc-200">
-              <a
-                href={`mailto:${detailWorker.email}`}
-                className="px-3 py-1 bg-white border border-zinc-300 text-zinc-900 text-xs font-bold hover:bg-zinc-100 inline-flex items-center gap-1"
-              >
-                📧 Email Operator
-              </a>
-              {detailWorker.phone && (
-                <>
-                  <a
-                    href={`tel:${detailWorker.phone}`}
-                    className="px-3 py-1 bg-white border border-zinc-300 text-zinc-900 text-xs font-bold hover:bg-zinc-100 inline-flex items-center gap-1"
-                  >
-                    📞 Call Phone
-                  </a>
-                  {cleanPhoneForWhatsApp(detailWorker.phone) && (
-                    <a
-                      href={`https://wa.me/${cleanPhoneForWhatsApp(detailWorker.phone)}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="px-3 py-1 bg-emerald-50 border border-emerald-300 text-emerald-800 text-xs font-bold hover:bg-emerald-100 inline-flex items-center gap-1"
-                    >
-                      💬 WhatsApp
-                    </a>
-                  )}
-                </>
-              )}
-              {detailWorker.portfolioLink && (
-                <a
-                  href={detailWorker.portfolioLink.startsWith("http") ? detailWorker.portfolioLink : `https://${detailWorker.portfolioLink}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="px-3 py-1 bg-red-50 border border-red-300 text-red-700 text-xs font-bold hover:bg-red-100 inline-flex items-center gap-1"
+                <button
+                  type="button"
+                  onClick={() => setDetailWorker(null)}
+                  aria-label="Close modal"
+                  className="w-7 h-7 rounded-lg bg-zinc-100 hover:bg-zinc-900 hover:text-white flex items-center justify-center text-sm font-bold cursor-pointer transition-colors"
                 >
-                  🔗 Portfolio ↗
-                </a>
-              )}
-            </div>
-
-            {/* Structured Sections */}
-            <div className="space-y-4 text-xs">
-              {/* Section 1: Identification & Contact */}
-              <div className="border border-zinc-300 p-4 bg-white">
-                <h4 className="font-bold text-xs uppercase text-zinc-950 border-b border-zinc-200 pb-1 mb-3 flex items-center gap-2">
-                  <span>📋</span> Personal &amp; Contact Details
-                </h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <p>
-                    <span className="text-zinc-500 font-medium">FULL NAME:</span>{" "}
-                    <strong className="text-zinc-950">{detailWorker.firstName} {detailWorker.lastName}</strong>
-                  </p>
-                  <p>
-                    <span className="text-zinc-500 font-medium">EMAIL ADDRESS:</span>{" "}
-                    <strong className="text-zinc-950 break-all">{detailWorker.email}</strong>
-                  </p>
-                  <p>
-                    <span className="text-zinc-500 font-medium">TELEPHONE:</span>{" "}
-                    <strong className="text-zinc-950">{detailWorker.phone || "Unset"}</strong>
-                  </p>
-                  <p>
-                    <span className="text-zinc-500 font-medium">LOCATION:</span>{" "}
-                    <strong className="text-zinc-950">
-                      {detailWorker.government || detailWorker.city ? `${detailWorker.government || ""} ${detailWorker.city ? `(${detailWorker.city})` : ""}` : "Unset"}
-                    </strong>
-                  </p>
-                  <p className="md:col-span-2">
-                    <span className="text-zinc-500 font-medium">EMERGENCY CONTACT:</span>{" "}
-                    <strong className="text-zinc-950">
-                      {typeof detailWorker.emergencyContact === "string"
-                        ? detailWorker.emergencyContact
-                        : detailWorker.emergencyContact
-                          ? JSON.stringify(detailWorker.emergencyContact)
-                          : "None provided"}
-                    </strong>
-                  </p>
-                </div>
+                  &times;
+                </button>
               </div>
 
-              {/* Section 2: Professional Profile & Skills */}
-              <div className="border border-zinc-300 p-4 bg-white">
-                <h4 className="font-bold text-xs uppercase text-zinc-950 border-b border-zinc-200 pb-1 mb-3 flex items-center gap-2">
-                  <span>💼</span> Professional Profile &amp; Capacity
-                </h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <p>
-                    <span className="text-zinc-500 font-medium">PRIMARY ROLE:</span>{" "}
-                    <strong className="text-red-600 font-bold">{formatRole(detailWorker.role)}</strong>
-                  </p>
-                  <p>
-                    <span className="text-zinc-500 font-medium">DEPARTMENT:</span>{" "}
-                    <strong className="text-zinc-950">{formatDepartment(detailWorker.department)}</strong>
-                  </p>
-                  <p>
-                    <span className="text-zinc-500 font-medium">EMPLOYMENT TYPE:</span>{" "}
-                    <strong className="text-zinc-950">{formatEmploymentType(detailWorker.employmentType)}</strong>
-                  </p>
-                  <p>
-                    <span className="text-zinc-500 font-medium">EXPERIENCE:</span>{" "}
-                    <strong className="text-zinc-950">{detailWorker.experience || "Not specified"}</strong>
-                  </p>
-                  <p>
-                    <span className="text-zinc-500 font-medium">AVAILABILITY / NOTICE:</span>{" "}
-                    <strong className="text-zinc-950">{detailWorker.netspend || "Immediate"}</strong>
-                  </p>
-                  <p>
-                    <span className="text-zinc-500 font-medium">PORTFOLIO URL:</span>{" "}
-                    {detailWorker.portfolioLink ? (
+              {/* Active Presence Banner in Drawer */}
+              {detailWorker.isOnline && (
+                <div
+                  className={`mb-5 p-3.5 rounded-xl border ${
+                    detailWorker.presenceStatus === "idle"
+                      ? "bg-red-50/70 border-red-200 text-red-950"
+                      : "bg-emerald-50/70 border-emerald-200 text-emerald-950"
+                  }`}
+                >
+                  <div className="flex items-center justify-between text-xs font-semibold mb-1">
+                    <span className="flex items-center gap-1.5">
+                      <span className={`h-2 w-2 rounded-full ${detailWorker.presenceStatus === "idle" ? "bg-red-600 animate-ping" : "bg-emerald-600"}`} />
+                      2-Hour Presence Status
+                    </span>
+                    <span className="font-bold">{detailWorker.presenceStatus === "idle" ? "Station Idle / Unresponsive" : "Active & Verified"}</span>
+                  </div>
+                  {detailWorker.currentTaskTitle ? (
+                    <p className="text-xs font-semibold">
+                      Current Task: <span className="font-normal">{detailWorker.currentTaskTitle}</span>
+                    </p>
+                  ) : (
+                    <p className="text-xs text-zinc-600">Currently active on general shift operations.</p>
+                  )}
+                  {detailWorker.currentTaskNote && (
+                    <p className="text-xs italic text-zinc-600 mt-1">
+                      Note: &ldquo;{detailWorker.currentTaskNote}&rdquo;
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Quick Action Toolbar */}
+              <div className="flex flex-wrap gap-2 mb-5 p-3 rounded-xl bg-zinc-50/80 border border-zinc-200/80">
+                <a
+                  href={`mailto:${detailWorker.email}`}
+                  className="px-3 py-1.5 rounded-lg bg-white border border-zinc-200 text-zinc-800 text-xs font-semibold hover:bg-zinc-50 inline-flex items-center gap-1.5"
+                >
+                  📧 Email Operator
+                </a>
+                {detailWorker.phone && (
+                  <>
+                    <a
+                      href={`tel:${detailWorker.phone}`}
+                      className="px-3 py-1.5 rounded-lg bg-white border border-zinc-200 text-zinc-800 text-xs font-semibold hover:bg-zinc-50 inline-flex items-center gap-1.5"
+                    >
+                      📞 Call Phone
+                    </a>
+                    {cleanPhoneForWhatsApp(detailWorker.phone) && (
                       <a
-                        href={detailWorker.portfolioLink.startsWith("http") ? detailWorker.portfolioLink : `https://${detailWorker.portfolioLink}`}
+                        href={`https://wa.me/${cleanPhoneForWhatsApp(detailWorker.phone)}`}
                         target="_blank"
                         rel="noreferrer"
-                        className="text-red-600 underline font-bold break-all"
+                        className="px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-semibold hover:bg-emerald-100 inline-flex items-center gap-1.5"
                       >
-                        {detailWorker.portfolioLink}
+                        💬 WhatsApp
                       </a>
-                    ) : (
-                      <span className="text-zinc-400">Not provided</span>
                     )}
-                  </p>
-                </div>
-
-                {/* Skills Chips */}
-                <div className="mt-3 pt-3 border-t border-zinc-200">
-                  <span className="text-zinc-500 font-medium block mb-1.5">SKILLS STACK:</span>
-                  {detailWorker.skills && detailWorker.skills.length > 0 ? (
-                    <div className="flex flex-wrap gap-1.5">
-                      {detailWorker.skills.map((s, idx) => (
-                        <span key={idx} className="px-2 py-0.5 bg-zinc-100 border border-zinc-300 text-zinc-900 font-bold">
-                          {s}
-                        </span>
-                      ))}
-                    </div>
-                  ) : (
-                    <span className="text-zinc-400">No skills tags specified</span>
-                  )}
-                </div>
-              </div>
-
-              {/* Section 3: Compensation & Policy */}
-              <div className="border border-zinc-300 p-4 bg-white">
-                <h4 className="font-bold text-xs uppercase text-zinc-950 border-b border-zinc-200 pb-1 mb-3 flex items-center gap-2">
-                  <span>💰</span> Compensation &amp; Rates
-                </h4>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <p>
-                    <span className="text-zinc-500 font-medium">EXPECTED SALARY:</span><br />
-                    <strong className="text-zinc-950 text-sm">
-                      {detailWorker.expectedSalary ? `EGP ${detailWorker.expectedSalary}` : "Unset"}
-                    </strong>
-                  </p>
-                  <p>
-                    <span className="text-zinc-500 font-medium">HOURLY RATE:</span><br />
-                    <strong className="text-zinc-950 text-sm">
-                      {detailWorker.hourlyRate ? `EGP ${detailWorker.hourlyRate}/h` : "EGP 31.25/h"}
-                    </strong>
-                  </p>
-                  <p>
-                    <span className="text-zinc-500 font-medium">TARGET HOURS:</span><br />
-                    <strong className="text-zinc-950 text-sm">
-                      {detailWorker.expectedHours ? `${detailWorker.expectedHours}h / day` : "8h / day"}
-                    </strong>
-                  </p>
-                </div>
-              </div>
-
-              {/* Section 3b: HR-POL-2026 Leave Profile */}
-              <WorkerLeaveProfileCard worker={detailWorker} />
-
-              {/* Section 4: Assigned Tasks & Directives */}
-              <div className="border border-zinc-300 p-4 bg-white">
-                <div className="flex items-center justify-between border-b border-zinc-200 pb-2 mb-3">
-                  <h4 className="font-bold text-xs uppercase text-zinc-950 flex items-center gap-2">
-                    <span>📋</span> Assigned Tasks &amp; Directives ({workerAssignedTasks.length})
-                  </h4>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const target = detailWorker;
-                      openAssignModal(target);
-                    }}
-                    className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white font-mono text-[10px] font-bold uppercase rounded cursor-pointer"
+                  </>
+                )}
+                {detailWorker.portfolioLink && (
+                  <a
+                    href={detailWorker.portfolioLink.startsWith("http") ? detailWorker.portfolioLink : `https://${detailWorker.portfolioLink}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-3 py-1.5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs font-semibold hover:bg-red-100 inline-flex items-center gap-1.5"
                   >
-                    + Assign New Task
-                  </button>
-                </div>
-
-                {workerAssignedTasks.length === 0 ? (
-                  <p className="text-zinc-500 py-3 text-center italic text-xs">
-                    No tasks currently assigned to this operator.
-                  </p>
-                ) : (
-                  <div className="space-y-2.5 max-h-60 overflow-y-auto pr-1">
-                    {workerAssignedTasks.map((t) => (
-                      <div
-                        key={t.id}
-                        className="p-3 border border-zinc-300 bg-zinc-50 rounded flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                      >
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-bold text-zinc-950 text-xs">{t.title}</span>
-                            <span
-                              className={`px-2 py-0.5 text-[9px] font-bold uppercase rounded border ${
-                                t.status === "completed"
-                                  ? "bg-emerald-50 text-emerald-800 border-emerald-300"
-                                  : t.status === "pending-approval"
-                                  ? "bg-amber-50 text-amber-800 border-amber-300"
-                                  : t.status === "in-progress"
-                                  ? "bg-blue-50 text-blue-800 border-blue-300"
-                                  : "bg-zinc-100 text-zinc-800 border-zinc-300"
-                              }`}
-                            >
-                              {t.status.replace(/-/g, " ")}
-                            </span>
-                          </div>
-                          <p className="text-[10px] text-zinc-500">
-                            Project: <strong className="text-zinc-700">{t.projectName || "Direct Operation"}</strong> ·
-                            Priority: <strong className="uppercase text-zinc-700">{t.priority || "medium"}</strong> ·
-                            Due: <strong className="text-zinc-700">{formatTaskDueDate(t.dueDate)}</strong>
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => openEditWorkerTask(t)}
-                          className="px-3 py-1.5 bg-zinc-900 hover:bg-black text-white text-[10px] font-bold uppercase tracking-wider border border-zinc-900 shadow-[1px_1px_0px_0px_#09090b] cursor-pointer self-start sm:self-auto shrink-0 flex items-center gap-1"
-                        >
-                          ✏️ Edit Directive
-                        </button>
-                      </div>
-                    ))}
-                  </div>
+                    🔗 Portfolio ↗
+                  </a>
                 )}
               </div>
 
-              {/* Section 5: System Telemetry & Timestamps */}
-              <div className="border border-zinc-300 p-4 bg-zinc-50">
-                <h4 className="font-bold text-xs uppercase text-zinc-950 border-b border-zinc-200 pb-1 mb-3 flex items-center gap-2">
-                  <span>⏱️</span> System Telemetry &amp; Logs
-                </h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <p>
-                    <span className="text-zinc-500 font-medium">REGISTRATION TIMESTAMP:</span><br />
-                    <strong className="text-zinc-900">{formatTimestamp(detailWorker.createdAt)}</strong>
-                  </p>
-                  <p>
-                    <span className="text-zinc-500 font-medium">LAST CLOCK-IN / LOGIN:</span><br />
-                    <strong className="text-zinc-900">{formatTimestamp(detailWorker.lastLogin)}</strong>
-                  </p>
-                  <p>
-                    <span className="text-zinc-500 font-medium">LAST CLOCK-OUT:</span><br />
-                    <strong className="text-zinc-900">{formatTimestamp(detailWorker.lastLogout)}</strong>
-                  </p>
-                  <p>
-                    <span className="text-zinc-500 font-medium">MOBILE DEVICE UPLINK:</span><br />
-                    <strong className={detailWorker.expoPushToken ? "text-emerald-700" : "text-zinc-500"}>
-                      {detailWorker.expoPushToken ? "Active (Push Notifications Linked) 📱" : "No Mobile Device Token"}
-                    </strong>
-                  </p>
+              {/* Structured Sections */}
+              <div className="space-y-4 text-xs">
+                {/* Section 1: Identification & Contact */}
+                <div className="border border-zinc-200/80 rounded-xl p-4 bg-white">
+                  <h4 className="font-bold text-xs text-zinc-950 border-b border-zinc-100 pb-2 mb-3 flex items-center gap-2">
+                    <span>📋</span> Personal &amp; Contact Details
+                  </h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <p>
+                      <span className="text-zinc-400 font-semibold text-[11px] block">Full Name</span>
+                      <strong className="text-zinc-950">{detailWorker.firstName} {detailWorker.lastName}</strong>
+                    </p>
+                    <p>
+                      <span className="text-zinc-400 font-semibold text-[11px] block">Email Address</span>
+                      <strong className="text-zinc-950 break-all">{detailWorker.email}</strong>
+                    </p>
+                    <p>
+                      <span className="text-zinc-400 font-semibold text-[11px] block">Telephone</span>
+                      <strong className="font-code text-zinc-950">{detailWorker.phone || "Unset"}</strong>
+                    </p>
+                    <p>
+                      <span className="text-zinc-400 font-semibold text-[11px] block">Location</span>
+                      <strong className="text-zinc-950">
+                        {detailWorker.government || detailWorker.city ? `${detailWorker.government || ""} ${detailWorker.city ? `(${detailWorker.city})` : ""}` : "Unset"}
+                      </strong>
+                    </p>
+                    <p className="md:col-span-2">
+                      <span className="text-zinc-400 font-semibold text-[11px] block">Emergency Contact</span>
+                      <strong className="text-zinc-950">
+                        {typeof detailWorker.emergencyContact === "string"
+                          ? detailWorker.emergencyContact
+                          : detailWorker.emergencyContact
+                            ? JSON.stringify(detailWorker.emergencyContact)
+                            : "None provided"}
+                      </strong>
+                    </p>
+                  </div>
+                </div>
+
+                {/* Section 2: Professional Profile & Skills */}
+                <div className="border border-zinc-200/80 rounded-xl p-4 bg-white">
+                  <h4 className="font-bold text-xs text-zinc-950 border-b border-zinc-100 pb-2 mb-3 flex items-center gap-2">
+                    <span>💼</span> Professional Profile &amp; Capacity
+                  </h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <p>
+                      <span className="text-zinc-400 font-semibold text-[11px] block">Primary Role</span>
+                      <strong className="text-red-600 font-semibold">{formatRole(detailWorker.role)}</strong>
+                    </p>
+                    <p>
+                      <span className="text-zinc-400 font-semibold text-[11px] block">Department</span>
+                      <strong className="text-zinc-950">{formatDepartment(detailWorker.department)}</strong>
+                    </p>
+                    <p>
+                      <span className="text-zinc-400 font-semibold text-[11px] block">Employment Type</span>
+                      <strong className="text-zinc-950">{formatEmploymentType(detailWorker.employmentType)}</strong>
+                    </p>
+                    <p>
+                      <span className="text-zinc-400 font-semibold text-[11px] block">Experience</span>
+                      <strong className="text-zinc-950">{detailWorker.experience || "Not specified"}</strong>
+                    </p>
+                    <p>
+                      <span className="text-zinc-400 font-semibold text-[11px] block">Availability / Notice</span>
+                      <strong className="text-zinc-950">{detailWorker.netspend || "Immediate"}</strong>
+                    </p>
+                    <p>
+                      <span className="text-zinc-400 font-semibold text-[11px] block">Portfolio URL</span>
+                      {detailWorker.portfolioLink ? (
+                        <a
+                          href={detailWorker.portfolioLink.startsWith("http") ? detailWorker.portfolioLink : `https://${detailWorker.portfolioLink}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-red-600 hover:underline font-semibold break-all"
+                        >
+                          {detailWorker.portfolioLink}
+                        </a>
+                      ) : (
+                        <span className="text-zinc-400">Not provided</span>
+                      )}
+                    </p>
+                  </div>
+
+                  {/* Skills Chips */}
+                  <div className="mt-3 pt-3 border-t border-zinc-100">
+                    <span className="text-zinc-400 font-semibold text-[11px] block mb-1.5">Skills Stack</span>
+                    {detailWorker.skills && detailWorker.skills.length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {detailWorker.skills.map((s, idx) => (
+                          <span key={idx} className="px-2.5 py-0.5 rounded-full bg-zinc-100 border border-zinc-200 text-zinc-800 font-medium">
+                            {s}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-zinc-400">No skills tags specified</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Section 3: Compensation & Policy */}
+                <div className="border border-zinc-200/80 rounded-xl p-4 bg-white">
+                  <h4 className="font-bold text-xs text-zinc-950 border-b border-zinc-100 pb-2 mb-3 flex items-center gap-2">
+                    <span>💰</span> Compensation &amp; Rates
+                  </h4>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <p>
+                      <span className="text-zinc-400 font-semibold text-[11px] block">Expected Salary</span>
+                      <strong className="font-code text-zinc-950 text-sm">
+                        {detailWorker.expectedSalary ? `EGP ${detailWorker.expectedSalary}` : "Unset"}
+                      </strong>
+                    </p>
+                    <p>
+                      <span className="text-zinc-400 font-semibold text-[11px] block">Hourly Rate</span>
+                      <strong className="font-code text-zinc-950 text-sm">
+                        {detailWorker.hourlyRate ? `EGP ${detailWorker.hourlyRate}/h` : "EGP 31.25/h"}
+                      </strong>
+                    </p>
+                    <p>
+                      <span className="text-zinc-400 font-semibold text-[11px] block">Target Hours</span>
+                      <strong className="font-code text-zinc-950 text-sm">
+                        {detailWorker.expectedHours ? `${detailWorker.expectedHours}h / day` : "8h / day"}
+                      </strong>
+                    </p>
+                  </div>
+                </div>
+
+                {/* Section 3b: HR-POL-2026 Leave Profile */}
+                <WorkerLeaveProfileCard worker={detailWorker} />
+
+                {/* Section 4: Assigned Tasks & Directives */}
+                <div className="border border-zinc-200/80 rounded-xl p-4 bg-white">
+                  <div className="flex items-center justify-between border-b border-zinc-100 pb-2.5 mb-3">
+                    <h4 className="font-bold text-xs text-zinc-950 flex items-center gap-2">
+                      <span>📋</span> Assigned Tasks &amp; Directives ({workerAssignedTasks.length})
+                    </h4>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const target = detailWorker;
+                        openAssignModal(target);
+                      }}
+                      className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-lg cursor-pointer"
+                    >
+                      + Assign New Task
+                    </button>
+                  </div>
+
+                  {workerAssignedTasks.length === 0 ? (
+                    <p className="text-zinc-400 py-4 text-center text-xs">
+                      No tasks currently assigned to this operator.
+                    </p>
+                  ) : (
+                    <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                      {workerAssignedTasks.map((t) => (
+                        <div
+                          key={t.id}
+                          className="p-3 border border-zinc-200/80 bg-zinc-50/70 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                        >
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-semibold text-zinc-950 text-xs">{t.title}</span>
+                              <span
+                                className={`px-2 py-0.5 text-[10px] font-semibold uppercase rounded-full border ${
+                                  t.status === "completed"
+                                    ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                    : t.status === "pending-approval"
+                                    ? "bg-amber-50 text-amber-800 border-amber-200"
+                                    : t.status === "in-progress"
+                                    ? "bg-blue-50 text-blue-700 border-blue-200"
+                                    : "bg-zinc-100 text-zinc-700 border-zinc-200"
+                                }`}
+                              >
+                                {t.status.replace(/-/g, " ")}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-zinc-500">
+                              Project: <strong className="text-zinc-700">{t.projectName || "Direct Operation"}</strong> ·
+                              Priority: <strong className="uppercase text-zinc-700">{t.priority || "medium"}</strong> ·
+                              Due: <strong className="font-code text-zinc-700">{formatTaskDueDate(t.dueDate)}</strong>
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => openEditWorkerTask(t)}
+                            className="brutal-btn py-1.5 px-3 shrink-0"
+                          >
+                            ✏️ Edit Directive
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Section 5: System Telemetry & Timestamps */}
+                <div className="border border-zinc-200/80 rounded-xl p-4 bg-zinc-50/60">
+                  <h4 className="font-bold text-xs text-zinc-950 border-b border-zinc-100 pb-2 mb-3 flex items-center gap-2">
+                    <span>⏱️</span> System Telemetry &amp; Logs
+                  </h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <p>
+                      <span className="text-zinc-400 font-semibold text-[11px] block">Registration Timestamp</span>
+                      <strong className="font-code text-zinc-900">{formatTimestamp(detailWorker.createdAt)}</strong>
+                    </p>
+                    <p>
+                      <span className="text-zinc-400 font-semibold text-[11px] block">Last Clock-in / Login</span>
+                      <strong className="font-code text-zinc-900">{formatTimestamp(detailWorker.lastLogin)}</strong>
+                    </p>
+                    <p>
+                      <span className="text-zinc-400 font-semibold text-[11px] block">Last Clock-out</span>
+                      <strong className="font-code text-zinc-900">{formatTimestamp(detailWorker.lastLogout)}</strong>
+                    </p>
+                    <p>
+                      <span className="text-zinc-400 font-semibold text-[11px] block">Mobile Device Uplink</span>
+                      <strong className={detailWorker.expoPushToken ? "text-emerald-700" : "text-zinc-500"}>
+                        {detailWorker.expoPushToken ? "Active (Push Notifications Linked) 📱" : "No Mobile Device Token"}
+                      </strong>
+                    </p>
+                  </div>
                 </div>
               </div>
-            </div>
 
-            {/* Modal Actions */}
-            <div className="flex flex-wrap gap-3 justify-end pt-5 border-t-2 border-zinc-900 mt-5">
-              <button
-                type="button"
-                onClick={() => {
-                  const target = detailWorker;
-                  setDetailWorker(null);
-                  openAssignModal(target);
-                }}
-                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-mono text-xs font-bold uppercase tracking-wider border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] cursor-pointer"
-              >
-                Assign Task
-              </button>
-              <button
-                type="button"
-                onClick={() => setDetailWorker(null)}
-                className="px-4 py-2 border-2 border-zinc-900 bg-white hover:bg-zinc-100 text-zinc-950 font-mono text-xs font-bold uppercase cursor-pointer"
-              >
-                Dismiss Manifest
-              </button>
+              {/* Modal Actions */}
+              <div className="flex flex-wrap gap-2.5 justify-end pt-4 border-t border-zinc-100 mt-5">
+                <button
+                  type="button"
+                  onClick={() => setDetailWorker(null)}
+                  className="brutal-btn-outline px-4 py-2"
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const target = detailWorker;
+                    setDetailWorker(null);
+                    openAssignModal(target);
+                  }}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-xl shadow-2xs cursor-pointer"
+                >
+                  Assign Task
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      </ModalPortal>
-    )}
+        </ModalPortal>
+      )}
 
       {/* Assign Task Modal */}
       {assignModalWorker && (
         <ModalPortal onClose={() => setAssignModalWorker(null)}>
           <div
-            className="fixed inset-0 z-[120] bg-zinc-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in"
+            className="fixed inset-0 z-[120] bg-zinc-950/55 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in"
             onClick={() => setAssignModalWorker(null)}
           >
             <div
-              className="border-2 border-zinc-900 bg-white dark:bg-zinc-900 w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 shadow-2xl text-zinc-950 dark:text-zinc-100 font-mono animate-scale-in"
+              className="ui-card rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 shadow-2xl text-zinc-950 animate-scale-in"
               onClick={(e) => e.stopPropagation()}
             >
-            <div className="flex items-center justify-between pb-3 border-b-2 border-zinc-900 mb-4">
-              <div>
-                <h3 className="text-xl font-black font-heading text-red-600 uppercase tracking-wide">
-                  Dispatch Directive
-                </h3>
-                <p className="text-xs text-zinc-600 mt-0.5">
-                  Assigning to: <strong>{assignModalWorker.firstName} {assignModalWorker.lastName}</strong> ({formatRole(assignModalWorker.role)})
-                </p>
-              </div>
-              <button
-                onClick={() => setAssignModalWorker(null)}
-                className="text-2xl font-bold text-zinc-500 hover:text-red-600 cursor-pointer"
-              >
-                &times;
-              </button>
-            </div>
-
-            <form onSubmit={(e) => void handleAssignTask(e)} className="space-y-4 text-xs font-mono">
-              <div>
-                <label className="block font-bold uppercase tracking-wider text-zinc-700 mb-1">
-                  Operation Title *
-                </label>
-                <input
-                  required
-                  value={taskForm.title}
-                  onChange={(e) => setTaskForm({ ...taskForm, title: e.target.value })}
-                  placeholder="e.g. Campaign Graphics Production"
-                  className="w-full bg-white border-2 border-zinc-900 px-3 py-2 text-sm text-zinc-950 focus:outline-none focus:ring-2 focus:ring-red-600"
-                />
-              </div>
-
-              <div>
-                <label className="block font-bold uppercase tracking-wider text-zinc-700 mb-1">
-                  Directive Details *
-                </label>
-                <RichDescriptionEditor
-                  value={taskForm.description}
-                  onChange={(html) => setTaskForm({ ...taskForm, description: html })}
-                  placeholder="Provide detailed instructions, deliverables, and guidelines..."
-                  minHeight="100px"
-                />
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="flex items-center justify-between pb-3.5 border-b border-zinc-100 mb-4">
                 <div>
-                  <label className="block font-bold uppercase tracking-wider text-zinc-700 mb-1">
-                    Link to Project
-                  </label>
-                  <select
-                    value={taskForm.projectId}
-                    onChange={(e) => {
-                      const id = e.target.value;
-                      const p = projects.find((x) => x.id === id);
-                      setTaskForm({
-                        ...taskForm,
-                        projectId: id,
-                        projectName: p ? p.name : "",
-                      });
-                    }}
-                    className="w-full bg-white border-2 border-zinc-900 px-3 py-2 text-xs font-mono font-bold text-zinc-950 focus:outline-none focus:ring-2 focus:ring-red-600"
-                  >
-                    <option value="">No Project (Stand-alone)</option>
-                    {projects.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-red-600">
+                    Direct Assignment
+                  </p>
+                  <h3 className="text-base font-bold text-zinc-950 mt-0.5">
+                    Dispatch Directive
+                  </h3>
+                  <p className="text-xs text-zinc-500 mt-0.5">
+                    Assigning to: <strong>{assignModalWorker.firstName} {assignModalWorker.lastName}</strong> ({formatRole(assignModalWorker.role)})
+                  </p>
                 </div>
-
-                <div>
-                  <label className="block font-bold uppercase tracking-wider text-zinc-700 mb-1">
-                    Department
-                  </label>
-                  <select
-                    value={taskForm.department}
-                    onChange={(e) => setTaskForm({ ...taskForm, department: e.target.value })}
-                    className="w-full bg-white border-2 border-zinc-900 px-3 py-2 text-xs font-mono font-bold text-zinc-950 focus:outline-none focus:ring-2 focus:ring-red-600"
-                  >
-                    {DEPARTMENTS.map((d) => (
-                      <option key={d.value} value={d.value}>
-                        {d.label.toUpperCase()}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-bold uppercase tracking-wider text-zinc-700 mb-1">
-                    Priority Level
-                  </label>
-                  <select
-                    value={taskForm.priority}
-                    onChange={(e) => setTaskForm({ ...taskForm, priority: e.target.value })}
-                    className="w-full bg-white border-2 border-zinc-900 px-3 py-2 text-xs font-mono font-bold text-zinc-950 focus:outline-none focus:ring-2 focus:ring-red-600"
-                  >
-                    <option value="low">LOW</option>
-                    <option value="medium">MEDIUM</option>
-                    <option value="high">HIGH</option>
-                    <option value="urgent">CRITICAL (URGENT)</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block font-bold uppercase tracking-wider text-zinc-700 mb-1">
-                    Deadline (Due Date)
-                  </label>
-                  <input
-                    type="date"
-                    value={taskForm.dueDate}
-                    onChange={(e) => setTaskForm({ ...taskForm, dueDate: e.target.value })}
-                    className="w-full bg-white border-2 border-zinc-900 px-3 py-2 text-xs font-mono font-bold text-zinc-950 focus:outline-none focus:ring-2 focus:ring-red-600"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block font-bold uppercase tracking-wider text-zinc-700 mb-1">
-                  Custom Notification Uplink (Optional)
-                </label>
-                <textarea
-                  rows={2}
-                  value={taskForm.notificationMessage}
-                  onChange={(e) => setTaskForm({ ...taskForm, notificationMessage: e.target.value })}
-                  placeholder="Message sent as real-time push alert to operator's mobile..."
-                  className="w-full bg-white border-2 border-zinc-900 px-3 py-2 text-xs text-zinc-950 focus:outline-none focus:ring-2 focus:ring-red-600 resize-y"
-                />
-              </div>
-
-              <div className="flex gap-3 justify-end pt-3 border-t-2 border-zinc-900">
                 <button
                   type="button"
                   onClick={() => setAssignModalWorker(null)}
-                  className="px-4 py-2 border-2 border-zinc-900 bg-white hover:bg-zinc-100 text-zinc-950 font-mono text-xs font-bold cursor-pointer"
+                  aria-label="Close modal"
+                  className="w-7 h-7 rounded-lg bg-zinc-100 hover:bg-zinc-900 hover:text-white flex items-center justify-center text-sm font-bold cursor-pointer transition-colors"
                 >
-                  Abort
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 bg-red-600 hover:bg-red-700 text-white font-mono text-xs font-bold uppercase tracking-wider border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] cursor-pointer"
-                >
-                  Dispatch Directive
+                  &times;
                 </button>
               </div>
-            </form>
+
+              <form onSubmit={(e) => void handleAssignTask(e)} className="space-y-4 text-xs">
+                <div>
+                  <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                    Operation Title *
+                  </label>
+                  <input
+                    required
+                    value={taskForm.title}
+                    onChange={(e) => setTaskForm({ ...taskForm, title: e.target.value })}
+                    placeholder="e.g. Campaign Graphics Production"
+                    className="brutal-input text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                    Directive Details *
+                  </label>
+                  <RichDescriptionEditor
+                    value={taskForm.description}
+                    onChange={(html) => setTaskForm({ ...taskForm, description: html })}
+                    placeholder="Provide detailed instructions, deliverables, and guidelines..."
+                    minHeight="100px"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                      Link to Project
+                    </label>
+                    <select
+                      value={taskForm.projectId}
+                      onChange={(e) => {
+                        const id = e.target.value;
+                        const p = projects.find((x) => x.id === id);
+                        setTaskForm({
+                          ...taskForm,
+                          projectId: id,
+                          projectName: p ? p.name : "",
+                        });
+                      }}
+                      className="w-full bg-white border border-zinc-200 rounded-xl px-3 py-2 text-xs font-medium text-zinc-900"
+                    >
+                      <option value="">No Project (Stand-alone)</option>
+                      {projects.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                      Department
+                    </label>
+                    <select
+                      value={taskForm.department}
+                      onChange={(e) => setTaskForm({ ...taskForm, department: e.target.value })}
+                      className="w-full bg-white border border-zinc-200 rounded-xl px-3 py-2 text-xs font-medium text-zinc-900"
+                    >
+                      {DEPARTMENTS.map((d) => (
+                        <option key={d.value} value={d.value}>
+                          {d.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                      Priority Level
+                    </label>
+                    <select
+                      value={taskForm.priority}
+                      onChange={(e) => setTaskForm({ ...taskForm, priority: e.target.value })}
+                      className="w-full bg-white border border-zinc-200 rounded-xl px-3 py-2 text-xs font-medium text-zinc-900"
+                    >
+                      <option value="low">Low</option>
+                      <option value="medium">Medium</option>
+                      <option value="high">High</option>
+                      <option value="urgent">Critical (Urgent)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                      Deadline (Due Date)
+                    </label>
+                    <input
+                      type="date"
+                      value={taskForm.dueDate}
+                      onChange={(e) => setTaskForm({ ...taskForm, dueDate: e.target.value })}
+                      className="w-full bg-white border border-zinc-200 rounded-xl px-3 py-2 text-xs font-code text-zinc-900"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                    Custom Notification Uplink (Optional)
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={taskForm.notificationMessage}
+                    onChange={(e) => setTaskForm({ ...taskForm, notificationMessage: e.target.value })}
+                    placeholder="Message sent as real-time push alert to operator's mobile..."
+                    className="brutal-input text-xs resize-y"
+                  />
+                </div>
+
+                <div className="flex gap-2.5 justify-end pt-3 border-t border-zinc-100">
+                  <button
+                    type="button"
+                    onClick={() => setAssignModalWorker(null)}
+                    className="brutal-btn-outline px-4 py-2"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-xl shadow-2xs cursor-pointer"
+                  >
+                    Dispatch Directive
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
-        </div>
-      </ModalPortal>
-    )}
+        </ModalPortal>
+      )}
 
       {/* Edit Directive / Task Modal */}
       {editingTask && (
         <ModalPortal onClose={() => setEditingTask(null)}>
           <div
-            className="fixed inset-0 z-[120] bg-zinc-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in"
+            className="fixed inset-0 z-[120] bg-zinc-950/55 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in"
             onClick={() => setEditingTask(null)}
           >
             <div
-              className="border-2 border-zinc-900 bg-white dark:bg-zinc-900 w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 shadow-2xl text-zinc-950 dark:text-zinc-100 font-mono animate-scale-in"
+              className="ui-card rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 shadow-2xl text-zinc-950 animate-scale-in"
               onClick={(e) => e.stopPropagation()}
             >
-            <div className="flex items-center justify-between pb-3 border-b-2 border-zinc-900 mb-4">
-              <div>
-                <h3 className="text-xl font-black font-heading text-red-600 uppercase tracking-wide">
-                  Edit Task Directive
-                </h3>
-                <p className="text-[10px] text-zinc-500 mt-0.5">TASK ID: {editingTask.id}</p>
-              </div>
-              <button
-                onClick={() => setEditingTask(null)}
-                className="text-2xl font-bold text-zinc-500 hover:text-red-600 cursor-pointer"
-              >
-                &times;
-              </button>
-            </div>
-
-            <form onSubmit={(e) => void submitEditWorkerTask(e)} className="space-y-4 text-xs font-mono">
-              <div>
-                <label className="block font-bold uppercase tracking-wider text-zinc-700 mb-1">
-                  Operation Title *
-                </label>
-                <input
-                  required
-                  value={editTaskForm.title}
-                  onChange={(e) => setEditTaskForm({ ...editTaskForm, title: e.target.value })}
-                  placeholder="e.g. Campaign Graphics Production"
-                  className="w-full bg-white border-2 border-zinc-900 px-3 py-2 text-sm text-zinc-950 focus:outline-none focus:ring-2 focus:ring-red-600"
-                />
-              </div>
-
-              <div>
-                <label className="block font-bold uppercase tracking-wider text-zinc-700 mb-1">
-                  Directive Details *
-                </label>
-                <RichDescriptionEditor
-                  value={editTaskForm.description}
-                  onChange={(html) => setEditTaskForm({ ...editTaskForm, description: html })}
-                  placeholder="Provide detailed instructions, deliverables, and guidelines..."
-                  minHeight="100px"
-                />
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="flex items-center justify-between pb-3.5 border-b border-zinc-100 mb-4">
                 <div>
-                  <label className="block font-bold uppercase tracking-wider text-zinc-700 mb-1">
-                    Link to Project
-                  </label>
-                  <select
-                    value={editTaskForm.projectId}
-                    onChange={(e) => {
-                      const id = e.target.value;
-                      const p = projects.find((x) => x.id === id);
-                      setEditTaskForm({
-                        ...editTaskForm,
-                        projectId: id,
-                        projectName: p ? p.name : "",
-                      });
-                    }}
-                    className="w-full bg-white border-2 border-zinc-900 px-3 py-2 text-xs font-mono font-bold text-zinc-950 focus:outline-none focus:ring-2 focus:ring-red-600"
-                  >
-                    <option value="">No Project (Stand-alone)</option>
-                    {projects.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-red-600">
+                    Directive Configuration
+                  </p>
+                  <h3 className="text-base font-bold text-zinc-950 mt-0.5">
+                    Edit Task Directive
+                  </h3>
+                  <p className="font-code text-[10px] text-zinc-400 mt-0.5">ID: {editingTask.id}</p>
                 </div>
-
-                <div>
-                  <label className="block font-bold uppercase tracking-wider text-zinc-700 mb-1">
-                    Department
-                  </label>
-                  <select
-                    value={editTaskForm.department}
-                    onChange={(e) => setEditTaskForm({ ...editTaskForm, department: e.target.value })}
-                    className="w-full bg-white border-2 border-zinc-900 px-3 py-2 text-xs font-mono font-bold text-zinc-950 focus:outline-none focus:ring-2 focus:ring-red-600"
-                  >
-                    {DEPARTMENTS.map((d) => (
-                      <option key={d.value} value={d.value}>
-                        {d.label.toUpperCase()}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="block font-bold uppercase tracking-wider text-zinc-700 mb-1">
-                  Assignee(s) ({editTaskForm.assignedWorkerIds.length} Selected)
-                </label>
-                <div className="max-h-32 overflow-y-auto border-2 border-zinc-900 p-2 bg-zinc-50 space-y-1">
-                  {workers
-                    .filter((w) => w.status === "approved")
-                    .map((w) => {
-                      const isAssigned = editTaskForm.assignedWorkerIds.includes(w.id);
-                      return (
-                        <label
-                          key={w.id}
-                          className={`flex items-center justify-between gap-2 p-1 rounded cursor-pointer ${
-                            isAssigned ? "bg-red-50 font-bold text-red-950" : "text-zinc-900 hover:bg-zinc-100"
-                          }`}
-                        >
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="checkbox"
-                              checked={isAssigned}
-                              onChange={() => {
-                                const set = new Set(editTaskForm.assignedWorkerIds);
-                                if (set.has(w.id)) set.delete(w.id);
-                                else set.add(w.id);
-                                setEditTaskForm({ ...editTaskForm, assignedWorkerIds: [...set] });
-                              }}
-                              className="accent-red-600"
-                            />
-                            <span>
-                              {w.firstName} {w.lastName}
-                            </span>
-                          </div>
-                          <span className="text-[10px] text-zinc-500 uppercase">({formatRole(w.role)})</span>
-                        </label>
-                      );
-                    })}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="block font-bold uppercase tracking-wider text-zinc-700 mb-1">
-                    Status
-                  </label>
-                  <select
-                    value={editTaskForm.status}
-                    onChange={(e) => setEditTaskForm({ ...editTaskForm, status: e.target.value })}
-                    className="w-full bg-white border-2 border-zinc-900 px-3 py-2 text-xs font-mono font-bold text-zinc-950 focus:outline-none focus:ring-2 focus:ring-red-600"
-                  >
-                    <option value="assigned">ASSIGNED</option>
-                    <option value="in-progress">IN PROGRESS</option>
-                    <option value="pending-approval">PENDING APPROVAL</option>
-                    <option value="completed">COMPLETED</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block font-bold uppercase tracking-wider text-zinc-700 mb-1">
-                    Priority Level
-                  </label>
-                  <select
-                    value={editTaskForm.priority}
-                    onChange={(e) => setEditTaskForm({ ...editTaskForm, priority: e.target.value })}
-                    className="w-full bg-white border-2 border-zinc-900 px-3 py-2 text-xs font-mono font-bold text-zinc-950 focus:outline-none focus:ring-2 focus:ring-red-600"
-                  >
-                    <option value="low">LOW</option>
-                    <option value="medium">MEDIUM</option>
-                    <option value="high">HIGH</option>
-                    <option value="urgent">CRITICAL (URGENT)</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block font-bold uppercase tracking-wider text-zinc-700 mb-1">
-                    Deadline (Due Date)
-                  </label>
-                  <input
-                    type="date"
-                    value={editTaskForm.dueDate}
-                    onChange={(e) => setEditTaskForm({ ...editTaskForm, dueDate: e.target.value })}
-                    className="w-full bg-white border-2 border-zinc-900 px-3 py-2 text-xs font-mono font-bold text-zinc-950 focus:outline-none focus:ring-2 focus:ring-red-600"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block font-bold uppercase tracking-wider text-zinc-700 mb-1">
-                  Photo / Proof URL (Optional)
-                </label>
-                <input
-                  value={editTaskForm.photo}
-                  onChange={(e) => setEditTaskForm({ ...editTaskForm, photo: e.target.value })}
-                  placeholder="https://..."
-                  className="w-full bg-white border-2 border-zinc-900 px-3 py-2 text-xs text-zinc-950 focus:outline-none focus:ring-2 focus:ring-red-600"
-                />
-              </div>
-
-              <div>
-                <label className="block font-bold uppercase tracking-wider text-zinc-700 mb-1">
-                  Custom Push Notification Alert (Optional)
-                </label>
-                <textarea
-                  rows={2}
-                  value={editTaskForm.notificationMessage}
-                  onChange={(e) => setEditTaskForm({ ...editTaskForm, notificationMessage: e.target.value })}
-                  placeholder="Message sent as real-time push alert to operator's mobile..."
-                  className="w-full bg-white border-2 border-zinc-900 px-3 py-2 text-xs text-zinc-950 focus:outline-none focus:ring-2 focus:ring-red-600 resize-y"
-                />
-              </div>
-
-              <div className="flex gap-3 justify-end pt-3 border-t-2 border-zinc-900">
                 <button
                   type="button"
                   onClick={() => setEditingTask(null)}
-                  disabled={savingTask}
-                  className="px-4 py-2 border-2 border-zinc-900 bg-white hover:bg-zinc-100 text-zinc-950 font-mono text-xs font-bold cursor-pointer"
+                  aria-label="Close modal"
+                  className="w-7 h-7 rounded-lg bg-zinc-100 hover:bg-zinc-900 hover:text-white flex items-center justify-center text-sm font-bold cursor-pointer transition-colors"
                 >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={savingTask}
-                  className="px-5 py-2 bg-red-600 hover:bg-red-700 text-white font-mono text-xs font-bold uppercase tracking-wider border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] cursor-pointer disabled:opacity-50"
-                >
-                  {savingTask ? "Saving Directive..." : "Save Directive"}
+                  &times;
                 </button>
               </div>
-            </form>
+
+              <form onSubmit={(e) => void submitEditWorkerTask(e)} className="space-y-4 text-xs">
+                <div>
+                  <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                    Operation Title *
+                  </label>
+                  <input
+                    required
+                    value={editTaskForm.title}
+                    onChange={(e) => setEditTaskForm({ ...editTaskForm, title: e.target.value })}
+                    placeholder="e.g. Campaign Graphics Production"
+                    className="brutal-input text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                    Directive Details *
+                  </label>
+                  <RichDescriptionEditor
+                    value={editTaskForm.description}
+                    onChange={(html) => setEditTaskForm({ ...editTaskForm, description: html })}
+                    placeholder="Provide detailed instructions, deliverables, and guidelines..."
+                    minHeight="100px"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                      Link to Project
+                    </label>
+                    <select
+                      value={editTaskForm.projectId}
+                      onChange={(e) => {
+                        const id = e.target.value;
+                        const p = projects.find((x) => x.id === id);
+                        setEditTaskForm({
+                          ...editTaskForm,
+                          projectId: id,
+                          projectName: p ? p.name : "",
+                        });
+                      }}
+                      className="w-full bg-white border border-zinc-200 rounded-xl px-3 py-2 text-xs font-medium text-zinc-900"
+                    >
+                      <option value="">No Project (Stand-alone)</option>
+                      {projects.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                      Department
+                    </label>
+                    <select
+                      value={editTaskForm.department}
+                      onChange={(e) => setEditTaskForm({ ...editTaskForm, department: e.target.value })}
+                      className="w-full bg-white border border-zinc-200 rounded-xl px-3 py-2 text-xs font-medium text-zinc-900"
+                    >
+                      {DEPARTMENTS.map((d) => (
+                        <option key={d.value} value={d.value}>
+                          {d.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                    Assignee(s) ({editTaskForm.assignedWorkerIds.length} Selected)
+                  </label>
+                  <div className="max-h-32 overflow-y-auto border border-zinc-200 rounded-xl p-2 bg-zinc-50/70 space-y-1">
+                    {workers
+                      .filter((w) => w.status === "approved")
+                      .map((w) => {
+                        const isAssigned = editTaskForm.assignedWorkerIds.includes(w.id);
+                        return (
+                          <label
+                            key={w.id}
+                            className={`flex items-center justify-between gap-2 p-1.5 rounded-lg cursor-pointer ${
+                              isAssigned ? "bg-red-50 font-semibold text-red-950" : "text-zinc-900 hover:bg-zinc-100"
+                            }`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={isAssigned}
+                                onChange={() => {
+                                  const set = new Set(editTaskForm.assignedWorkerIds);
+                                  if (set.has(w.id)) set.delete(w.id);
+                                  else set.add(w.id);
+                                  setEditTaskForm({ ...editTaskForm, assignedWorkerIds: [...set] });
+                                }}
+                                className="accent-red-600 rounded"
+                              />
+                              <span>
+                                {w.firstName} {w.lastName}
+                              </span>
+                            </div>
+                            <span className="text-[10px] text-zinc-500">({formatRole(w.role)})</span>
+                          </label>
+                        );
+                      })}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                      Status
+                    </label>
+                    <select
+                      value={editTaskForm.status}
+                      onChange={(e) => setEditTaskForm({ ...editTaskForm, status: e.target.value })}
+                      className="w-full bg-white border border-zinc-200 rounded-xl px-3 py-2 text-xs font-medium text-zinc-900"
+                    >
+                      <option value="assigned">Assigned</option>
+                      <option value="in-progress">In Progress</option>
+                      <option value="pending-approval">Pending Approval</option>
+                      <option value="completed">Completed</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                      Priority Level
+                    </label>
+                    <select
+                      value={editTaskForm.priority}
+                      onChange={(e) => setEditTaskForm({ ...editTaskForm, priority: e.target.value })}
+                      className="w-full bg-white border border-zinc-200 rounded-xl px-3 py-2 text-xs font-medium text-zinc-900"
+                    >
+                      <option value="low">Low</option>
+                      <option value="medium">Medium</option>
+                      <option value="high">High</option>
+                      <option value="urgent">Critical (Urgent)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                      Deadline (Due Date)
+                    </label>
+                    <input
+                      type="date"
+                      value={editTaskForm.dueDate}
+                      onChange={(e) => setEditTaskForm({ ...editTaskForm, dueDate: e.target.value })}
+                      className="w-full bg-white border border-zinc-200 rounded-xl px-3 py-2 text-xs font-code text-zinc-900"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                    Photo / Proof URL (Optional)
+                  </label>
+                  <input
+                    value={editTaskForm.photo}
+                    onChange={(e) => setEditTaskForm({ ...editTaskForm, photo: e.target.value })}
+                    placeholder="https://..."
+                    className="brutal-input text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                    Custom Push Notification Alert (Optional)
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={editTaskForm.notificationMessage}
+                    onChange={(e) => setEditTaskForm({ ...editTaskForm, notificationMessage: e.target.value })}
+                    placeholder="Message sent as real-time push alert to operator's mobile..."
+                    className="brutal-input text-xs resize-y"
+                  />
+                </div>
+
+                <div className="flex gap-2.5 justify-end pt-3 border-t border-zinc-100">
+                  <button
+                    type="button"
+                    onClick={() => setEditingTask(null)}
+                    disabled={savingTask}
+                    className="brutal-btn-outline px-4 py-2"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={savingTask}
+                    className="px-5 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-xl shadow-2xs cursor-pointer disabled:opacity-50"
+                  >
+                    {savingTask ? "Saving Directive..." : "Save Directive"}
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
-        </div>
-      </ModalPortal>
-    )}
+        </ModalPortal>
+      )}
 
       {/* Company Joining Date & Onboarding Modal (for existing & newly registered workers) */}
       {onboardWorker && (
         <ModalPortal onClose={() => setOnboardWorker(null)}>
           <div
-            className="fixed inset-0 z-[120] bg-zinc-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in"
+            className="fixed inset-0 z-[120] bg-zinc-950/55 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in"
             onClick={() => setOnboardWorker(null)}
           >
             <div
               dir={dir}
-              className="border-2 border-zinc-900 bg-white dark:bg-zinc-900 w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 shadow-2xl text-zinc-950 dark:text-zinc-100 font-mono animate-scale-in space-y-4"
+              className="ui-card rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 shadow-2xl text-zinc-950 animate-scale-in space-y-4"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="flex items-start justify-between pb-3 border-b-2 border-zinc-900">
+              <div className="flex items-start justify-between pb-3.5 border-b border-zinc-100">
                 <div>
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-red-600">
-                    {t("// إعداد تاريخ التعيين والراتب ورصيد الإجازات", "// WORKER ONBOARDING & TENURE CONTROL")}
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-red-600">
+                    {t("إعداد تاريخ التعيين والراتب ورصيد الإجازات", "Worker Onboarding & Tenure Control")}
                   </span>
-                  <h3 className="text-xl font-black font-heading text-zinc-950 dark:text-white uppercase">
+                  <h3 className="text-lg font-bold text-zinc-950 mt-0.5">
                     {onboardWorker.firstName} {onboardWorker.lastName}
                   </h3>
                   <p className="text-xs text-zinc-500">
@@ -2003,7 +2116,8 @@ export default function AdminWorkersPage() {
                 <button
                   type="button"
                   onClick={() => setOnboardWorker(null)}
-                  className="text-2xl font-bold text-zinc-500 hover:text-red-600 cursor-pointer"
+                  aria-label="Close modal"
+                  className="w-7 h-7 rounded-lg bg-zinc-100 hover:bg-zinc-900 hover:text-white flex items-center justify-center text-sm font-bold cursor-pointer transition-colors"
                 >
                   &times;
                 </button>
@@ -2016,7 +2130,7 @@ export default function AdminWorkersPage() {
                 }}
               />
 
-              <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t-2 border-zinc-900">
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-zinc-100">
                 <p className="text-[11px] text-zinc-500">
                   {t(
                     "نصيحة: اضغط «حفظ بيانات التعيين والراتب» بالأعلى بعد إدخال التواريخ.",
@@ -2032,7 +2146,7 @@ export default function AdminWorkersPage() {
                         await approveWorker(onboardWorker.id);
                         setOnboardWorker(null);
                       }}
-                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-mono text-xs font-bold uppercase border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] cursor-pointer"
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl shadow-2xs cursor-pointer"
                     >
                       ✓ {t("اعتماد حساب الموظف", "Approve Worker Account")}
                     </button>
@@ -2040,7 +2154,7 @@ export default function AdminWorkersPage() {
                   <button
                     type="button"
                     onClick={() => setOnboardWorker(null)}
-                    className="px-4 py-2 border-2 border-zinc-900 bg-white dark:bg-zinc-800 hover:bg-zinc-100 text-zinc-950 dark:text-white font-mono text-xs font-bold uppercase cursor-pointer"
+                    className="brutal-btn-outline px-4 py-2"
                   >
                     {t("إغلاق", "Close")}
                   </button>

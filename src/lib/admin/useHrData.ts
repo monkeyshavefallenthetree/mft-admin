@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
-import { collection, doc, onSnapshot, updateDoc } from "firebase/firestore";
+import { collection, doc, onSnapshot, serverTimestamp, updateDoc } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth, db } from "@/lib/firebase";
 import { sessionHours } from "@/lib/admin/workTime";
+import { cairoYmd } from "@/lib/admin/cairoTime";
+import { evaluateShiftLifecycle } from "@/lib/admin/shiftLifecycle";
 import {
   type HrSettings,
   type HolidayItem,
@@ -62,6 +64,7 @@ export function useHrData({
   const [liveNowMs, setLiveNowMs] = useState(() => Date.now());
 
   const cleanedStaleOnlineRef = useRef<Set<string>>(new Set());
+  const cleanedStaleSessionsRef = useRef<Set<string>>(new Set());
 
   const [tasks, setTasks] = useState<TaskDoc[]>([]);
 
@@ -118,7 +121,12 @@ export function useHrData({
   useEffect(() => {
     return onSnapshot(collection(db, "alerts"), (snap) => {
       const list: AlertDoc[] = [];
-      snap.forEach((d) => list.push({ id: d.id, ...d.data() } as AlertDoc));
+      snap.forEach((d) => {
+        const data = d.data();
+        // Exclude internal system push subscription & fallback admin notification docs from HR AlertsTab UI
+        if (data.type === "admin_push_sub" || data.adminNotif === true) return;
+        list.push({ id: d.id, ...data } as AlertDoc);
+      });
       list.sort((a, b) => (b.sentAt?.toDate?.()?.getTime() ?? 0) - (a.sentAt?.toDate?.()?.getTime() ?? 0));
       setAlerts(list);
     });
@@ -191,10 +199,10 @@ export function useHrData({
     };
   }, [rangeKey, activeCycle, settings, customStart, customEnd]);
 
-  // Unique cycle ID for status tracking
+  // Unique cycle ID for status tracking (Cairo timezone, never UTC-shifted)
   const currentCycleId = useMemo(() => {
-    const s = activePeriod.start.toISOString().split("T")[0];
-    const e = activePeriod.end.toISOString().split("T")[0];
+    const s = cairoYmd(activePeriod.start);
+    const e = cairoYmd(activePeriod.end);
     return `cycle_${s}_${e}`;
   }, [activePeriod]);
 
@@ -238,7 +246,7 @@ export function useHrData({
     return () => window.clearInterval(id);
   }, [activeShiftWorkerIds.size]);
 
-  // Auto-heal stale `isOnline: true` flags in Firestore for workers who do not have an active shift today.
+  // Auto-heal stale `isOnline: true` flags AND close unclosed past-day `workSessions` cleanly
   useEffect(() => {
     if (!workersLoaded || !sessionsLoaded) return;
     for (const w of workers) {
@@ -252,7 +260,38 @@ export function useHrData({
         cleanedStaleOnlineRef.current.delete(w.id);
       }
     }
-  }, [workersLoaded, sessionsLoaded, workers, activeShiftWorkerIds]);
+
+    const nowMs = Date.now();
+    for (const s of sessions) {
+      if (!s.isActive || s.isExternalMission || !s.id) continue;
+      const dKey = sessionDateYmd(s);
+      if (!dKey || dKey >= today || cleanedStaleSessionsRef.current.has(s.id)) continue;
+      cleanedStaleSessionsRef.current.add(s.id);
+      const lifecycle = evaluateShiftLifecycle(s, {
+        nowMs,
+        todayCairoYmd: today,
+        standardHours: settings.standardHours || 8,
+        policySettings: settings,
+      });
+      if (lifecycle.action === "auto_clock_out") {
+        const cappedLogout = new Date(lifecycle.cappedLogoutMs ?? lifecycle.shiftLimitAtMs);
+        const cappedTotal = lifecycle.cappedTotalWorkTimeMs ?? lifecycle.allowedMs;
+        updateDoc(doc(db, "workSessions", s.id), {
+          isActive: false,
+          logoutTime: cappedLogout,
+          endTime: cappedLogout,
+          segmentStartAt: null,
+          bankedWorkTime: cappedTotal,
+          totalWorkTime: cappedTotal,
+          presenceStatus: "offline",
+          autoClockedOut: true,
+          autoClockOutReason: lifecycle.autoClockOutReason || "past_day_unclosed",
+          autoClockedOutAt: serverTimestamp(),
+          lastUpdated: serverTimestamp(),
+        }).catch(() => {});
+      }
+    }
+  }, [workersLoaded, sessionsLoaded, workers, sessions, activeShiftWorkerIds, today, settings]);
 
   // Evaluate lateness ONLY against each worker's earliest clock-in of the day
   const lateWorkerIds = useMemo(() => {
@@ -276,12 +315,15 @@ export function useHrData({
 
   const overtimeWorkerIds = useMemo(() => {
     const hoursByWorker = new Map<string, number>();
+    const std = settings.standardHours || 8;
     for (const s of todaysSessions) {
       if (!s.workerId) continue;
-      hoursByWorker.set(s.workerId, (hoursByWorker.get(s.workerId) ?? 0) + sessionHours(s, liveNowMs));
+      hoursByWorker.set(
+        s.workerId,
+        (hoursByWorker.get(s.workerId) ?? 0) + sessionHours(s, liveNowMs, { standardHours: std }),
+      );
     }
     const set = new Set<string>();
-    const std = settings.standardHours || 8;
     for (const [wId, hrs] of hoursByWorker.entries()) {
       if (hrs > std) set.add(wId);
     }
@@ -296,7 +338,11 @@ export function useHrData({
     const lateToday = lateWorkerIds.size;
     const overtimeToday = overtimeWorkerIds.size;
     const attendanceRate = expectedWorkers > 0 ? Math.round((presentToday / expectedWorkers) * 100) : 0;
-    const payrollHoursToday = todaysSessions.reduce((sum, s) => sum + sessionHours(s, liveNowMs), 0);
+    const std = settings.standardHours || 8;
+    const payrollHoursToday = todaysSessions.reduce(
+      (sum, s) => sum + sessionHours(s, liveNowMs, { standardHours: std }),
+      0,
+    );
 
     return {
       presentToday,
@@ -306,7 +352,7 @@ export function useHrData({
       attendanceRate,
       payrollHoursToday: Math.round(payrollHoursToday * 10) / 10,
     };
-  }, [approved.length, presentWorkerIds.size, lateWorkerIds.size, overtimeWorkerIds.size, todaysSessions, liveNowMs]);
+  }, [approved.length, presentWorkerIds.size, lateWorkerIds.size, overtimeWorkerIds.size, todaysSessions, settings.standardHours, liveNowMs]);
 
   const workerTaskStats = useMemo(() => {
     const m = new Map<string, { completed: number; total: number }>();
@@ -372,12 +418,14 @@ export function useHrData({
   // Comprehensive Payroll Calculations for Active Period
   const payrollTableData = useMemo(() => {
     const { start, end } = activePeriod;
+    const startYmd = cairoYmd(start);
+    const endYmd = cairoYmd(end);
     return approved.map((w) => {
       const ws = workerSessionsInRange(sessions, w.id, start, end);
       const workerAdj = adjustments.filter((a) => {
         if (a.workerId !== w.id) return false;
         const d = a.date;
-        return d >= start.toISOString().split("T")[0] && d <= end.toISOString().split("T")[0];
+        return d >= startYmd && d <= endYmd;
       });
 
       const p = computePayrollForWorker(ws, w.hourlyRate || settings.defaultHourlyRate || 31.25, start, end, {
@@ -461,6 +509,7 @@ export function useHrData({
     effectiveLedger,
     approved,
     today,
+    liveNowMs,
     activeCycle,
     activePeriod,
     currentCycleId,

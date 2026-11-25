@@ -5,10 +5,14 @@ import { collection, onSnapshot, Timestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { downloadCsv } from "@/lib/admin/csv";
 import { effectiveSessionWorkMs, sessionHours } from "@/lib/admin/workTime";
+import { addDaysToYmd, cairoYmd, formatCairoTime } from "@/lib/admin/cairoTime";
+import { DEFAULT_HR_SETTINGS, isLateTodayHtml, type HrSettings } from "@/lib/admin/hrReports";
+import { subscribeHrSettings } from "@/lib/admin/hrSettings";
 import { DEPARTMENTS } from "@/lib/admin/constants";
 import { useUrlState } from "@/lib/admin/useUrlState";
 import { toast } from "@/lib/admin/feedback";
 import { EmptyState, PageHeader, SkeletonRows, STATE_ICONS } from "@/components/admin/ui/States";
+import { ChartCard, AreaTrend, DonutBreakdown } from "@/components/admin/ui/Charts";
 
 interface WorkSession {
   id: string;
@@ -24,6 +28,11 @@ interface WorkSession {
   lastUpdated?: Timestamp | null;
   totalWorkTime?: number;
   bankedWorkTime?: number;
+  standardHours?: number;
+  overtimeMinutes?: number;
+  allowedShiftMs?: number;
+  autoClockedOut?: boolean;
+  autoClockOutReason?: string | null;
   isActive?: boolean;
   isExternalMission?: boolean;
   attendanceStatus?: string;
@@ -62,20 +71,26 @@ function formatRole(role: string | undefined) {
 }
 
 function ymd(d: Date) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return cairoYmd(d);
 }
 
-function isLateSession(s: WorkSession) {
-  if (s.isLate || s.attendanceStatus === "late" || s.attendanceStatus === "very-late") return true;
-  if (s.loginTime) {
-    const d = s.loginTime.toDate();
-    return d.getHours() + d.getMinutes() / 60 >= 11;
+function isLateSession(s: WorkSession, settings: HrSettings) {
+  if (s.startTime?.toDate || s.loginTime?.toDate) {
+    return isLateTodayHtml(s, settings);
   }
-  return false;
+  return Boolean(s.isLate || s.attendanceStatus === "late" || s.attendanceStatus === "very-late");
 }
 
 function time(t?: Timestamp | null) {
-  return t ? t.toDate().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—";
+  return t ? formatCairoTime(t.toDate()) : "—";
+}
+
+function isStaleUnclosedSession(s: WorkSession, todayCairo: string) {
+  return Boolean(s.isActive && s.date && s.date < todayCairo);
+}
+
+function isLiveTodayActiveSession(s: WorkSession, todayCairo: string) {
+  return Boolean(s.isActive && (!s.date || s.date >= todayCairo));
 }
 
 function Svg({ d, className = "h-4 w-4" }: { d: string; className?: string }) {
@@ -99,6 +114,8 @@ const PAGE_SIZE = 50;
 export default function AdminWorkSessionsPage() {
   const [sessions, setSessions] = useState<WorkSession[]>([]);
   const [workers, setWorkers] = useState<WorkerOpt[]>([]);
+  const [hrSettings, setHrSettings] = useState<HrSettings>(DEFAULT_HR_SETTINGS);
+  const [liveNowMs, setLiveNowMs] = useState(() => Date.now());
   const [loading, setLoading] = useState(true);
   const [workerFilter, setWorkerFilter] = useUrlState("worker");
   const [departmentFilter, setDepartmentFilter] = useUrlState("dept");
@@ -106,7 +123,19 @@ export default function AdminWorkSessionsPage() {
   const [dateTo, setDateTo] = useUrlState("to");
   const [statusFilter, setStatusFilter] = useUrlState("status");
   const [viewType, setViewType] = useUrlState("view", "sessions");
-  const [page, setPage] = useState(1);
+
+  useEffect(() => subscribeHrSettings(setHrSettings), []);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setLiveNowMs(Date.now()), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const todayCairo = cairoYmd(liveNowMs);
+  const stdHours = hrSettings.standardHours || 8;
+  const filterKey = `${workerFilter}|${departmentFilter}|${dateFrom}|${dateTo}|${statusFilter}|${viewType}`;
+  const [pagedState, setPagedState] = useState<{ key: string; count: number }>({ key: filterKey, count: 1 });
+  const effectivePage = pagedState.key === filterKey ? pagedState.count : 1;
 
   useEffect(() => {
     return onSnapshot(
@@ -135,33 +164,37 @@ export default function AdminWorkSessionsPage() {
   }, []);
 
   const applyQuick = (key: string) => {
-    const now = new Date();
-    const start = new Date(now);
+    const today = cairoYmd();
     if (key === "") {
       setDateFrom("");
       setDateTo("");
       return;
     }
-    if (key === "today") {
-      /* start = today */
-    } else if (key === "month") start.setDate(1);
-    else start.setDate(now.getDate() - (Number(key) - 1));
-    setDateFrom(ymd(start));
-    setDateTo(ymd(now));
+    const startStr =
+      key === "today"
+        ? today
+        : key === "month"
+          ? `${today.slice(0, 7)}-01`
+          : addDaysToYmd(today, -(Number(key) - 1));
+    setDateFrom(startStr);
+    setDateTo(today);
   };
   const activeQuick = useMemo(() => {
-    const today = ymd(new Date());
+    const today = todayCairo;
     if (!dateFrom && !dateTo) return "";
     if (dateTo !== today) return null;
     for (const q of QUICK) {
       if (!q.key) continue;
-      const s = new Date();
-      if (q.key === "month") s.setDate(1);
-      else if (q.key !== "today") s.setDate(s.getDate() - (Number(q.key) - 1));
-      if (ymd(s) === dateFrom) return q.key;
+      const startStr =
+        q.key === "today"
+          ? today
+          : q.key === "month"
+            ? `${today.slice(0, 7)}-01`
+            : addDaysToYmd(today, -(Number(q.key) - 1));
+      if (startStr === dateFrom) return q.key;
     }
     return null;
-  }, [dateFrom, dateTo]);
+  }, [dateFrom, dateTo, todayCairo]);
 
   const filtered = useMemo(() => {
     return sessions.filter((s) => {
@@ -170,15 +203,13 @@ export default function AdminWorkSessionsPage() {
       const d = s.date || "";
       if (dateFrom && d && d < dateFrom) return false;
       if (dateTo && d && d > dateTo) return false;
-      if (statusFilter === "late" && !isLateSession(s)) return false;
-      if (statusFilter === "active" && (!s.isActive || s.presenceStatus === "idle")) return false;
-      if (statusFilter === "idle" && (!s.isActive || s.presenceStatus !== "idle")) return false;
-      if (statusFilter === "overtime" && sessionHours(s) <= 8) return false;
+      if (statusFilter === "late" && !isLateSession(s, hrSettings)) return false;
+      if (statusFilter === "active" && (!isLiveTodayActiveSession(s, todayCairo) || s.presenceStatus === "idle")) return false;
+      if (statusFilter === "idle" && (!isLiveTodayActiveSession(s, todayCairo) || s.presenceStatus !== "idle")) return false;
+      if (statusFilter === "overtime" && sessionHours(s, liveNowMs, { standardHours: stdHours }) <= stdHours) return false;
       return true;
     });
-  }, [sessions, workerFilter, departmentFilter, dateFrom, dateTo, statusFilter]);
-
-  useEffect(() => setPage(1), [workerFilter, departmentFilter, dateFrom, dateTo, statusFilter, viewType]);
+  }, [sessions, workerFilter, departmentFilter, dateFrom, dateTo, statusFilter, hrSettings, liveNowMs, stdHours, todayCairo]);
 
   const summary = useMemo(() => {
     let totalMs = 0;
@@ -188,33 +219,34 @@ export default function AdminWorkSessionsPage() {
     let idle = 0;
     let ot = 0;
     for (const s of filtered) {
-      totalMs += effectiveSessionWorkMs(s);
+      const ms = effectiveSessionWorkMs(s, liveNowMs, { standardHours: stdHours });
+      totalMs += ms;
       if (s.workerId) workersSet.add(s.workerId);
-      if (isLateSession(s)) late += 1;
-      if (s.isActive) {
+      if (isLateSession(s, hrSettings)) late += 1;
+      if (isLiveTodayActiveSession(s, todayCairo)) {
         if (s.presenceStatus === "idle") idle += 1;
         else active += 1;
       }
-      ot += Math.max(0, sessionHours(s) - 8);
+      ot += Math.max(0, ms / 3600000 - stdHours);
     }
     const totalH = Math.round((totalMs / 3600000) * 10) / 10;
     const avg = filtered.length > 0 ? Math.round((totalMs / filtered.length / 3600000) * 10) / 10 : 0;
     return { totalH, count: filtered.length, workers: workersSet.size, late, active, idle, avg, ot: Math.round(ot * 10) / 10 };
-  }, [filtered]);
+  }, [filtered, liveNowMs, hrSettings, stdHours, todayCairo]);
 
   const totalsByWorker = useMemo(() => {
     const map: Record<string, { name: string; dept?: string; role?: string; hours: number; sessions: number; late: number; ot: number }> = {};
     for (const s of filtered) {
       const id = s.workerId || "unknown";
       if (!map[id]) map[id] = { name: s.workerName || id, dept: s.department, role: s.role, hours: 0, sessions: 0, late: 0, ot: 0 };
-      const h = sessionHours(s);
+      const h = sessionHours(s, liveNowMs, { standardHours: stdHours });
       map[id].hours += h;
       map[id].sessions += 1;
-      map[id].ot += Math.max(0, h - 8);
-      if (isLateSession(s)) map[id].late += 1;
+      map[id].ot += Math.max(0, h - stdHours);
+      if (isLateSession(s, hrSettings)) map[id].late += 1;
     }
     return Object.entries(map).sort((a, b) => b[1].hours - a[1].hours);
-  }, [filtered]);
+  }, [filtered, liveNowMs, hrSettings, stdHours]);
   const maxWorkerHours = Math.max(1, ...totalsByWorker.map(([, t]) => t.hours));
 
   const exportCsv = () => {
@@ -233,88 +265,188 @@ export default function AdminWorkSessionsPage() {
       "Check-in Note"
     ]];
     for (const s of filtered) {
+      const stale = isStaleUnclosedSession(s, todayCairo);
       rows.push([
         s.workerName || "",
         s.department || "",
         s.role || "",
         s.date || "",
         s.loginTime ? s.loginTime.toDate().toLocaleString() : "",
-        s.logoutTime ? s.logoutTime.toDate().toLocaleString() : s.isActive ? "Active" : "",
-        sessionHours(s).toFixed(2),
-        isLateSession(s) ? "Late" : "On-Time",
-        s.isActive ? "yes" : "no",
-        s.isActive ? (s.presenceStatus === "idle" ? "Idle (Missed Check-in)" : "Active (Verified)") : "Offline",
+        s.logoutTime ? s.logoutTime.toDate().toLocaleString() : stale ? "Unclosed (Pending Auto Clock-Out)" : s.isActive ? "Active" : "",
+        sessionHours(s, liveNowMs, { standardHours: stdHours }).toFixed(2),
+        isLateSession(s, hrSettings) ? "Late" : "On-Time",
+        isLiveTodayActiveSession(s, todayCairo) ? "yes" : "no",
+        stale ? "Unclosed (Past Day)" : s.isActive ? (s.presenceStatus === "idle" ? "Idle (Missed Check-in)" : "Active (Verified)") : "Offline",
         s.currentTaskTitle || "",
         s.currentTaskNote || "",
       ]);
     }
-    downloadCsv(rows, `work_sessions_${new Date().toISOString().split("T")[0]}.csv`);
+    downloadCsv(rows, `work_sessions_${ymd(new Date())}.csv`);
     toast.success(`Exported ${filtered.length} sessions`);
   };
 
+  const [showAnalytics, setShowAnalytics] = useState(true);
+
+  const dailyHoursTrend = useMemo(() => {
+    const map = new Map<string, { date: string; Hours: number; Overtime: number }>();
+    const sorted = [...filtered].sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+    for (const s of sorted) {
+      const d = s.date || "Unknown";
+      const label = d.length === 10 ? d.slice(5) : d;
+      if (!map.has(label)) map.set(label, { date: label, Hours: 0, Overtime: 0 });
+      const entry = map.get(label)!;
+      const h = sessionHours(s, liveNowMs, { standardHours: stdHours });
+      entry.Hours = Math.round((entry.Hours + h) * 10) / 10;
+      entry.Overtime = Math.round((entry.Overtime + Math.max(0, h - stdHours)) * 10) / 10;
+    }
+    return Array.from(map.values()).slice(-14);
+  }, [filtered, liveNowMs, stdHours]);
+
+  const punctualitySlices = useMemo(() => {
+    let onTime = 0;
+    let late = 0;
+    let veryLate = 0;
+    for (const s of filtered) {
+      if (s.attendanceStatus === "very-late") veryLate += 1;
+      else if (isLateSession(s, hrSettings)) late += 1;
+      else onTime += 1;
+    }
+    return [
+      { key: "on-time", label: "On-Time", value: onTime, color: "#10b981" },
+      { key: "late", label: "Late (11–12)", value: late, color: "#f59e0b" },
+      { key: "very-late", label: "Very Late (12+)", value: veryLate, color: "#ef4444" },
+    ];
+  }, [filtered, hrSettings]);
+
   const hasFilters = !!(workerFilter || departmentFilter || dateFrom || dateTo || statusFilter);
-  const pageItems = filtered.slice(0, page * PAGE_SIZE);
+  const pageItems = filtered.slice(0, effectivePage * PAGE_SIZE);
 
   return (
-    <div>
+    <div className="space-y-5">
       <PageHeader
-        title="Work sessions"
-        description="Clock-in / clock-out logs, hours and attendance flags."
+        title="Work Sessions & Shift Telemetry"
+        description="Real-time clock-in / clock-out logs, 2-hour station verification, overtime, and punctuality analytics."
         actions={
-          <button type="button" onClick={exportCsv} disabled={!filtered.length} className="brutal-btn-outline normal-case tracking-normal disabled:opacity-50">
-            <Svg d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /> Export CSV
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowAnalytics((v) => !v)}
+              className="brutal-btn-outline normal-case tracking-normal"
+            >
+              <span>{showAnalytics ? "Hide Analytics" : "Shift Insights"}</span>
+            </button>
+            <button type="button" onClick={exportCsv} disabled={!filtered.length} className="brutal-btn-outline normal-case tracking-normal disabled:opacity-50">
+              <Svg d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /> Export CSV
+            </button>
+          </div>
         }
       />
 
-      {/* Summary */}
-      <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+      {/* Interactive Summary KPI Strip */}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         {[
-          { label: "Hours logged", value: `${summary.totalH}h`, tone: "bg-red-500" },
-          { label: "Sessions", value: summary.count, tone: "bg-zinc-400" },
-          { label: "Active (2h OK)", value: summary.active, tone: "bg-emerald-500" },
-          { label: "Idle (Missed check)", value: summary.idle, tone: summary.idle > 0 ? "bg-red-600" : "bg-zinc-300" },
-          { label: "Late arrivals", value: summary.late, tone: "bg-amber-500" },
-          { label: "Overtime", value: `${summary.ot}h`, tone: "bg-violet-500" },
-        ].map((s) => (
-          <div key={s.label} className="ui-card relative overflow-hidden px-4 py-3">
-            <span className={`absolute left-0 top-0 h-full w-1 ${s.tone}`} />
-            <p className="text-[11px] font-medium text-zinc-500">{s.label}</p>
-            <p className="mt-1 text-xl font-bold tracking-tight text-zinc-900">{loading ? "–" : s.value}</p>
-          </div>
-        ))}
+          { label: "Hours logged", value: `${summary.totalH}h`, tone: "bg-red-500", filter: "" },
+          { label: "Sessions", value: summary.count, tone: "bg-zinc-400", filter: "" },
+          { label: "Active (2h OK)", value: summary.active, tone: "bg-emerald-500", filter: "active" },
+          { label: "Idle (Missed check)", value: summary.idle, tone: summary.idle > 0 ? "bg-red-600" : "bg-zinc-300", filter: "idle" },
+          { label: "Late arrivals", value: summary.late, tone: "bg-amber-500", filter: "late" },
+          { label: "Overtime", value: `${summary.ot}h`, tone: "bg-violet-500", filter: "overtime" },
+        ].map((s) => {
+          const isSelected = statusFilter === s.filter && s.filter !== "";
+          return (
+            <button
+              key={s.label}
+              type="button"
+              onClick={() => setStatusFilter(statusFilter === s.filter ? "" : s.filter)}
+              className={`ui-card ui-card-hover relative overflow-hidden px-4 py-3 text-left cursor-pointer ${
+                isSelected ? "ring-2 ring-zinc-900 bg-zinc-50/70" : ""
+              }`}
+            >
+              <span className={`absolute left-0 top-0 h-full w-1 ${s.tone}`} />
+              <p className="text-[11px] font-medium text-zinc-500">{s.label}</p>
+              <p className="mt-1 font-code text-xl font-bold tracking-tight text-zinc-900">{loading ? "–" : s.value}</p>
+            </button>
+          );
+        })}
       </div>
 
+      {/* Collapsible Shift Analytics Row */}
+      {showAnalytics && !loading && filtered.length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 animate-fade-in">
+          <ChartCard
+            className="lg:col-span-7"
+            title="Daily Logged Hours & Overtime Velocity"
+            subtitle="Total verified work hours and overtime across recent shift dates"
+            badge={
+              <span className="rounded-md bg-zinc-100 px-2 py-0.5 font-code text-[10px] font-semibold text-zinc-600">
+                Avg {summary.avg}h / session
+              </span>
+            }
+          >
+            {dailyHoursTrend.length === 0 ? (
+              <div className="flex h-44 items-center justify-center text-xs text-zinc-400">
+                No session dates in current range
+              </div>
+            ) : (
+              <AreaTrend
+                data={dailyHoursTrend}
+                xKey="date"
+                series={[
+                  { key: "Hours", label: "Total Hours", color: "#dc2626" },
+                  { key: "Overtime", label: "Overtime (>8h)", color: "#8b5cf6" },
+                ]}
+                height={200}
+                description="Daily hours trend chart"
+              />
+            )}
+          </ChartCard>
+
+          <ChartCard
+            className="lg:col-span-5"
+            title="Shift Punctuality Breakdown"
+            subtitle="On-time vs late clock-ins (10:00 AM baseline)"
+          >
+            <DonutBreakdown
+              slices={punctualitySlices}
+              centerLabel="Sessions"
+              centerValue={String(filtered.length)}
+              size={165}
+              description="Punctuality breakdown chart"
+            />
+          </ChartCard>
+        </div>
+      )}
+
       {/* Filters */}
-      <div className="ui-card mb-4 space-y-3 p-3">
+      <div className="ui-card space-y-3 p-3.5">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-          <div className="flex flex-wrap gap-1 rounded-lg bg-zinc-100 p-1">
+          <div className="flex flex-wrap gap-1 rounded-xl border border-zinc-200 bg-zinc-100/80 p-0.5">
             {QUICK.map((q) => (
               <button
                 key={q.key || "all"}
                 type="button"
                 onClick={() => applyQuick(q.key)}
-                className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer ${activeQuick === q.key ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-800"}`}
+                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer ${activeQuick === q.key ? "bg-white text-zinc-900 shadow-2xs" : "text-zinc-500 hover:text-zinc-800"}`}
               >
                 {q.label}
               </button>
             ))}
           </div>
           <div className="flex items-center gap-2">
-            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="brutal-input w-40" aria-label="From date" />
+            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="brutal-input w-40 font-code text-xs" aria-label="From date" />
             <span className="text-xs text-zinc-400">to</span>
-            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="brutal-input w-40" aria-label="To date" />
+            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="brutal-input w-40 font-code text-xs" aria-label="To date" />
           </div>
-          <div className="flex gap-1 rounded-lg bg-zinc-100 p-1 lg:ml-auto">
+          <div className="flex gap-1 rounded-xl border border-zinc-200 bg-zinc-100/80 p-0.5 lg:ml-auto">
             {[
-              ["sessions", "Sessions"],
-              ["totals", "Per worker"],
+              ["sessions", "Sessions Log"],
+              ["totals", "Per Worker Totals"],
             ].map(([k, l]) => (
               <button
                 key={k}
                 type="button"
                 onClick={() => setViewType(k)}
-                className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer ${viewType === k ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-800"}`}
+                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all cursor-pointer ${viewType === k ? "bg-white text-zinc-900 shadow-2xs" : "text-zinc-500 hover:text-zinc-800"}`}
               >
                 {l}
               </button>
@@ -322,7 +454,7 @@ export default function AdminWorkSessionsPage() {
           </div>
         </div>
         <div className="flex flex-col gap-2 md:flex-row md:items-center">
-          <select value={workerFilter} onChange={(e) => setWorkerFilter(e.target.value)} className="brutal-input md:w-56">
+          <select value={workerFilter} onChange={(e) => setWorkerFilter(e.target.value)} aria-label="Filter by worker" className="brutal-input md:w-56 text-xs">
             <option value="">All workers</option>
             {workers.map((w) => (
               <option key={w.id} value={w.id}>
@@ -330,7 +462,7 @@ export default function AdminWorkSessionsPage() {
               </option>
             ))}
           </select>
-          <select value={departmentFilter} onChange={(e) => setDepartmentFilter(e.target.value)} className="brutal-input md:w-44">
+          <select value={departmentFilter} onChange={(e) => setDepartmentFilter(e.target.value)} aria-label="Filter by department" className="brutal-input md:w-44 text-xs">
             <option value="">All departments</option>
             {DEPARTMENTS.map((d) => (
               <option key={d.value} value={d.value}>
@@ -338,7 +470,7 @@ export default function AdminWorkSessionsPage() {
               </option>
             ))}
           </select>
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="brutal-input md:w-48">
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} aria-label="Filter by session status" className="brutal-input md:w-48 text-xs">
             <option value="">Any status</option>
             <option value="active">Active (2h Verified)</option>
             <option value="idle">Idle / Missed Check-in</option>
@@ -355,7 +487,7 @@ export default function AdminWorkSessionsPage() {
                 setDateTo("");
                 setStatusFilter("");
               }}
-              className="px-2 text-xs font-medium text-zinc-500 hover:text-zinc-900 cursor-pointer"
+              className="px-2 text-xs font-semibold text-red-600 hover:underline cursor-pointer"
             >
               Reset filters
             </button>
@@ -371,24 +503,34 @@ export default function AdminWorkSessionsPage() {
           <EmptyState icon={STATE_ICONS.clock} title="No sessions match" description={hasFilters ? "Try widening the date range or clearing filters." : "Sessions appear here when workers clock in from the app."} />
         ) : viewType === "sessions" ? (
           <>
-            <div className="overflow-x-auto">
+            <div
+              tabIndex={0}
+              role="region"
+              aria-labelledby="work-sessions-caption"
+              className="mft-table-wrapper"
+            >
               <table className="w-full min-w-[960px] text-sm">
-                <thead className="border-b border-zinc-100 bg-zinc-50 text-left text-[11px] font-semibold text-zinc-500">
+                <caption id="work-sessions-caption" className="sr-only">
+                  Worker shift sessions and clock-in logs
+                </caption>
+                <thead className="border-b border-zinc-100 bg-zinc-50/95 text-left text-[11px] font-semibold text-zinc-500">
                   <tr>
-                    <th className="px-4 py-2.5">Worker</th>
-                    <th className="px-4 py-2.5">Date</th>
-                    <th className="px-4 py-2.5">Clock in</th>
-                    <th className="px-4 py-2.5">Clock out</th>
-                    <th className="px-4 py-2.5">Hours</th>
-                    <th className="px-4 py-2.5">2h Presence &amp; Active Task</th>
-                    <th className="px-4 py-2.5">Status</th>
+                    <th scope="col" className="px-4 py-2.5">Worker</th>
+                    <th scope="col" className="px-4 py-2.5">Date</th>
+                    <th scope="col" className="px-4 py-2.5">Clock in</th>
+                    <th scope="col" className="px-4 py-2.5">Clock out</th>
+                    <th scope="col" className="px-4 py-2.5">Hours</th>
+                    <th scope="col" className="px-4 py-2.5">2h Presence &amp; Active Task</th>
+                    <th scope="col" className="px-4 py-2.5">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100">
                   {pageItems.map((s) => {
-                    const h = sessionHours(s);
-                    const ot = Math.max(0, h - 8);
-                    const late = isLateSession(s);
+                    const h = sessionHours(s, liveNowMs, { standardHours: stdHours });
+                    const ot = Math.max(0, h - stdHours);
+                    const late = isLateSession(s, hrSettings);
+                    const stale = isStaleUnclosedSession(s, todayCairo);
+                    const liveActive = isLiveTodayActiveSession(s, todayCairo);
                     return (
                       <tr key={s.id} className="transition-colors hover:bg-zinc-50">
                         <td className="px-4 py-3">
@@ -398,8 +540,18 @@ export default function AdminWorkSessionsPage() {
                           </button>
                         </td>
                         <td className="px-4 py-3 text-zinc-700">{s.date ? new Date(s.date + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : "—"}</td>
-                        <td className={`px-4 py-3 tabular-nums ${late ? "font-semibold text-amber-600" : "text-zinc-700"}`}>{time(s.loginTime)}</td>
-                        <td className="px-4 py-3 tabular-nums text-zinc-700">{s.logoutTime ? time(s.logoutTime) : s.isActive ? <span className="text-emerald-600">Working…</span> : "—"}</td>
+                        <td className={`px-4 py-3 tabular-nums ${late ? "font-semibold text-amber-600" : "text-zinc-700"}`}>{time(s.loginTime || s.startTime)}</td>
+                        <td className="px-4 py-3 tabular-nums text-zinc-700">
+                          {s.logoutTime ? (
+                            time(s.logoutTime)
+                          ) : stale ? (
+                            <span className="text-amber-600 font-medium">Unclosed (Pending Auto Clock-Out)</span>
+                          ) : liveActive ? (
+                            <span className="text-emerald-600">Working…</span>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
                             <div className="h-1.5 w-16 overflow-hidden rounded-full bg-zinc-100">
@@ -410,7 +562,11 @@ export default function AdminWorkSessionsPage() {
                           </div>
                         </td>
                         <td className="px-4 py-3">
-                          {s.isActive ? (
+                          {stale ? (
+                            <span className="inline-flex items-center gap-1.5 rounded-md bg-amber-50 border border-amber-200 px-2 py-0.5 text-[11px] font-semibold text-amber-700 w-fit">
+                              Unclosed (Pending Auto Clock-Out)
+                            </span>
+                          ) : liveActive ? (
                             s.presenceStatus === "idle" ? (
                               <div className="flex flex-col gap-1">
                                 <span className="inline-flex items-center gap-1.5 rounded-md bg-red-50 border border-red-200 px-2 py-0.5 text-[11px] font-bold text-red-700 w-fit">
@@ -446,14 +602,18 @@ export default function AdminWorkSessionsPage() {
                                   ✓ {s.checkIns.length} check-in{s.checkIns.length > 1 ? "s" : ""}
                                 </span>
                               ) : (
-                                <span>Completed</span>
+                                <span>{s.autoClockedOut ? "Auto Clocked Out" : "Completed"}</span>
                               )}
                             </div>
                           )}
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex flex-wrap gap-1">
-                            {s.isActive ? (
+                            {stale ? (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                                Pending Auto Clock-Out
+                              </span>
+                            ) : liveActive ? (
                               s.presenceStatus === "idle" ? (
                                 <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-medium text-red-700">
                                   <span className="h-1.5 w-1.5 rounded-full bg-red-600" /> Idle
@@ -464,7 +624,9 @@ export default function AdminWorkSessionsPage() {
                                 </span>
                               )
                             ) : (
-                              <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-medium text-zinc-600">Completed</span>
+                              <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-medium text-zinc-600">
+                                {s.autoClockedOut ? "Auto-closed" : "Completed"}
+                              </span>
                             )}
                             {late && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">{s.attendanceStatus === "very-late" ? "Very late" : "Late"}</span>}
                           </div>
@@ -480,7 +642,11 @@ export default function AdminWorkSessionsPage() {
                 Showing {pageItems.length} of {filtered.length}
               </span>
               {pageItems.length < filtered.length && (
-                <button type="button" onClick={() => setPage((p) => p + 1)} className="font-semibold text-red-600 hover:text-red-700 cursor-pointer">
+                <button
+                  type="button"
+                  onClick={() => setPagedState({ key: filterKey, count: effectivePage + 1 })}
+                  className="font-semibold text-red-600 hover:text-red-700 cursor-pointer"
+                >
                   Load {Math.min(PAGE_SIZE, filtered.length - pageItems.length)} more
                 </button>
               )}

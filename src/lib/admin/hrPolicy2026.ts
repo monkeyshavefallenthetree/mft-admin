@@ -206,7 +206,53 @@ export function priorUsedRecordedOn(
   );
 }
 
-/* ────────────────────────────── Time helpers ────────────────────────────── */
+/* ────────────────────────────── Time helpers (Africa/Cairo) ────────────────────────────── */
+
+const CAIRO_TIME_ZONE = "Africa/Cairo";
+const cairoDtf = new Intl.DateTimeFormat("en-CA", {
+  timeZone: CAIRO_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hourCycle: "h23",
+});
+
+function cairoPartsOf(d: Date): { year: number; month: number; day: number; hour: number; minute: number; second: number } {
+  const parts = cairoDtf.formatToParts(d);
+  let year = 0;
+  let month = 1;
+  let day = 1;
+  let hour = 0;
+  let minute = 0;
+  let second = 0;
+  for (const p of parts) {
+    if (p.type === "year") year = Number(p.value);
+    else if (p.type === "month") month = Number(p.value);
+    else if (p.type === "day") day = Number(p.value);
+    else if (p.type === "hour") hour = Number(p.value) === 24 ? 0 : Number(p.value);
+    else if (p.type === "minute") minute = Number(p.value);
+    else if (p.type === "second") second = Number(p.value);
+  }
+  return { year, month, day, hour, minute, second };
+}
+
+function cairoOffsetMs(utcMs: number): number {
+  const p = cairoPartsOf(new Date(utcMs));
+  const asUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
+  const utcSec = Math.floor(utcMs / 1000) * 1000;
+  return asUtc - utcSec;
+}
+
+function cairoWallDate(year: number, month: number, day: number, hour = 0, minute = 0, second = 0, ms = 0): Date {
+  const guess = Date.UTC(year, month - 1, day, hour, minute, second, ms);
+  const o1 = cairoOffsetMs(guess);
+  const c1 = guess - o1;
+  const o2 = cairoOffsetMs(c1);
+  return new Date(guess - o2);
+}
 
 function numOr(v: unknown, d: number): number {
   return typeof v === "number" && Number.isFinite(v) ? v : d;
@@ -224,46 +270,67 @@ export function formatHm(minutes: number): string {
   return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 }
 
-/** Minutes after local midnight, seconds truncated. */
+/** Minutes after Egypt (`Africa/Cairo`) midnight, seconds truncated. */
 export function minutesOfDay(d: Date): number {
-  return d.getHours() * 60 + d.getMinutes();
+  const p = cairoPartsOf(d);
+  return p.hour * 60 + p.minute;
 }
 
-/** Copy of `d` at local midnight + `minutes`. Handles overflow past midnight. */
+/** Copy of `d` at Egypt (`Africa/Cairo`) midnight + `minutes`. Handles overflow past midnight. */
 export function atMinutes(d: Date, minutes: number): Date {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, minutes, 0, 0);
+  const p = cairoPartsOf(d);
+  return cairoWallDate(p.year, p.month, p.day, 0, minutes, 0, 0);
 }
 
+/** Formats `d` as `"YYYY-MM-DD"` in Egypt (`Africa/Cairo`) timezone. */
 export function ymd(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const p = cairoPartsOf(d);
+  return `${String(p.year).padStart(4, "0")}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
 }
 
-/** Parses "YYYY-MM-DD" as a local date at noon (DST-safe). */
+/** Parses "YYYY-MM-DD" as a Cairo noon date (DST-safe & TZ-independent). */
 export function parseYmd(s: string): Date | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s || "");
   if (!m) return null;
-  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12, 0, 0, 0);
+  return cairoWallDate(Number(m[1]), Number(m[2]), Number(m[3]), 12, 0, 0, 0);
 }
 
 /** Adds calendar months, clamping the day to the target month's last day (Jan 31 + 1 → Feb 28/29). */
 export function addMonthsClamped(d: Date, months: number): Date {
-  const y = d.getFullYear();
-  const m = d.getMonth() + months;
-  const lastDay = new Date(y, m + 1, 0).getDate();
-  return new Date(y, m, Math.min(d.getDate(), lastDay), 12, 0, 0, 0);
+  const p = cairoPartsOf(d);
+  const targetZeroMonth = p.month - 1 + months;
+  const lastDay = new Date(Date.UTC(p.year, targetZeroMonth + 1, 0)).getUTCDate();
+  const base = new Date(Date.UTC(p.year, targetZeroMonth, Math.min(p.day, lastDay), 12, 0, 0));
+  return cairoWallDate(base.getUTCFullYear(), base.getUTCMonth() + 1, base.getUTCDate(), 12, 0, 0, 0);
 }
 
 /** Whole service months completed between `from` and `to` (anniversary-based, day-clamped). */
 export function completedMonthsBetween(from: Date, to: Date): number {
   if (to < from) return 0;
-  let months = (to.getFullYear() - from.getFullYear()) * 12 + (to.getMonth() - from.getMonth());
+  const fp = cairoPartsOf(from);
+  const tp = cairoPartsOf(to);
+  let months = (tp.year - fp.year) * 12 + (tp.month - fp.month);
   while (months > 0 && addMonthsClamped(from, months) > endOfDay(to)) months--;
   while (addMonthsClamped(from, months + 1) <= endOfDay(to)) months++;
   return Math.max(0, months);
 }
 
+function dayOfWeekYmd(s: string): number {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s || "");
+  if (!m) return -1;
+  return new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12, 0, 0)).getUTCDay();
+}
+
+function addDaysYmd(s: string, delta: number): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s || "");
+  if (!m) return s;
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + delta, 12, 0, 0));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+}
+
 function endOfDay(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+  const p = cairoPartsOf(d);
+  return cairoWallDate(p.year, p.month, p.day, 23, 59, 59, 999);
 }
 
 /** Arabic-Indic digits for display (٣٠ دقيقة). */
@@ -1020,13 +1087,12 @@ export function countWorkingLeaveDaysInRange(
       if (!h.endDate || h.endDate === h.date) {
         holidaySet.add(h.date);
       } else {
-        const curH = parseYmd(h.date);
-        const endH = parseYmd(h.endDate);
-        if (curH && endH) {
-          while (curH <= endH) {
-            holidaySet.add(ymd(curH));
-            curH.setDate(curH.getDate() + 1);
-          }
+        let curH = h.date.slice(0, 10);
+        const endH = h.endDate.slice(0, 10);
+        let guardH = 0;
+        while (curH <= endH && guardH++ < 400) {
+          holidaySet.add(curH);
+          curH = addDaysYmd(curH, 1);
         }
       }
     }
@@ -1036,13 +1102,13 @@ export function countWorkingLeaveDaysInRange(
   let workingDays = 0;
   let weekendDaysCount = 0;
   let holidayDaysCount = 0;
-  const cur = new Date(s.getFullYear(), s.getMonth(), s.getDate(), 12, 0, 0);
-  const endAt = new Date(e.getFullYear(), e.getMonth(), e.getDate(), 12, 0, 0);
+  let curStr = ymd(s);
+  const endStr = ymd(e);
+  let guard = 0;
 
-  while (cur <= endAt) {
+  while (curStr <= endStr && guard++ < 4000) {
     totalCalendarDays++;
-    const curStr = ymd(cur);
-    const isWknd = weekendDays.includes(cur.getDay());
+    const isWknd = weekendDays.includes(dayOfWeekYmd(curStr));
     const isHol = holidaySet.has(curStr);
     if (isWknd) {
       weekendDaysCount++;
@@ -1051,7 +1117,7 @@ export function countWorkingLeaveDaysInRange(
     } else {
       workingDays++;
     }
-    cur.setDate(cur.getDate() + 1);
+    curStr = addDaysYmd(curStr, 1);
   }
 
   return {
@@ -1084,31 +1150,29 @@ export function addWorkingLeaveDaysYmd(
       if (!h.endDate || h.endDate === h.date) {
         holidaySet.add(h.date);
       } else {
-        const curH = parseYmd(h.date);
-        const endH = parseYmd(h.endDate);
-        if (curH && endH) {
-          while (curH <= endH) {
-            holidaySet.add(ymd(curH));
-            curH.setDate(curH.getDate() + 1);
-          }
+        let curH = h.date.slice(0, 10);
+        const endH = h.endDate.slice(0, 10);
+        let guardH = 0;
+        while (curH <= endH && guardH++ < 400) {
+          holidaySet.add(curH);
+          curH = addDaysYmd(curH, 1);
         }
       }
     }
   }
-  const cur = new Date(s.getFullYear(), s.getMonth(), s.getDate(), 12, 0, 0);
+  let curStr = ymd(s);
   let counted = 0;
   let safety = 0;
   while (safety < 366) {
     safety++;
-    const curStr = ymd(cur);
-    const isOff = weekendDays.includes(cur.getDay()) || holidaySet.has(curStr);
+    const isOff = weekendDays.includes(dayOfWeekYmd(curStr)) || holidaySet.has(curStr);
     if (!isOff) {
       counted++;
       if (counted >= target) return curStr;
     }
-    cur.setDate(cur.getDate() + 1);
+    curStr = addDaysYmd(curStr, 1);
   }
-  return ymd(cur);
+  return curStr;
 }
 
 /**
@@ -1424,7 +1488,7 @@ export function auditAttendanceLog(
     const inAt = atMinutes(d, parseHm(row.clockIn));
     let outAt: Date | null = row.clockOut ? atMinutes(d, parseHm(row.clockOut)) : null;
     if (outAt && outAt <= inAt) outAt = new Date(outAt.getTime() + 86400000); // overnight
-    const isOffDay = weekend.includes(d.getDay()) || holidays.has(row.date);
+    const isOffDay = weekend.includes(dayOfWeekYmd(row.date)) || holidays.has(row.date);
     const worked = outAt ? Math.round((outAt.getTime() - inAt.getTime()) / 60000) : 0;
     const notes: string[] = [];
     let ci: ClockInEvaluation | null = null;

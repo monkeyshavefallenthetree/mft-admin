@@ -19,20 +19,23 @@ export default function WorkerOnboardModal({ worker: onboardModalWorker, adminEm
   return (
     <ModalPortal onClose={() => onClose()}>
       <div
-        className="fixed inset-0 z-[120] bg-zinc-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in"
+        className="fixed inset-0 z-[120] bg-zinc-950/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto animate-fade-in"
         onClick={() => onClose()}
       >
         <div
           dir={dir}
-          className="border-2 border-zinc-900 bg-white dark:bg-zinc-900 w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 shadow-2xl text-zinc-950 dark:text-zinc-100 font-mono animate-scale-in rounded-lg space-y-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="worker-onboard-modal-title"
+          className="ui-card shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 text-zinc-950 dark:text-zinc-100 animate-scale-in space-y-4"
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="flex items-start justify-between pb-3 border-b-2 border-zinc-900">
+          <div className="flex items-start justify-between pb-3 border-b border-zinc-200 dark:border-zinc-800">
             <div>
-              <span className="text-[10px] font-bold uppercase tracking-widest text-red-600">
-                {t("// إعداد بيانات الموظف والراتب والإجازات", "// WORKER ONBOARDING, RATE & LEAVE CONTROL")}
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-red-600">
+                {t("إعداد بيانات الموظف والراتب والإجازات", "WORKER ONBOARDING, RATE & LEAVE CONTROL")}
               </span>
-              <h3 className="text-xl font-black font-heading text-zinc-950 dark:text-white mt-0.5">
+              <h3 id="worker-onboard-modal-title" className="text-xl font-bold tracking-tight text-zinc-950 dark:text-white mt-0.5">
                 {workerName(onboardModalWorker)}
               </h3>
               <p className="text-xs text-zinc-500">
@@ -41,8 +44,9 @@ export default function WorkerOnboardModal({ worker: onboardModalWorker, adminEm
             </div>
             <button
               type="button"
+              aria-label="Close"
               onClick={() => onClose()}
-              className="text-2xl font-bold text-zinc-500 hover:text-red-600 cursor-pointer"
+              className="h-8 w-8 rounded-lg flex items-center justify-center text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer"
             >
               &times;
             </button>

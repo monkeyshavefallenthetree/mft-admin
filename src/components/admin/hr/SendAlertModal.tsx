@@ -132,36 +132,40 @@ export default function SendAlertModal({ approved, adminEmail, onClose }: Props)
   return (
     <ModalPortal onClose={() => onClose()}>
       <div
-        className="fixed inset-0 z-[120] bg-zinc-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in font-mono"
+        className="fixed inset-0 z-[120] bg-zinc-950/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto animate-fade-in"
         onClick={() => onClose()}
       >
         <div
           dir={dir}
-          className="bg-white dark:bg-zinc-900 border-2 border-zinc-900 dark:border-zinc-700 shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 animate-scale-in text-zinc-950 dark:text-zinc-100 rounded-lg"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="send-alert-modal-title"
+          className="ui-card shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6 animate-scale-in text-zinc-950 dark:text-zinc-100"
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="flex justify-between items-center mb-4 pb-2 border-b-2 border-zinc-900 dark:border-zinc-700">
-            <h3 className="text-xl font-black font-heading text-red-600">
+          <div className="flex justify-between items-center mb-4 pb-3 border-b border-zinc-200 dark:border-zinc-800">
+            <h3 id="send-alert-modal-title" className="text-lg font-bold tracking-tight text-red-600">
               {t("إرسال تنبيه أو تعميم للموظفين", "Send Workforce Alert")}
             </h3>
             <button
               type="button"
-              className="text-2xl text-zinc-500 hover:text-red-600 font-bold cursor-pointer"
+              aria-label="Close"
+              className="h-8 w-8 rounded-lg flex items-center justify-center text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer"
               onClick={() => onClose()}
             >
               &times;
             </button>
           </div>
-          <form onSubmit={handleSendAlert} className="space-y-4 text-xs font-mono">
+          <form onSubmit={handleSendAlert} className="space-y-4 text-xs">
             <div>
-              <label className="block text-zinc-700 dark:text-zinc-300 font-bold uppercase mb-1">
+              <label className="block text-zinc-700 dark:text-zinc-300 font-semibold uppercase mb-1.5">
                 {t("نوع التنبيه *", "Alert Type *")}
               </label>
               <select
                 required
                 value={alertForm.type}
                 onChange={(e) => setAlertForm({ ...alertForm, type: e.target.value })}
-                className="w-full bg-white dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 px-3 py-2 text-zinc-950 dark:text-zinc-100 font-bold rounded focus:outline-none focus:ring-2 focus:ring-red-600"
+                className="w-full brutal-input px-3 py-2 font-semibold cursor-pointer"
               >
                 <option value="">{t("اختر النوع…", "Select type…")}</option>
                 <option value="system_announcement">{t("إعلان هام (System Announcement)", "System Announcement (إعلان هام)")}</option>
@@ -172,13 +176,13 @@ export default function SendAlertModal({ approved, adminEmail, onClose }: Props)
             </div>
 
             <div>
-              <label className="block text-zinc-700 dark:text-zinc-300 font-bold uppercase mb-1">
+              <label className="block text-zinc-700 dark:text-zinc-300 font-semibold uppercase mb-1.5">
                 {t("المستلمون *", "Recipients *")}
               </label>
               <select
                 value={alertForm.recipient}
                 onChange={(e) => setAlertForm({ ...alertForm, recipient: e.target.value })}
-                className="w-full bg-white dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 px-3 py-2 text-zinc-950 dark:text-zinc-100 font-bold rounded focus:outline-none focus:ring-2 focus:ring-red-600"
+                className="w-full brutal-input px-3 py-2 font-semibold cursor-pointer"
               >
                 <option value="all">
                   {t(
@@ -194,13 +198,13 @@ export default function SendAlertModal({ approved, adminEmail, onClose }: Props)
             </div>
 
             <div>
-              <label className="block text-zinc-700 dark:text-zinc-300 font-bold uppercase mb-1">
+              <label className="block text-zinc-700 dark:text-zinc-300 font-semibold uppercase mb-1.5">
                 {t("درجة الأهمية *", "Priority *")}
               </label>
               <select
                 value={alertForm.priority}
                 onChange={(e) => setAlertForm({ ...alertForm, priority: e.target.value })}
-                className="w-full bg-white dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 px-3 py-2 text-zinc-950 dark:text-zinc-100 font-bold rounded focus:outline-none focus:ring-2 focus:ring-red-600"
+                className="w-full brutal-input px-3 py-2 font-semibold cursor-pointer"
               >
                 <option value="high">{t("⚡ هام وعاجل (يظهر كبانر بارز للجميع)", "⚡ High Priority Banner")}</option>
                 <option value="medium">{t("📢 تنبيه اعتيادي", "📢 Standard Notice")}</option>
@@ -209,13 +213,13 @@ export default function SendAlertModal({ approved, adminEmail, onClose }: Props)
 
             {alertForm.recipient === "department" && (
               <div>
-                <label className="block text-zinc-700 dark:text-zinc-300 font-bold uppercase mb-1">
+                <label className="block text-zinc-700 dark:text-zinc-300 font-semibold uppercase mb-1.5">
                   {t("القسم *", "Department *")}
                 </label>
                 <select
                   value={alertForm.department}
                   onChange={(e) => setAlertForm({ ...alertForm, department: e.target.value })}
-                  className="w-full bg-white dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 px-3 py-2 text-zinc-950 dark:text-zinc-100 font-bold rounded focus:outline-none focus:ring-2 focus:ring-red-600"
+                  className="w-full brutal-input px-3 py-2 font-semibold cursor-pointer"
                 >
                   <option value="">{t("اختر القسم…", "Select department…")}</option>
                   {DEPARTMENTS.map((d) => (
@@ -228,11 +232,11 @@ export default function SendAlertModal({ approved, adminEmail, onClose }: Props)
             )}
 
             {alertForm.recipient === "individual" && (
-              <div className="space-y-2 border-2 border-zinc-900 dark:border-zinc-700 rounded p-3 bg-zinc-50 dark:bg-zinc-800/50">
+              <div className="space-y-2 border border-zinc-200/80 dark:border-zinc-800 rounded-xl p-3.5 bg-zinc-50/70 dark:bg-zinc-800/50">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <label className="block text-zinc-800 dark:text-zinc-200 font-bold uppercase">
+                  <label className="block text-zinc-800 dark:text-zinc-200 font-semibold uppercase">
                     {t("اختر الموظفين المستلمين *", "Select Recipient Workers *")}
-                    <span className="ms-2 inline-flex items-center px-2 py-0.5 rounded bg-red-600 text-white text-[10px] font-black">
+                    <span className="ms-2 inline-flex items-center px-2 py-0.5 rounded-full bg-red-600 text-white text-[10px] font-bold">
                       {t(`تم اختيار ${alertForm.workerIds.length} موظف`, `${alertForm.workerIds.length} selected`)}
                     </span>
                   </label>
@@ -245,7 +249,7 @@ export default function SendAlertModal({ approved, adminEmail, onClose }: Props)
                           workerIds: approved.map((w) => w.id),
                         }))
                       }
-                      className="px-2 py-1 text-[10px] font-bold bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900 rounded cursor-pointer hover:opacity-90"
+                      className="px-2.5 py-1 text-[10px] font-semibold bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900 rounded-lg cursor-pointer hover:opacity-90"
                     >
                       {t("✓ تحديد الكل", "✓ Select All")}
                     </button>
@@ -258,7 +262,7 @@ export default function SendAlertModal({ approved, adminEmail, onClose }: Props)
                           workerId: "",
                         }))
                       }
-                      className="px-2 py-1 text-[10px] font-bold border border-zinc-400 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 rounded cursor-pointer hover:bg-zinc-100"
+                      className="px-2.5 py-1 text-[10px] font-semibold border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 rounded-lg cursor-pointer hover:bg-zinc-100"
                     >
                       {t("✕ إلغاء الكل", "✕ Clear")}
                     </button>
@@ -270,10 +274,10 @@ export default function SendAlertModal({ approved, adminEmail, onClose }: Props)
                   value={alertForm.workerSearch}
                   onChange={(e) => setAlertForm({ ...alertForm, workerSearch: e.target.value })}
                   placeholder={t("🔍 ابحث باسم الموظف أو القسم...", "🔍 Search worker by name or department...")}
-                  className="w-full bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2.5 py-1.5 text-xs rounded focus:outline-none focus:ring-2 focus:ring-red-600"
+                  className="w-full brutal-input px-2.5 py-1.5 text-xs"
                 />
 
-                <div className="max-h-44 overflow-y-auto divide-y divide-zinc-200 dark:divide-zinc-700 border border-zinc-200 dark:border-zinc-700 rounded bg-white dark:bg-zinc-900">
+                <div className="max-h-44 overflow-y-auto divide-y divide-zinc-200/70 dark:divide-zinc-800 border border-zinc-200/80 dark:border-zinc-800 rounded-xl bg-white dark:bg-zinc-900">
                   {approved
                     .filter((w) => {
                       const q = alertForm.workerSearch.trim().toLowerCase();
@@ -291,7 +295,7 @@ export default function SendAlertModal({ approved, adminEmail, onClose }: Props)
                           key={w.id}
                           className={`flex items-center justify-between gap-2 px-3 py-2 cursor-pointer transition-colors ${
                             checked
-                              ? "bg-red-50/80 dark:bg-red-950/30 font-bold text-red-900 dark:text-red-200"
+                              ? "bg-red-50/80 dark:bg-red-950/30 font-semibold text-red-900 dark:text-red-200"
                               : "hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
                           }`}
                         >
@@ -316,7 +320,7 @@ export default function SendAlertModal({ approved, adminEmail, onClose }: Props)
                             />
                             <span className="truncate">{workerName(w)}</span>
                           </div>
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 shrink-0">
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 shrink-0">
                             {w.department || "General"}
                           </span>
                         </label>
@@ -327,7 +331,7 @@ export default function SendAlertModal({ approved, adminEmail, onClose }: Props)
             )}
 
             <div>
-              <label className="block text-zinc-700 dark:text-zinc-300 font-bold uppercase mb-1">
+              <label className="block text-zinc-700 dark:text-zinc-300 font-semibold uppercase mb-1.5">
                 {t("عنوان التنبيه *", "Title *")}
               </label>
               <input
@@ -335,13 +339,13 @@ export default function SendAlertModal({ approved, adminEmail, onClose }: Props)
                 required
                 value={alertForm.title}
                 onChange={(e) => setAlertForm({ ...alertForm, title: e.target.value })}
-                className="w-full bg-white dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 px-3 py-2 text-zinc-950 dark:text-zinc-100 font-bold rounded focus:outline-none focus:ring-2 focus:ring-red-600"
+                className="w-full brutal-input px-3 py-2 font-semibold"
                 placeholder={t("عنوان مختصر للتنبيه", "Brief subject")}
               />
             </div>
 
             <div>
-              <label className="block text-zinc-700 dark:text-zinc-300 font-bold uppercase mb-1">
+              <label className="block text-zinc-700 dark:text-zinc-300 font-semibold uppercase mb-1.5">
                 {t("نص الرسالة *", "Message *")}
               </label>
               <textarea
@@ -349,22 +353,22 @@ export default function SendAlertModal({ approved, adminEmail, onClose }: Props)
                 required
                 value={alertForm.message}
                 onChange={(e) => setAlertForm({ ...alertForm, message: e.target.value })}
-                className="w-full bg-white dark:bg-zinc-800 border-2 border-zinc-900 dark:border-zinc-700 px-3 py-2 text-zinc-950 dark:text-zinc-100 font-mono rounded focus:outline-none focus:ring-2 focus:ring-red-600 resize-none"
+                className="w-full brutal-input px-3 py-2 resize-none"
                 placeholder={t("اكتب تفاصيل التعميم أو التنبيه...", "Full notice text...")}
               />
             </div>
 
-            <div className="flex gap-2 justify-end pt-3 border-t-2 border-zinc-900 dark:border-zinc-700">
+            <div className="flex gap-2 justify-end pt-3 border-t border-zinc-200 dark:border-zinc-800">
               <button
                 type="button"
                 onClick={() => onClose()}
-                className="px-4 py-2 border-2 border-zinc-900 dark:border-zinc-700 bg-white dark:bg-zinc-800 hover:bg-zinc-100 text-zinc-950 dark:text-zinc-100 font-bold cursor-pointer rounded"
+                className="brutal-btn-outline px-4 py-2 text-xs cursor-pointer"
               >
                 {t("إلغاء", "Cancel")}
               </button>
               <button
                 type="submit"
-                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-bold uppercase tracking-wider border-2 border-zinc-900 shadow-[2px_2px_0px_0px_#09090b] cursor-pointer rounded"
+                className="px-5 py-2 bg-red-600 hover:bg-red-700 text-white font-semibold text-xs rounded-lg shadow-xs cursor-pointer transition-colors"
               >
                 {t("إرسال التنبيه", "Send Alert")}
               </button>
