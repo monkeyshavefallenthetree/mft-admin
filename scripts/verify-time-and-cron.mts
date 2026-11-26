@@ -650,6 +650,8 @@ await test("PWA manifest, PNG icons, layout apple-mobile-web-app-capable meta, &
 
   const vercel = JSON.parse(fs.readFileSync(path.join(rootDir, "vercel.json"), "utf8"));
   assert.equal(vercel.crons[0].path, "/api/cron/reconcile-shifts");
+  // Daily schedule ensures Vercel Hobby & Pro deployments both succeed (sub-daily */N crons fail Hobby deploys)
+  assert.equal(vercel.crons[0].schedule, "0 22 * * *");
 });
 
 await test("verifyAdminFirebaseIdToken allows super_admin/hr_admin emails and rejects ops_admin (mayamahmoud@mft.com)", async () => {

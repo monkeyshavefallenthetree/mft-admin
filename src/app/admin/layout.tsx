@@ -460,8 +460,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           </div>
         </div>
 
-        {/* Glass Command Search Trigger */}
-        <div className={`px-3 pt-2 ${collapsed ? "lg:px-2.5" : ""}`}>
+        {/* Glass Command Search & Super AI Triggers */}
+        <div className={`space-y-2 px-3 pt-2 ${collapsed ? "lg:px-2.5" : ""}`}>
           <button
             type="button"
             id="sidebar-search"
@@ -483,6 +483,34 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               }`}
             >
               ⌘K
+            </kbd>
+          </button>
+
+          <button
+            type="button"
+            id="sidebar-super-ai"
+            onClick={() => {
+              setMobileOpen(false);
+              setAiOpen(true);
+            }}
+            title="Open MFT Super AI Assistant (Ctrl/Cmd+J)"
+            className={`flex w-full items-center gap-2.5 rounded-xl border border-red-500/35 bg-gradient-to-r from-red-600/25 via-rose-600/20 to-red-700/15 px-3 py-2 text-left text-[12.5px] font-semibold text-white shadow-sm shadow-red-950/30 transition-all hover:border-red-400/60 hover:from-red-600/40 hover:to-rose-600/30 cursor-pointer ${
+              collapsed ? "lg:justify-center lg:px-0" : ""
+            }`}
+          >
+            <Icon
+              d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z"
+              className="h-4 w-4 shrink-0 text-red-400"
+            />
+            <span className={`flex-1 truncate ${collapsed ? "lg:hidden" : ""}`}>
+              Super AI
+            </span>
+            <kbd
+              className={`rounded border border-red-400/30 bg-red-500/20 px-1.5 py-0.5 font-code text-[10px] font-semibold text-red-200 ${
+                collapsed ? "lg:hidden" : ""
+              }`}
+            >
+              ⌘J
             </kbd>
           </button>
         </div>
@@ -1184,6 +1212,26 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         onToggleSidebar={toggleCollapsed}
         onOpenAi={() => setAiOpen(true)}
       />
+      {!aiOpen && (
+        <button
+          type="button"
+          id="floating-super-ai"
+          onClick={() => setAiOpen(true)}
+          aria-label="Open MFT Super AI Assistant"
+          title="Open MFT Super AI Assistant (Ctrl/Cmd+J)"
+          className="mft-no-print fixed bottom-5 right-5 z-30 inline-flex items-center gap-2 rounded-full border border-red-500/40 bg-zinc-950/95 px-4 py-2.5 text-xs font-bold text-white shadow-xl shadow-zinc-950/30 ring-1 ring-white/10 backdrop-blur-md transition-all hover:scale-[1.03] hover:border-red-500 hover:bg-red-600 cursor-pointer"
+        >
+          <Icon
+            d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z"
+            className="h-4 w-4 text-red-400"
+          />
+          <span>Super AI</span>
+          <kbd className="hidden rounded bg-white/15 px-1.5 py-0.5 font-code text-[9px] font-semibold text-zinc-200 sm:inline">
+            ⌘J
+          </kbd>
+        </button>
+      )}
+
       <AdminAiDrawer
         open={aiOpen}
         onClose={() => setAiOpen(false)}
