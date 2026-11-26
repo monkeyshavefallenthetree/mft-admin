@@ -7,7 +7,7 @@
     "build": "next build --webpack",
     "start": "next start -p 3001",
     "lint": "eslint",
-    "test": "node scripts/verify-hrPolicy2026.mts && node scripts/verify-time-and-cron.mts"
+    "test": "node scripts/verify-hrPolicy2026.mts && node scripts/verify-time-and-cron.mts && node scripts/verify-admin-ai.mts"
   },
   "dependencies": {
     "@types/web-push": "^3.6.4",

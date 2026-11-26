@@ -35,7 +35,7 @@ export function isValidExpoToken(token: unknown): token is string {
 
 export function subscribeAdminChatNotifications(
   db: Firestore,
-  callback: (notifications: ChatNotification[]) => void,
+  callback: (notifications: ChatNotification[], meta?: { fromCache: boolean }) => void,
 ): Unsubscribe {
   const q = query(
     collection(db, "chatNotifications"),
@@ -43,6 +43,7 @@ export function subscribeAdminChatNotifications(
   );
   return onSnapshot(
     q,
+    { includeMetadataChanges: true },
     (snap) => {
       const notifs = snap.docs
         .map((d) => ({ id: d.id, ...d.data() }) as ChatNotification)
@@ -52,11 +53,11 @@ export function subscribeAdminChatNotifications(
           const tb = b.createdAt?.toDate().getTime() ?? 0;
           return tb - ta;
         });
-      callback(notifs);
+      callback(notifs, { fromCache: snap.metadata.fromCache });
     },
     (err) => {
       console.error("[ChatNotifications] listener error:", err.message, err);
-      callback([]);
+      callback([], { fromCache: false });
     },
   );
 }

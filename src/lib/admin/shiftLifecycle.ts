@@ -76,9 +76,9 @@ export interface EvaluateShiftOptions {
   todayCairoYmd?: string;
   standardHours?: number;
   /**
-   * Authoritative total active/approved overtime minutes for this worker & date
-   * (e.g. from `exceptionRequests` where `type === "overtime"` and `status !== "rejected"`).
-   * When omitted, falls back to `session.overtimeMinutes`.
+   * Authoritative admin-approved overtime minutes for this worker & date
+   * (strictly from `exceptionRequests` where `type === "overtime"` and `status === "approved"`).
+   * When omitted, defaults to `0` — never trusts raw `session.overtimeMinutes` or `session.allowedShiftMs`.
    */
   overtimeMinutes?: number;
   /** Grace window after `shiftLimitAtMs` before automatic clock-out triggers (default 2 min). */
@@ -148,6 +148,41 @@ export function toMillisSafe(val: ShiftDateLike): number | null {
   return null;
 }
 
+export interface OvertimeExceptionLike {
+  type?: string;
+  status?: string;
+  exceptionDate?: string;
+  date?: string;
+  lateMinutes?: number | null;
+  overtimeMinutes?: number | null;
+}
+
+/**
+ * Authoritative approved overtime minutes for a given Cairo date.
+ * Strictly counts ONLY `type === "overtime"` with `status === "approved"`.
+ * Pending or rejected requests ALWAYS contribute 0.
+ */
+export function resolveTodayOvertimeMinutes(
+  dateYmd: string,
+  exceptions: OvertimeExceptionLike[] | null | undefined,
+): number {
+  if (!dateYmd || !Array.isArray(exceptions)) return 0;
+  let total = 0;
+  for (const x of exceptions) {
+    if (!x || x.type !== "overtime") continue;
+    if (String(x.status || "") !== "approved") continue;
+    const d = (x.exceptionDate || x.date || "").slice(0, 10);
+    if (d !== dateYmd) continue;
+    const mins = Number(x.lateMinutes ?? x.overtimeMinutes ?? 0);
+    if (Number.isFinite(mins) && mins > 0) total += mins;
+  }
+  return total;
+}
+
+export function isMissionSession(session: Pick<ShiftSessionInput, "id" | "isExternalMission">): boolean {
+  return Boolean(session.isExternalMission || (typeof session.id === "string" && session.id.startsWith("mission_")));
+}
+
 export function computeAllowedShiftMs(standardHours = 8, overtimeMinutes = 0): number {
   const std = Number.isFinite(standardHours) && standardHours > 0 ? Math.min(standardHours, 16) : 8;
   const ot = Number.isFinite(overtimeMinutes) && overtimeMinutes > 0 ? overtimeMinutes : 0;
@@ -156,11 +191,10 @@ export function computeAllowedShiftMs(standardHours = 8, overtimeMinutes = 0): n
 
 export function resolveSessionAnchors(
   session: ShiftSessionInput,
-  nowMs: number,
 ): {
   sessionYmd: string | null;
   firstClockInMs: number | null;
-  segmentStartMs: number;
+  segmentStartMs: number | null;
   priorBankedMs: number;
   storedMs: number;
 } {
@@ -219,10 +253,11 @@ export function resolveSessionAnchors(
     };
   }
 
+  // Never fabricate segmentStartMs = nowMs when real clock-in timestamps are absent
   return {
     sessionYmd,
     firstClockInMs,
-    segmentStartMs: firstClockInMs ?? nowMs,
+    segmentStartMs: firstClockInMs,
     priorBankedMs: storedMs,
     storedMs,
   };
@@ -296,51 +331,53 @@ export function evaluateShiftLifecycle(
   const overtimeMinutes =
     typeof opts.overtimeMinutes === "number" && Number.isFinite(opts.overtimeMinutes)
       ? Math.max(0, opts.overtimeMinutes)
-      : typeof session.overtimeMinutes === "number" && Number.isFinite(session.overtimeMinutes)
-        ? Math.max(0, session.overtimeMinutes)
-        : 0;
+      : 0;
 
-  const computedAllowed = computeAllowedShiftMs(standardHours, overtimeMinutes);
-  const allowedMs =
-    opts.overtimeMinutes !== undefined || opts.standardHours !== undefined
-      ? computedAllowed
-      : typeof session.allowedShiftMs === "number" && Number.isFinite(session.allowedShiftMs) && session.allowedShiftMs > 0
-        ? Math.min(MAX_ABSOLUTE_SHIFT_MS, session.allowedShiftMs)
-        : computedAllowed;
+  const allowedMs = computeAllowedShiftMs(standardHours, overtimeMinutes);
 
-  const anchors = resolveSessionAnchors(session, nowMs);
-  const shiftLimitAtMs = computeShiftLimitAtMs({
-    firstClockInMs: anchors.firstClockInMs,
-    segmentStartMs: anchors.segmentStartMs,
-    priorBankedMs: anchors.priorBankedMs,
-    allowedMs,
-    overtimeMinutes,
-    policySettings: opts.policySettings
-      ? { ...opts.policySettings, standardHours }
-      : { standardHours },
-  });
-  const autoClockOutDeadlineMs = shiftLimitAtMs + autoClockOutGraceMs;
+  const anchors = resolveSessionAnchors(session);
+  const validClockIn =
+    Boolean(session.isActive) &&
+    !isMissionSession(session) &&
+    anchors.firstClockInMs != null &&
+    anchors.segmentStartMs != null;
 
-  const rawElapsedMs = session.isActive
-    ? anchors.priorBankedMs + Math.max(0, nowMs - anchors.segmentStartMs)
+  const segStart = anchors.segmentStartMs ?? 0;
+  const shiftLimitAtMs = validClockIn
+    ? computeShiftLimitAtMs({
+        firstClockInMs: anchors.firstClockInMs,
+        segmentStartMs: segStart,
+        priorBankedMs: anchors.priorBankedMs,
+        allowedMs,
+        overtimeMinutes,
+        policySettings: opts.policySettings
+          ? { ...opts.policySettings, standardHours }
+          : { standardHours },
+      })
+    : 0;
+  const autoClockOutDeadlineMs = validClockIn ? shiftLimitAtMs + autoClockOutGraceMs : 0;
+
+  const rawElapsedMs = validClockIn
+    ? anchors.priorBankedMs + Math.max(0, nowMs - segStart)
     : anchors.storedMs;
-  const effectiveElapsedMs = session.isActive
+  const effectiveElapsedMs = validClockIn
     ? Math.min(rawElapsedMs, allowedMs)
-    : anchors.storedMs;
+    : Math.min(anchors.storedMs, allowedMs);
 
-  const lastCheckInMs =
-    (typeof session.lastActiveCheckAtMs === "number" &&
-    Number.isFinite(session.lastActiveCheckAtMs) &&
-    session.lastActiveCheckAtMs > 0
-      ? session.lastActiveCheckAtMs
-      : null) ??
-    toMillisSafe(session.lastActiveCheckAt) ??
-    anchors.segmentStartMs;
+  const lastCheckInMs = validClockIn
+    ? (typeof session.lastActiveCheckAtMs === "number" &&
+      Number.isFinite(session.lastActiveCheckAtMs) &&
+      session.lastActiveCheckAtMs > 0
+        ? session.lastActiveCheckAtMs
+        : null) ??
+      toMillisSafe(session.lastActiveCheckAt) ??
+      segStart
+    : 0;
 
   const base: Omit<ShiftLifecycleResult, "action"> = {
     sessionYmd: anchors.sessionYmd,
     firstClockInMs: anchors.firstClockInMs,
-    segmentStartMs: anchors.segmentStartMs,
+    segmentStartMs: segStart,
     priorBankedMs: anchors.priorBankedMs,
     standardHours,
     overtimeMinutes,
@@ -353,7 +390,9 @@ export function evaluateShiftLifecycle(
     cappedLogoutMs: null,
     cappedTotalWorkTimeMs: null,
     lastCheckInMs,
-    checkInSecondsRemaining: Math.max(0, Math.ceil((lastCheckInMs + CHECKIN_CYCLE_MS - nowMs) / 1000)),
+    checkInSecondsRemaining: validClockIn
+      ? Math.max(0, Math.ceil((lastCheckInMs + CHECKIN_CYCLE_MS - nowMs) / 1000))
+      : 0,
     shouldSendAutoClockOutPush: false,
     shouldSendShiftCompletePush: false,
     shouldSendWarningPush: false,
@@ -361,7 +400,7 @@ export function evaluateShiftLifecycle(
     shouldMarkIdle: false,
   };
 
-  if (!session.isActive || session.isExternalMission) {
+  if (!validClockIn) {
     return { ...base, action: "inactive" };
   }
 
@@ -369,9 +408,9 @@ export function evaluateShiftLifecycle(
   if (anchors.sessionYmd && anchors.sessionYmd < todayCairoYmd) {
     const endOfDayMs = cairoEndOfDayMs(anchors.sessionYmd);
     const boundedEndMs = Number.isFinite(endOfDayMs) ? Math.min(shiftLimitAtMs, endOfDayMs) : shiftLimitAtMs;
-    const cappedLogoutMs = Math.max(anchors.segmentStartMs, boundedEndMs);
+    const cappedLogoutMs = Math.max(segStart, boundedEndMs);
     const cappedTotalWorkTimeMs = Math.min(
-      Math.max(anchors.priorBankedMs, anchors.priorBankedMs + Math.max(0, cappedLogoutMs - anchors.segmentStartMs)),
+      Math.max(anchors.priorBankedMs, anchors.priorBankedMs + Math.max(0, cappedLogoutMs - segStart)),
       allowedMs,
     );
     return {
@@ -387,9 +426,9 @@ export function evaluateShiftLifecycle(
 
   // Priority 2: Overdue shift auto clock-out (strictly suppresses 2h check-in, warning & shift_complete)
   if (nowMs >= autoClockOutDeadlineMs) {
-    const cappedLogoutMs = Math.max(anchors.segmentStartMs, shiftLimitAtMs);
+    const cappedLogoutMs = Math.max(segStart, shiftLimitAtMs);
     const cappedTotalWorkTimeMs = Math.min(
-      Math.max(anchors.priorBankedMs, anchors.priorBankedMs + Math.max(0, cappedLogoutMs - anchors.segmentStartMs)),
+      Math.max(anchors.priorBankedMs, anchors.priorBankedMs + Math.max(0, cappedLogoutMs - segStart)),
       allowedMs,
     );
     return {

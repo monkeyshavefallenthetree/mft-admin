@@ -35,6 +35,39 @@ export interface AdminNotificationDoc {
   readBy: string[];
   createdAt: { toDate: () => Date } | null;
   _sourceCollection?: "adminNotifications" | "alerts";
+  _hasPendingWrites?: boolean;
+}
+
+export interface AdminNotificationsSnapshotMeta {
+  ready: boolean;
+  fromCache: boolean;
+}
+
+function normalizeAdminRole(role: unknown): AdminRole | null {
+  if (role === "account_manager") return "ops_admin";
+  if (role === "super_admin" || role === "ops_admin" || role === "hr_admin") return role;
+  return null;
+}
+
+export function getAdminNotificationCreatedMs(
+  item: Pick<AdminNotificationDoc, "createdAt" | "_hasPendingWrites">,
+): number | null {
+  const raw = item.createdAt as unknown;
+  if (raw && typeof raw === "object") {
+    if ("toDate" in raw && typeof (raw as { toDate?: unknown }).toDate === "function") {
+      const ms = (raw as { toDate: () => Date }).toDate().getTime();
+      if (Number.isFinite(ms)) return ms;
+    }
+    if ("seconds" in raw && typeof (raw as { seconds?: unknown }).seconds === "number") {
+      const rec = raw as { seconds: number; nanoseconds?: unknown };
+      const nanos = typeof rec.nanoseconds === "number" ? rec.nanoseconds : 0;
+      const ms = rec.seconds * 1000 + Math.floor(nanos / 1_000_000);
+      if (Number.isFinite(ms)) return ms;
+    }
+  } else if (typeof raw === "number" && Number.isFinite(raw)) {
+    return raw;
+  }
+  return item._hasPendingWrites ? Date.now() : null;
 }
 
 export interface NotifyAdminsInput {
@@ -132,7 +165,7 @@ export async function sendWebPushToAdminsFromAdmin(
       return;
     }
 
-    const role = data.role as AdminRole | undefined;
+    const role = normalizeAdminRole(data.role);
     if (role && !opts.roles.includes(role)) return;
 
     const addSub = (s: StoredPushSubscription) => {
@@ -209,7 +242,10 @@ export async function sendWebPushToAdminsFromAdmin(
 }
 
 export async function notifyAdmins(db: Firestore, input: NotifyAdminsInput): Promise<void> {
-  const roles = Array.from(new Set<AdminRole>(["super_admin", ...input.targetRoles]));
+  const normalizedInputRoles = input.targetRoles
+    .map((r) => normalizeAdminRole(r))
+    .filter((r): r is AdminRole => r !== null);
+  const roles = Array.from(new Set<AdminRole>(["super_admin", ...normalizedInputRoles]));
 
   const payload = {
     targetRoles: roles,
@@ -263,7 +299,7 @@ export async function notifyAdmins(db: Firestore, input: NotifyAdminsInput): Pro
 export function subscribeAdminNotifications(
   db: Firestore,
   role: AdminRole,
-  callback: (items: AdminNotificationDoc[]) => void,
+  callback: (items: AdminNotificationDoc[], meta: AdminNotificationsSnapshotMeta) => void,
 ): Unsubscribe {
   const qPrimary =
     role === "super_admin"
@@ -274,49 +310,89 @@ export function subscribeAdminNotifications(
 
   let primaryDocs: AdminNotificationDoc[] = [];
   let fallbackDocs: AdminNotificationDoc[] = [];
+  let primaryReady = false;
+  let fallbackReady = false;
+  let primaryFromCache = true;
+  let fallbackFromCache = true;
 
   const emitMerged = () => {
+    // Wait until both listeners have resolved at least once so the consumer
+    // never treats a partial/empty first emission as the baseline and blasts
+    // historical alerts when the second listener arrives.
+    const ready = primaryReady && fallbackReady;
+    if (!ready) return;
+
     const map = new Map<string, AdminNotificationDoc>();
     for (const item of [...primaryDocs, ...fallbackDocs]) {
-      if (role !== "super_admin") {
-        if (!Array.isArray(item.targetRoles) || !item.targetRoles.includes(role)) continue;
-      }
-      map.set(item.id, item);
+      const normalizedRoles = Array.isArray(item.targetRoles)
+        ? item.targetRoles
+            .map((r) => normalizeAdminRole(r))
+            .filter((r): r is AdminRole => r !== null)
+        : [];
+      if (role !== "super_admin" && !normalizedRoles.includes(role)) continue;
+      map.set(item.id, { ...item, targetRoles: normalizedRoles });
     }
     const list = Array.from(map.values())
       .sort((a, b) => {
-        const ta = a.createdAt?.toDate?.()?.getTime() ?? Date.now();
-        const tb = b.createdAt?.toDate?.()?.getTime() ?? Date.now();
+        // Corrupt/legacy docs missing `createdAt` sort to 0 instead of Date.now()
+        // so they never pin to the top or masquerade as live alerts.
+        const ta = getAdminNotificationCreatedMs(a) ?? 0;
+        const tb = getAdminNotificationCreatedMs(b) ?? 0;
         return tb - ta;
       })
       .slice(0, 40);
-    callback(list);
+    callback(list, {
+      ready: true,
+      fromCache: primaryFromCache || fallbackFromCache,
+    });
   };
 
   const unsub1 = onSnapshot(
     qPrimary,
+    { includeMetadataChanges: true },
     (snap) => {
       primaryDocs = snap.docs.map(
-        (d) => ({ id: d.id, ...d.data(), _sourceCollection: "adminNotifications" }) as AdminNotificationDoc,
+        (d) =>
+          ({
+            id: d.id,
+            ...d.data(),
+            _sourceCollection: "adminNotifications",
+            _hasPendingWrites: d.metadata.hasPendingWrites,
+          }) as AdminNotificationDoc,
       );
+      primaryReady = true;
+      primaryFromCache = snap.metadata.fromCache;
       emitMerged();
     },
     () => {
       primaryDocs = [];
+      primaryReady = true;
+      primaryFromCache = false;
       emitMerged();
     },
   );
 
   const unsub2 = onSnapshot(
     qFallback,
+    { includeMetadataChanges: true },
     (snap) => {
       fallbackDocs = snap.docs.map(
-        (d) => ({ id: d.id, ...d.data(), _sourceCollection: "alerts" }) as AdminNotificationDoc,
+        (d) =>
+          ({
+            id: d.id,
+            ...d.data(),
+            _sourceCollection: "alerts",
+            _hasPendingWrites: d.metadata.hasPendingWrites,
+          }) as AdminNotificationDoc,
       );
+      fallbackReady = true;
+      fallbackFromCache = snap.metadata.fromCache;
       emitMerged();
     },
     () => {
       fallbackDocs = [];
+      fallbackReady = true;
+      fallbackFromCache = false;
       emitMerged();
     },
   );

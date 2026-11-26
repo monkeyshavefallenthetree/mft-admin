@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   collection,
   query,
+  where,
   onSnapshot,
   doc,
   updateDoc,
@@ -137,11 +138,26 @@ function formatTaskDueDate(d: unknown) {
   return "No due date";
 }
 
+interface LiveActiveSession {
+  id: string;
+  workerId?: string;
+  date?: string;
+  isActive?: boolean;
+  isExternalMission?: boolean;
+  loginTime?: unknown;
+  startTime?: unknown;
+  presenceStatus?: "active" | "idle" | "offline";
+  currentTaskTitle?: string;
+  currentTaskNote?: string;
+}
+
 export default function AdminWorkersPage() {
   const [workers, setWorkers] = useState<Worker[]>([]);
+  const [activeSessions, setActiveSessions] = useState<LiveActiveSession[]>([]);
   const [projects, setProjects] = useState<ProjectOption[]>([]);
   const [allTasks, setAllTasks] = useState<WorkerTask[]>([]);
   const [loading, setLoading] = useState(true);
+  const todayStr = cairoYmd();
 
   // Filters (mirrored to the URL so they survive refresh / can be shared)
   const [searchFilter, setSearchFilter] = useUrlState("q");
@@ -202,6 +218,39 @@ export default function AdminWorkersPage() {
       },
     );
   }, []);
+
+  useEffect(() => {
+    const q = query(collection(db, "workSessions"), where("isActive", "==", true));
+    return onSnapshot(
+      q,
+      (snap) => {
+        const list: LiveActiveSession[] = [];
+        snap.forEach((d) => list.push({ id: d.id, ...d.data() } as LiveActiveSession));
+        setActiveSessions(list);
+      },
+      () => setActiveSessions([]),
+    );
+  }, []);
+
+  const liveActiveSessionsByWorker = useMemo(() => {
+    const approvedIds = new Set(workers.filter((w) => w.status === "approved").map((w) => w.id));
+    const map = new Map<string, LiveActiveSession>();
+    for (const s of activeSessions) {
+      if (
+        !s.workerId ||
+        !approvedIds.has(s.workerId) ||
+        !s.isActive ||
+        s.isExternalMission ||
+        s.id.startsWith("mission_") ||
+        s.date !== todayStr ||
+        (!s.loginTime && !s.startTime)
+      ) {
+        continue;
+      }
+      map.set(s.workerId, s);
+    }
+    return map;
+  }, [activeSessions, workers, todayStr]);
 
   useEffect(() => {
     return onSnapshot(collection(db, "projects"), (snap) => {
@@ -398,14 +447,14 @@ export default function AdminWorkersPage() {
       if (statusFilter && w.status !== statusFilter) return false;
       if (roleFilter && w.role !== roleFilter) return false;
       if (departmentFilter && (w.department || "") !== departmentFilter) return false;
-      if (onlineOnly && !w.isOnline) return false;
+      if (onlineOnly && !liveActiveSessionsByWorker.has(w.id)) return false;
       if (!q) return true;
 
       const skillsStr = Array.isArray(w.skills) ? w.skills.join(" ") : "";
       const blob = `${w.firstName} ${w.lastName} ${w.email} ${w.role} ${w.phone || ""} ${w.government || ""} ${w.city || ""} ${w.department || ""} ${skillsStr}`.toLowerCase();
       return blob.includes(q);
     });
-  }, [workers, searchFilter, statusFilter, roleFilter, departmentFilter, onlineOnly]);
+  }, [workers, searchFilter, statusFilter, roleFilter, departmentFilter, onlineOnly, liveActiveSessionsByWorker]);
 
   const clearWorkerFilters = () => {
     setSearchFilter("");
@@ -631,14 +680,13 @@ export default function AdminWorkersPage() {
   };
 
   const { isAr, dir, toggleLang, t } = useHrLang();
-  const todayStr = cairoYmd();
 
   const stats = {
     total: workers.length,
     approved: workers.filter((w) => w.status === "approved").length,
     pending: workers.filter((w) => w.status === "pending").length,
     rejected: workers.filter((w) => w.status === "rejected").length,
-    online: workers.filter((w) => w.isOnline).length,
+    online: workers.filter((w) => liveActiveSessionsByWorker.has(w.id)).length,
     missingHire: workers.filter((w) => w.status === "approved" && !w.hireDate).length,
   };
 
@@ -751,9 +799,15 @@ export default function AdminWorkersPage() {
   }, [workers, taskCounts]);
 
   const presenceSlices = useMemo(() => {
-    const activeOnline = workers.filter((w) => w.isOnline && w.presenceStatus !== "idle").length;
-    const idleOnline = workers.filter((w) => w.isOnline && w.presenceStatus === "idle").length;
-    const offlineApproved = workers.filter((w) => w.status === "approved" && !w.isOnline).length;
+    const activeOnline = workers.filter((w) => {
+      const live = liveActiveSessionsByWorker.get(w.id);
+      return Boolean(live) && (live?.presenceStatus ?? w.presenceStatus) !== "idle";
+    }).length;
+    const idleOnline = workers.filter((w) => {
+      const live = liveActiveSessionsByWorker.get(w.id);
+      return Boolean(live) && (live?.presenceStatus ?? w.presenceStatus) === "idle";
+    }).length;
+    const offlineApproved = workers.filter((w) => w.status === "approved" && !liveActiveSessionsByWorker.has(w.id)).length;
     const pendingCount = workers.filter((w) => w.status === "pending").length;
     return [
       { key: "active", label: t("نشط الآن", "Online Active"), value: activeOnline, color: "#10b981" },
@@ -761,7 +815,7 @@ export default function AdminWorkersPage() {
       { key: "offline", label: t("غير متصل", "Offline Approved"), value: offlineApproved, color: "#64748b" },
       { key: "pending", label: t("بانتظار الاعتماد", "Pending Approval"), value: pendingCount, color: "#f59e0b" },
     ];
-  }, [workers, t]);
+  }, [workers, liveActiveSessionsByWorker, t]);
 
   return (
     <div dir={dir} className="space-y-5 pb-24">
@@ -1038,6 +1092,10 @@ export default function AdminWorkersPage() {
           {filteredWorkers.map((worker) => {
             const tc = taskCounts.get(worker.id) ?? { open: 0, done: 0 };
             const isSel = selected.has(worker.id);
+            const liveSess = liveActiveSessionsByWorker.get(worker.id);
+            const liveOnline = Boolean(liveSess);
+            const livePresence = liveSess?.presenceStatus ?? worker.presenceStatus;
+            const liveTaskTitle = liveSess?.currentTaskTitle ?? worker.currentTaskTitle;
             return (
               <article key={worker.id} className={`ui-card ui-card-hover flex flex-col p-4 ${isSel ? "ring-2 ring-red-500/40" : ""}`}>
                 <div className="flex items-start gap-3">
@@ -1047,8 +1105,8 @@ export default function AdminWorkersPage() {
                       {initialsOf(worker)}
                       <span
                         className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full ring-2 ring-white ${
-                          worker.isOnline
-                            ? worker.presenceStatus === "idle"
+                          liveOnline
+                            ? livePresence === "idle"
                               ? "bg-red-600 animate-ping"
                               : "bg-emerald-500"
                             : "bg-zinc-300"
@@ -1060,12 +1118,12 @@ export default function AdminWorkersPage() {
                       <span className="block truncate text-xs text-zinc-500">
                         {formatRole(worker.role)} · {formatDepartment(worker.department)}
                       </span>
-                      {worker.isOnline && (
-                        <span className={`block truncate text-[11px] font-medium mt-0.5 ${worker.presenceStatus === "idle" ? "text-red-600 font-bold" : "text-emerald-600"}`}>
-                          {worker.presenceStatus === "idle"
+                      {liveOnline && (
+                        <span className={`block truncate text-[11px] font-medium mt-0.5 ${livePresence === "idle" ? "text-red-600 font-bold" : "text-emerald-600"}`}>
+                          {livePresence === "idle"
                             ? "⚠️ Station Idle (Missed check)"
-                            : worker.currentTaskTitle
-                            ? `📌 ${worker.currentTaskTitle}`
+                            : liveTaskTitle
+                            ? `📌 ${liveTaskTitle}`
                             : "🟢 Active (2h verified)"}
                         </span>
                       )}
@@ -1174,6 +1232,10 @@ export default function AdminWorkersPage() {
                   const tc = taskCounts.get(worker.id) ?? { open: 0, done: 0 };
                   const total = tc.open + tc.done;
                   const isSel = selected.has(worker.id);
+                  const liveSess = liveActiveSessionsByWorker.get(worker.id);
+                  const liveOnline = Boolean(liveSess);
+                  const livePresence = liveSess?.presenceStatus ?? worker.presenceStatus;
+                  const liveTaskTitle = liveSess?.currentTaskTitle ?? worker.currentTaskTitle;
                   return (
                     <tr key={worker.id} className={`group transition-colors ${isSel ? "bg-red-50/50" : "hover:bg-zinc-50"}`}>
                       <td className="px-4 py-3">
@@ -1185,8 +1247,8 @@ export default function AdminWorkersPage() {
                             {initialsOf(worker)}
                             <span
                               className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-white ${
-                                worker.isOnline
-                                  ? worker.presenceStatus === "idle"
+                                liveOnline
+                                  ? livePresence === "idle"
                                     ? "bg-red-600 animate-ping"
                                     : "bg-emerald-500"
                                   : "bg-zinc-300"
@@ -1247,8 +1309,8 @@ export default function AdminWorkersPage() {
                       </td>
                       <td className="px-4 py-3 text-xs text-zinc-600">{[worker.government, worker.city].filter(Boolean).join(", ") || "—"}</td>
                       <td className="px-4 py-3 text-xs text-zinc-600">
-                        {worker.isOnline ? (
-                          worker.presenceStatus === "idle" ? (
+                        {liveOnline ? (
+                          livePresence === "idle" ? (
                             <div className="flex flex-col">
                               <span className="inline-flex items-center gap-1 font-bold text-red-600">
                                 <span className="h-1.5 w-1.5 rounded-full bg-red-600 animate-ping" />
@@ -1262,9 +1324,9 @@ export default function AdminWorkersPage() {
                                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
                                 Active (2h OK)
                               </span>
-                              {worker.currentTaskTitle && (
-                                <span className="text-[10px] text-zinc-500 truncate max-w-[140px]" title={worker.currentTaskTitle}>
-                                  📌 {worker.currentTaskTitle}
+                              {liveTaskTitle && (
+                                <span className="text-[10px] text-zinc-500 truncate max-w-[140px]" title={liveTaskTitle}>
+                                  📌 {liveTaskTitle}
                                 </span>
                               )}
                             </div>
@@ -1311,7 +1373,13 @@ export default function AdminWorkersPage() {
       </BulkBar>
 
       {/* Complete Worker 360 Detail Modal */}
-      {detailWorker && (
+      {detailWorker && (() => {
+        const detailLiveSess = liveActiveSessionsByWorker.get(detailWorker.id);
+        const detailLiveOnline = Boolean(detailLiveSess);
+        const detailPresence = detailLiveSess?.presenceStatus ?? detailWorker.presenceStatus;
+        const detailTaskTitle = detailLiveSess?.currentTaskTitle ?? detailWorker.currentTaskTitle;
+        const detailTaskNote = detailLiveSess?.currentTaskNote ?? detailWorker.currentTaskNote;
+        return (
         <ModalPortal onClose={() => setDetailWorker(null)}>
           <div
             className="fixed inset-0 z-[120] bg-zinc-950/55 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in"
@@ -1341,15 +1409,15 @@ export default function AdminWorkersPage() {
                       </span>
                       <span
                         className={`px-2.5 py-0.5 font-semibold border rounded-full ${
-                          detailWorker.isOnline
-                            ? detailWorker.presenceStatus === "idle"
+                          detailLiveOnline
+                            ? detailPresence === "idle"
                               ? "bg-red-50 text-red-700 border-red-200"
                               : "bg-emerald-50 text-emerald-700 border-emerald-200"
                             : "bg-zinc-100 text-zinc-500 border-zinc-200"
                         }`}
                       >
-                        {detailWorker.isOnline
-                          ? detailWorker.presenceStatus === "idle"
+                        {detailLiveOnline
+                          ? detailPresence === "idle"
                             ? "⚠️ Idle (Missed 2h Check)"
                             : "● Online (2h Active)"
                           : "○ Offline"}
@@ -1368,31 +1436,31 @@ export default function AdminWorkersPage() {
               </div>
 
               {/* Active Presence Banner in Drawer */}
-              {detailWorker.isOnline && (
+              {detailLiveOnline && (
                 <div
                   className={`mb-5 p-3.5 rounded-xl border ${
-                    detailWorker.presenceStatus === "idle"
+                    detailPresence === "idle"
                       ? "bg-red-50/70 border-red-200 text-red-950"
                       : "bg-emerald-50/70 border-emerald-200 text-emerald-950"
                   }`}
                 >
                   <div className="flex items-center justify-between text-xs font-semibold mb-1">
                     <span className="flex items-center gap-1.5">
-                      <span className={`h-2 w-2 rounded-full ${detailWorker.presenceStatus === "idle" ? "bg-red-600 animate-ping" : "bg-emerald-600"}`} />
+                      <span className={`h-2 w-2 rounded-full ${detailPresence === "idle" ? "bg-red-600 animate-ping" : "bg-emerald-600"}`} />
                       2-Hour Presence Status
                     </span>
-                    <span className="font-bold">{detailWorker.presenceStatus === "idle" ? "Station Idle / Unresponsive" : "Active & Verified"}</span>
+                    <span className="font-bold">{detailPresence === "idle" ? "Station Idle / Unresponsive" : "Active & Verified"}</span>
                   </div>
-                  {detailWorker.currentTaskTitle ? (
+                  {detailTaskTitle ? (
                     <p className="text-xs font-semibold">
-                      Current Task: <span className="font-normal">{detailWorker.currentTaskTitle}</span>
+                      Current Task: <span className="font-normal">{detailTaskTitle}</span>
                     </p>
                   ) : (
                     <p className="text-xs text-zinc-600">Currently active on general shift operations.</p>
                   )}
-                  {detailWorker.currentTaskNote && (
+                  {detailTaskNote && (
                     <p className="text-xs italic text-zinc-600 mt-1">
-                      Note: &ldquo;{detailWorker.currentTaskNote}&rdquo;
+                      Note: &ldquo;{detailTaskNote}&rdquo;
                     </p>
                   )}
                 </div>
@@ -1684,7 +1752,8 @@ export default function AdminWorkersPage() {
             </div>
           </div>
         </ModalPortal>
-      )}
+        );
+      })()}
 
       {/* Assign Task Modal */}
       {assignModalWorker && (

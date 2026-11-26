@@ -7,6 +7,7 @@ import {
   formatDepartment,
   performanceRating,
   productivityScore,
+  sessionDateYmd,
   workerSessionsInRange,
   type HrSettings,
 } from "@/lib/admin/hrReports";
@@ -23,6 +24,7 @@ interface Props {
   settings: HrSettings;
   activePeriod: HrData["activePeriod"];
   workerTaskStats: HrData["workerTaskStats"];
+  approvedOtByKey?: Map<string, number>;
   setOnboardModalWorker: (w: Worker) => void;
   setPayslipModalWorker: (w: Worker) => void;
   setDashboardWorker: (w: Worker) => void;
@@ -34,6 +36,7 @@ export default function TeamTab({
   settings,
   activePeriod,
   workerTaskStats,
+  approvedOtByKey,
   setOnboardModalWorker,
   setPayslipModalWorker,
   setDashboardWorker,
@@ -54,12 +57,27 @@ export default function TeamTab({
     });
   }, [approved, workerSearch, departmentFilter, employmentFilter]);
 
+  const stdHours = settings.standardHours || 8;
+
   const teamProductivityChart = useMemo(() => {
     return filteredHrWorkers
       .map((w) => {
         const ws = workerSessionsInRange(sessions, w.id, activePeriod.start, activePeriod.end);
         const ts = workerTaskStats.get(w.id) || { completed: 0, total: 0 };
-        const totalHours = Math.round(ws.reduce((sum, s) => sum + sessionHours(s), 0) * 10) / 10;
+        const totalHours =
+          Math.round(
+            ws.reduce((sum, s) => {
+              const dKey = sessionDateYmd(s);
+              const approvedOtMins = dKey ? (approvedOtByKey?.get(`${w.id}|${dKey}`) ?? 0) : 0;
+              return (
+                sum +
+                sessionHours(s, undefined, {
+                  standardHours: stdHours,
+                  approvedOvertimeMinutes: approvedOtMins,
+                })
+              );
+            }, 0) * 10,
+          ) / 10;
         const prod = productivityScore(w.expectedHours || 8, ts.completed, ts.total, ws);
         const fullName = workerName(w);
         return {
@@ -70,7 +88,7 @@ export default function TeamTab({
       })
       .sort((a, b) => b.Productivity - a.Productivity)
       .slice(0, 8);
-  }, [filteredHrWorkers, sessions, activePeriod, workerTaskStats]);
+  }, [filteredHrWorkers, sessions, activePeriod, workerTaskStats, approvedOtByKey, stdHours]);
 
   return (
     <div className="space-y-5 animate-fade-in">
@@ -138,7 +156,20 @@ export default function TeamTab({
         {filteredHrWorkers.map((w) => {
           const ws = workerSessionsInRange(sessions, w.id, activePeriod.start, activePeriod.end);
           const ts = workerTaskStats.get(w.id) || { completed: 0, total: 0 };
-          const totalHours = Math.round(ws.reduce((sum, s) => sum + sessionHours(s), 0) * 10) / 10;
+          const totalHours =
+            Math.round(
+              ws.reduce((sum, s) => {
+                const dKey = sessionDateYmd(s);
+                const approvedOtMins = dKey ? (approvedOtByKey?.get(`${w.id}|${dKey}`) ?? 0) : 0;
+                return (
+                  sum +
+                  sessionHours(s, undefined, {
+                    standardHours: stdHours,
+                    approvedOvertimeMinutes: approvedOtMins,
+                  })
+                );
+              }, 0) * 10,
+            ) / 10;
           const prod = productivityScore(w.expectedHours || 8, ts.completed, ts.total, ws);
 
           return (

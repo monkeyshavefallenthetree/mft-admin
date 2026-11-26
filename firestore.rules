@@ -127,8 +127,26 @@ service cloud.firestore {
     // ── Attendance (People & HR) ────────────────────────────────────────────
     match /workSessions/{id} {
       allow read: if isSignedIn();
-      allow create: if isHrAdmin() || ownsIncoming();
-      allow update: if isHrAdmin() || (ownsExisting() && ownsIncoming());
+      // Workers may create at most one deterministic daily regular session (`{uid}_{YYYY-MM-DD}`)
+      // with zero unapproved overtime; HR Admin retains full create/override power.
+      allow create: if isHrAdmin() || (
+        ownsIncoming()
+        && request.resource.data.date is string
+        && id == request.auth.uid + '_' + request.resource.data.date
+        && request.resource.data.get('overtimeMinutes', 0) == 0
+        && request.resource.data.get('isExternalMission', false) != true
+      );
+      // Workers may update their own active session (e.g. check-in / clock-out),
+      // but CANNOT reopen a closed shift (`isActive: false -> true`) and CANNOT
+      // mutate admin-controlled overtime/mission/identity fields.
+      allow update: if isHrAdmin() || (
+        ownsExisting()
+        && ownsIncoming()
+        && !(resource.data.get('isActive', false) == false && request.resource.data.get('isActive', false) == true)
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'overtimeMinutes', 'allowedShiftMs', 'isExternalMission', 'workerId', 'date'
+        ])
+      );
       allow delete: if isHrAdmin();
     }
 
@@ -371,7 +389,7 @@ service cloud.firestore {
 
     match /chatNotifications/{notifId} {
       allow create: if isSignedIn();
-      allow read: if isOpsAdmin()
+      allow read: if isOpsAdmin() || isHrAdmin()
         || (isSignedIn() && resource.data.get('recipientUid', null) == request.auth.uid);
       allow update: if isOpsAdmin()
         || (
@@ -379,15 +397,27 @@ service cloud.firestore {
           && resource.data.get('recipientUid', null) == request.auth.uid
           && changedOnly(['isRead'])
         );
-      allow delete: if isOpsAdmin();
+      allow delete: if isOpsAdmin() || isHrAdmin();
     }
 
     match /adminNotifications/{id} {
       allow create: if isSignedIn();
-      allow read, update: if isSuperAdmin()
+      allow list: if isSuperAdmin()
         || (isOpsAdmin() && resource.data.targetRoles is list && 'ops_admin' in resource.data.targetRoles)
         || (isHrAdmin() && resource.data.targetRoles is list && 'hr_admin' in resource.data.targetRoles);
-      allow delete: if isSuperAdmin();
+      allow get: if isSuperAdmin()
+        || (isOpsAdmin() && resource != null && resource.data.targetRoles is list && 'ops_admin' in resource.data.targetRoles)
+        || (isHrAdmin() && resource != null && resource.data.targetRoles is list && 'hr_admin' in resource.data.targetRoles)
+        || (
+          isSignedIn() && (
+            id.matches('^shift_[a-z_]+_' + request.auth.uid + '_.*$')
+            || (resource != null && resource.data.get('actorUid', '') == request.auth.uid)
+          )
+        );
+      allow update: if isSuperAdmin()
+        || (isOpsAdmin() && resource.data.targetRoles is list && 'ops_admin' in resource.data.targetRoles)
+        || (isHrAdmin() && resource.data.targetRoles is list && 'hr_admin' in resource.data.targetRoles);
+      allow delete: if isSuperAdmin() || isHrAdmin();
     }
 
     match /activityLog/{id} {

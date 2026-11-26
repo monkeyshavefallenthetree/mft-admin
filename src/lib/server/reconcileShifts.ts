@@ -1,7 +1,8 @@
-import { cairoYmd, formatCairoTime } from "@/lib/admin/cairoTime";
+import { cairoYmd, formatCairoTime, parseYmdParts } from "@/lib/admin/cairoTime";
 import {
   DEFAULT_AUTO_CLOCK_OUT_GRACE_MS,
   evaluateShiftLifecycle,
+  isMissionSession,
   toMillisSafe,
   type ShiftSessionInput,
 } from "@/lib/admin/shiftLifecycle";
@@ -33,6 +34,7 @@ export interface ReconcileShiftsSummary {
   nowMs: number;
   todayCairoYmd: string;
   scanned: number;
+  silentlyClosedGhosts: number;
   autoClockedOut: number;
   shiftCompleteNotified: number;
   shiftWarningNotified: number;
@@ -51,6 +53,15 @@ export interface ReconcileDeps {
   nowMs?: number;
   sendWebPush?: (subs: StoredPushSubscription[], payload: WebPushPayload) => Promise<WebPushBatchResult>;
   sendExpoPush?: (messages: ExpoPushInputMessage[]) => Promise<ExpoPushBatchResult>;
+}
+
+function calendarDaysBetweenYmd(olderYmd: string, newerYmd: string): number {
+  const a = parseYmdParts(olderYmd);
+  const b = parseYmdParts(newerYmd);
+  if (!a || !b) return 0;
+  const aUtc = Date.UTC(a.year, a.month - 1, a.day, 12, 0, 0);
+  const bUtc = Date.UTC(b.year, b.month - 1, b.day, 12, 0, 0);
+  return Math.round((bUtc - aUtc) / 86_400_000);
 }
 
 function extractWorkerChannels(workerData: Record<string, unknown> | undefined): {
@@ -130,10 +141,13 @@ function collectAdminSubscriptions(
 }
 
 /**
- * Scans all active `workSessions` (`isActive == true`), enforces auto clock-out at
- * exact capped shift end, dispatches persistent Android/iOS Web Push & Expo Push
- * notifications (strictly respecting Firestore deduplication fields), cleans up
- * expired 404/410 endpoints & DeviceNotRegistered tokens, and logs HR admin alerts.
+ * Scans all active `workSessions` (`isActive == true`):
+ *  - Silently cleans ghost/corrupt/unapproved/deleted-worker/mission active docs (zero notifications)
+ *  - Counts STRICTLY admin-approved (`status === "approved"`) overtime requests only
+ *  - Uses optimistic `updateTime` preconditions + deterministic `adminNotifications` IDs so
+ *    concurrent worker/admin/cron runs never emit duplicate or false notifications
+ *  - Auto clocks out overdue/past-day shifts at exact capped shift end, dispatches persistent
+ *    Android/iOS Web Push & Expo Push, and cleans expired 404/410 & DeviceNotRegistered tokens
  */
 export async function reconcileActiveShifts(deps: ReconcileDeps): Promise<ReconcileShiftsSummary> {
   const nowMs = deps.nowMs ?? Date.now();
@@ -146,6 +160,7 @@ export async function reconcileActiveShifts(deps: ReconcileDeps): Promise<Reconc
     nowMs,
     todayCairoYmd,
     scanned: 0,
+    silentlyClosedGhosts: 0,
     autoClockedOut: 0,
     shiftCompleteNotified: 0,
     shiftWarningNotified: 0,
@@ -186,14 +201,14 @@ export async function reconcileActiveShifts(deps: ReconcileDeps): Promise<Reconc
   summary.scanned = activeSessions.length;
   if (activeSessions.length === 0) return summary;
 
-  // 3. Query overtime exceptionRequests to compute authoritative OT minutes per (workerId, date)
-  const otMinutesByKey = new Map<string, number>();
-  const hasOtRequestByKey = new Set<string>();
+  // 3. Query overtime exceptionRequests — strictly count ONLY admin-approved (`status === "approved"`)
+  const approvedOtByKey = new Map<string, number>();
   try {
     const otDocs = await deps.firestore.queryCollection("exceptionRequests", [
       { field: "type", op: "EQUAL", value: "overtime" },
     ]);
     for (const req of otDocs) {
+      if (String(req.data.status || "") !== "approved") continue;
       const workerId = typeof req.data.workerId === "string" ? req.data.workerId : "";
       const dateStr =
         typeof req.data.exceptionDate === "string"
@@ -202,14 +217,10 @@ export async function reconcileActiveShifts(deps: ReconcileDeps): Promise<Reconc
             ? req.data.date.slice(0, 10)
             : "";
       if (!workerId || !dateStr) continue;
-      const key = `${workerId}|${dateStr}`;
-      hasOtRequestByKey.add(key);
-      const status = typeof req.data.status === "string" ? req.data.status : "";
-      if (status === "approved" || status === "pending") {
-        const mins = Number(req.data.lateMinutes ?? req.data.overtimeMinutes ?? 0) || 0;
-        if (mins > 0) {
-          otMinutesByKey.set(key, (otMinutesByKey.get(key) ?? 0) + mins);
-        }
+      const mins = Number(req.data.lateMinutes ?? req.data.overtimeMinutes ?? 0) || 0;
+      if (mins > 0) {
+        const key = `${workerId}|${dateStr}`;
+        approvedOtByKey.set(key, (approvedOtByKey.get(key) ?? 0) + mins);
       }
     }
   } catch (err) {
@@ -335,45 +346,54 @@ export async function reconcileActiveShifts(deps: ReconcileDeps): Promise<Reconc
   };
 
   const notifyHrAdmins = async (input: {
+    dedupeDocId: string;
     eventType: string;
     title: string;
     body: string;
     href: string;
     entityId: string;
+    actorUid?: string | null;
     urgent?: boolean;
-  }): Promise<void> => {
+  }): Promise<boolean> => {
     const targetRoles = ["super_admin", "hr_admin"];
-    let createdId = "";
+    const payload = {
+      targetRoles,
+      category: "hr",
+      eventType: input.eventType,
+      title: input.title,
+      body: input.body,
+      href: input.href,
+      actorUid: input.actorUid ?? null,
+      actorName: "Shift Watchdog",
+      entityId: input.entityId,
+      projectId: null,
+      taskId: null,
+      readBy: [],
+      createdAt: new Date(nowMs),
+    };
+
+    // Atomic create-if-absent prevents duplicate notifications across concurrent worker / admin / cron runs
+    let createdId = input.dedupeDocId;
     try {
-      createdId = await deps.firestore.createDocument("adminNotifications", {
-        targetRoles,
-        category: "hr",
-        eventType: input.eventType,
-        title: input.title,
-        body: input.body,
-        href: input.href,
-        actorUid: null,
-        actorName: "Shift Watchdog",
-        entityId: input.entityId,
-        projectId: null,
-        taskId: null,
-        readBy: [],
-        createdAt: new Date(nowMs),
-      });
+      const res = await deps.firestore.createDocumentIfAbsent("adminNotifications", input.dedupeDocId, payload);
+      if (!res.created) {
+        return false;
+      }
+      createdId = res.id;
     } catch {
-      /* ignore */
+      return false;
     }
 
     try {
       const adminDocs = await getAdminPushDocs();
       const { subs, docsByEndpoint } = collectAdminSubscriptions(adminDocs, targetRoles);
-      if (subs.length === 0) return;
+      if (subs.length === 0) return true;
 
       const wpRes = await sendWeb(subs, {
         title: input.title,
         body: input.body,
         url: input.href,
-        tag: createdId ? `mft-ev-${createdId}` : `${input.eventType}-${input.entityId}`,
+        tag: `mft-ev-${createdId}`,
         dedupe: true,
         urgent: Boolean(input.urgent),
         requireInteraction: true,
@@ -409,37 +429,86 @@ export async function reconcileActiveShifts(deps: ReconcileDeps): Promise<Reconc
         summary.cleanedEndpoints += wpRes.goneEndpoints.length;
       }
     } catch {
-      /* ignore */
+      /* ignore push delivery error after doc recorded */
     }
+    return true;
   };
 
   // 4. Evaluate each active session
   for (const docRec of activeSessions) {
     const session = { id: docRec.id, ...(docRec.data as ShiftSessionInput) };
-    const workerId = String(session.workerId || "");
-    const workerName = String(session.workerName || "Worker");
-    if (!workerId) continue;
-
+    const workerId = String(session.workerId || "").trim();
     const fallbackStartMs = toMillisSafe(session.startTime) ?? toMillisSafe(session.loginTime);
+    const workerDoc = workerId ? await getWorker(workerId) : null;
+    const isApprovedWorker = Boolean(workerDoc && String(workerDoc.data.status || "") === "approved");
+    const isInvalidOrGhost =
+      !workerId ||
+      !isApprovedWorker ||
+      isMissionSession(session) ||
+      fallbackStartMs == null;
+
+    // Valid Active Shift Entry Invariant: ghost / unapproved / deleted-worker / mission / missing-clockin docs
+    // are silently closed with ZERO worker or admin notifications.
+    if (isInvalidOrGhost) {
+      try {
+        const patched = await deps.firestore.patchDocument(
+          `workSessions/${docRec.id}`,
+          {
+            isActive: false,
+            presenceStatus: "offline",
+            segmentStartAt: null,
+            autoClockOutReason: "invalid_or_unapproved_cleanup",
+            autoClockOutNotifiedAt: new Date(nowMs),
+            lastUpdated: new Date(nowMs),
+          },
+          docRec.updateTime ? { updateTime: docRec.updateTime } : undefined,
+        );
+        if (patched) {
+          if (workerDoc && workerId) {
+            await deps.firestore
+              .patchDocument(`workers/${workerId}`, {
+                isOnline: false,
+                presenceStatus: "offline",
+              })
+              .catch(() => {});
+          }
+          summary.silentlyClosedGhosts += 1;
+        }
+      } catch (err) {
+        summary.errors.push(`ghost cleanup ${docRec.id}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      continue;
+    }
+
+    const workerName =
+      String(session.workerName || "").trim() ||
+      `${String(workerDoc?.data.firstName || "")} ${String(workerDoc?.data.lastName || "")}`.trim() ||
+      "Worker";
+
     const dateKey =
       typeof session.date === "string" && /^\d{4}-\d{2}-\d{2}/.test(session.date)
         ? session.date.slice(0, 10)
-        : fallbackStartMs != null
-          ? cairoYmd(fallbackStartMs)
-          : todayCairoYmd;
+        : cairoYmd(fallbackStartMs);
     const otLookupKey = `${workerId}|${dateKey}`;
-    const authoritativeOt = hasOtRequestByKey.has(otLookupKey)
-      ? otMinutesByKey.get(otLookupKey) ?? 0
-      : undefined;
+    // Strictly approved overtime only — NEVER pass `undefined` or trust unapproved session.overtimeMinutes / allowedShiftMs
+    const approvedOt = approvedOtByKey.get(otLookupKey) ?? 0;
 
-    const lifecycle = evaluateShiftLifecycle(session, {
-      nowMs,
-      todayCairoYmd,
-      standardHours,
-      overtimeMinutes: authoritativeOt,
-      autoClockOutGraceMs,
-      policySettings,
-    });
+    const lifecycle = evaluateShiftLifecycle(
+      { ...session, allowedShiftMs: undefined },
+      {
+        nowMs,
+        todayCairoYmd,
+        standardHours,
+        overtimeMinutes: approvedOt,
+        autoClockOutGraceMs,
+        policySettings,
+      },
+    );
+
+    const precondition = docRec.updateTime ? { updateTime: docRec.updateTime } : undefined;
+    const otFieldsOutOfSync =
+      (Number(session.overtimeMinutes) || 0) !== approvedOt ||
+      (Number(session.allowedShiftMs) || 0) !== lifecycle.allowedMs;
 
     try {
       if (lifecycle.action === "auto_clock_out") {
@@ -447,24 +516,32 @@ export async function reconcileActiveShifts(deps: ReconcileDeps): Promise<Reconc
         const cappedTotalWorkTimeMs = lifecycle.cappedTotalWorkTimeMs ?? lifecycle.allowedMs;
         const cappedHours = Math.round((cappedTotalWorkTimeMs / 3_600_000) * 100) / 100;
         const cappedOutLabel = formatCairoTime(cappedLogoutMs);
+        const isPastDay = lifecycle.autoClockOutReason === "past_day_unclosed";
+        const pastDayAge = isPastDay ? calendarDaysBetweenYmd(dateKey, todayCairoYmd) : 0;
+        const silentOldPastDay = isPastDay && pastDayAge > 2;
 
-        await deps.firestore.patchDocument(`workSessions/${docRec.id}`, {
-          isActive: false,
-          logoutTime: new Date(cappedLogoutMs),
-          endTime: new Date(cappedLogoutMs),
-          segmentStartAt: null,
-          bankedWorkTime: cappedTotalWorkTimeMs,
-          totalWorkTime: cappedTotalWorkTimeMs,
-          presenceStatus: "offline",
-          standardHours: lifecycle.standardHours,
-          overtimeMinutes: lifecycle.overtimeMinutes,
-          allowedShiftMs: lifecycle.allowedMs,
-          autoClockedOut: true,
-          autoClockOutReason: lifecycle.autoClockOutReason,
-          autoClockedOutAt: new Date(nowMs),
-          autoClockOutNotifiedAt: new Date(nowMs),
-          lastUpdated: new Date(nowMs),
-        });
+        const patched = await deps.firestore.patchDocument(
+          `workSessions/${docRec.id}`,
+          {
+            isActive: false,
+            logoutTime: new Date(cappedLogoutMs),
+            endTime: new Date(cappedLogoutMs),
+            segmentStartAt: null,
+            bankedWorkTime: cappedTotalWorkTimeMs,
+            totalWorkTime: cappedTotalWorkTimeMs,
+            presenceStatus: "offline",
+            standardHours: lifecycle.standardHours,
+            overtimeMinutes: approvedOt,
+            allowedShiftMs: lifecycle.allowedMs,
+            autoClockedOut: true,
+            autoClockOutReason: lifecycle.autoClockOutReason,
+            autoClockedOutAt: new Date(nowMs),
+            autoClockOutNotifiedAt: new Date(nowMs),
+            lastUpdated: new Date(nowMs),
+          },
+          precondition,
+        );
+        if (!patched) continue;
 
         await deps.firestore
           .patchDocument(`workers/${workerId}`, {
@@ -475,8 +552,9 @@ export async function reconcileActiveShifts(deps: ReconcileDeps): Promise<Reconc
           .catch(() => {});
 
         let notified = false;
-        if (lifecycle.shouldSendAutoClockOutPush) {
-          const isPastDay = lifecycle.autoClockOutReason === "past_day_unclosed";
+        // Both worker push & HR admin notification are strictly gated by `shouldSendAutoClockOutPush`
+        // AND old (>2 Cairo days) stale sessions are closed silently without alarming admins.
+        if (lifecycle.shouldSendAutoClockOutPush && !silentOldPastDay) {
           notified = await pushToWorkerAndCleanup(
             workerId,
             {
@@ -494,16 +572,22 @@ export async function reconcileActiveShifts(deps: ReconcileDeps): Promise<Reconc
             },
             "alerts",
           );
-        }
 
-        await notifyHrAdmins({
-          eventType: "worker_auto_clock_out",
-          title: `⏱️ Auto Clock-Out: ${workerName}`,
-          body: `${workerName} was auto-clocked-out (${lifecycle.autoClockOutReason === "past_day_unclosed" ? "unclosed past-day shift" : "shift limit reached"}) at ${cappedOutLabel} Cairo · ${cappedHours}h.`,
-          href: `/admin/work-sessions?worker=${encodeURIComponent(workerId)}`,
-          entityId: docRec.id,
-          urgent: false,
-        });
+          await notifyHrAdmins({
+            dedupeDocId: `shift_autoclose_${docRec.id}`,
+            eventType: "worker_auto_clock_out",
+            title: isPastDay
+              ? `⏱️ Past Shift Auto-Closed (${dateKey}): ${workerName}`
+              : `⏱️ Auto Clock-Out: ${workerName}`,
+            body: isPastDay
+              ? `${workerName}'s unclosed shift from ${dateKey} was auto-closed at ${cappedOutLabel} Cairo · ${cappedHours}h.`
+              : `${workerName} was auto-clocked-out (shift limit reached) at ${cappedOutLabel} Cairo · ${cappedHours}h.`,
+            href: `/admin/work-sessions?worker=${encodeURIComponent(workerId)}`,
+            entityId: docRec.id,
+            actorUid: workerId,
+            urgent: false,
+          });
+        }
 
         summary.autoClockedOut += 1;
         summary.details.push({
@@ -516,21 +600,26 @@ export async function reconcileActiveShifts(deps: ReconcileDeps): Promise<Reconc
           cappedHours,
         });
       } else if (lifecycle.action === "shift_complete" && lifecycle.shouldSendShiftCompletePush) {
-        await deps.firestore.patchDocument(`workSessions/${docRec.id}`, {
-          shiftCompleteNotifiedForMs: lifecycle.allowedMs,
-          shiftCompleteNotifiedAt: new Date(nowMs),
-          standardHours: lifecycle.standardHours,
-          overtimeMinutes: lifecycle.overtimeMinutes,
-          allowedShiftMs: lifecycle.allowedMs,
-          lastUpdated: new Date(nowMs),
-        });
+        const patched = await deps.firestore.patchDocument(
+          `workSessions/${docRec.id}`,
+          {
+            shiftCompleteNotifiedForMs: lifecycle.allowedMs,
+            shiftCompleteNotifiedAt: new Date(nowMs),
+            standardHours: lifecycle.standardHours,
+            overtimeMinutes: approvedOt,
+            allowedShiftMs: lifecycle.allowedMs,
+            lastUpdated: new Date(nowMs),
+          },
+          precondition,
+        );
+        if (!patched) continue;
 
         const allowedHours = Math.round((lifecycle.allowedMs / 3_600_000) * 10) / 10;
         const notified = await pushToWorkerAndCleanup(
           workerId,
           {
             title: "Shift Complete — Clock Out Required 🏁",
-            body: `You completed your ${allowedHours}h shift. Clock out now or request overtime — auto clock-out runs shortly.`,
+            body: `You completed your ${allowedHours}h shift. Clock out now — auto clock-out runs shortly unless admin approves overtime.`,
             url: "/dashboard?tab=time",
             tab: "time",
             tag: `mft-shift-complete-${docRec.id}-${lifecycle.allowedMs}`,
@@ -551,14 +640,19 @@ export async function reconcileActiveShifts(deps: ReconcileDeps): Promise<Reconc
           notified,
         });
       } else if (lifecycle.action === "shift_warning_15m" && lifecycle.shouldSendWarningPush) {
-        await deps.firestore.patchDocument(`workSessions/${docRec.id}`, {
-          shiftWarningNotifiedForMs: lifecycle.allowedMs,
-          shiftWarningNotifiedAt: new Date(nowMs),
-          standardHours: lifecycle.standardHours,
-          overtimeMinutes: lifecycle.overtimeMinutes,
-          allowedShiftMs: lifecycle.allowedMs,
-          lastUpdated: new Date(nowMs),
-        });
+        const patched = await deps.firestore.patchDocument(
+          `workSessions/${docRec.id}`,
+          {
+            shiftWarningNotifiedForMs: lifecycle.allowedMs,
+            shiftWarningNotifiedAt: new Date(nowMs),
+            standardHours: lifecycle.standardHours,
+            overtimeMinutes: approvedOt,
+            allowedShiftMs: lifecycle.allowedMs,
+            lastUpdated: new Date(nowMs),
+          },
+          precondition,
+        );
+        if (!patched) continue;
 
         const endLabel = formatCairoTime(lifecycle.shiftLimitAtMs);
         const notified = await pushToWorkerAndCleanup(
@@ -585,59 +679,74 @@ export async function reconcileActiveShifts(deps: ReconcileDeps): Promise<Reconc
           action: "shift_warning_15m",
           notified,
         });
-      } else if (lifecycle.action === "checkin_due") {
-        let notified = false;
-        if (lifecycle.shouldSendCheckInPush) {
-          await deps.firestore.patchDocument(`workSessions/${docRec.id}`, {
-            checkInNotifiedForAtMs: lifecycle.lastCheckInMs,
-            checkInNotifiedAt: new Date(nowMs),
-            lastUpdated: new Date(nowMs),
-          });
-
-          notified = await pushToWorkerAndCleanup(
-            workerId,
-            {
-              title: "🔔 موعد تأكيد الحضور الدوري — نهاية الساعتين",
-              body: "أكمل تأكيد الحضور الآن خلال 10 دقائق للحفاظ على حالتك نشط (Active) في الوردية.",
-              url: "/dashboard?tab=time",
-              tab: "time",
-              tag: `mft-checkin-${docRec.id}-${lifecycle.lastCheckInMs}`,
-              topic: `chkin-${docRec.id.slice(-20)}`,
-              dedupe: true,
-              urgent: true,
-              requireInteraction: true,
-            },
-            "alerts",
-          );
-          summary.checkInNotified += 1;
-        }
-
-        if (lifecycle.shouldMarkIdle) {
-          await deps.firestore.patchDocument(`workSessions/${docRec.id}`, {
-            presenceStatus: "idle",
-            missedCheckInAt: new Date(nowMs),
-            idleNotifiedForAtMs: lifecycle.lastCheckInMs,
-            lastUpdated: new Date(nowMs),
-          });
-          await deps.firestore
-            .patchDocument(`workers/${workerId}`, {
-              presenceStatus: "idle",
-              missedCheckInAt: new Date(nowMs),
-            })
-            .catch(() => {});
-
-          await notifyHrAdmins({
-            eventType: "missed_checkin",
-            title: `⚠️ Missed 2h Check-In: ${workerName}`,
-            body: `${workerName} did not confirm the 2-hour presence check-in within the 10-minute window and is now marked Idle.`,
-            href: `/admin/work-sessions?status=idle`,
-            entityId: docRec.id,
-            urgent: true,
-          });
-          summary.markedIdle += 1;
-        }
-
+      } else if (lifecycle.action === "checkin_due" && dateKey === todayCairoYmd) {
         if (lifecycle.shouldSendCheckInPush || lifecycle.shouldMarkIdle) {
+          const patch: Record<string, unknown> = {
+            lastUpdated: new Date(nowMs),
+          };
+          if (otFieldsOutOfSync) {
+            patch.standardHours = lifecycle.standardHours;
+            patch.overtimeMinutes = approvedOt;
+            patch.allowedShiftMs = lifecycle.allowedMs;
+          }
+          if (lifecycle.shouldSendCheckInPush) {
+            patch.checkInNotifiedForAtMs = lifecycle.lastCheckInMs;
+            patch.checkInNotifiedAt = new Date(nowMs);
+          }
+          if (lifecycle.shouldMarkIdle) {
+            patch.presenceStatus = "idle";
+            patch.missedCheckInAt = new Date(nowMs);
+            patch.idleNotifiedForAtMs = lifecycle.lastCheckInMs;
+          }
+
+          const patched = await deps.firestore.patchDocument(
+            `workSessions/${docRec.id}`,
+            patch,
+            precondition,
+          );
+          if (!patched) continue;
+
+          let notified = false;
+          if (lifecycle.shouldSendCheckInPush) {
+            notified = await pushToWorkerAndCleanup(
+              workerId,
+              {
+                title: "🔔 موعد تأكيد الحضور الدوري — نهاية الساعتين",
+                body: "أكمل تأكيد الحضور الآن خلال 10 دقائق للحفاظ على حالتك نشط (Active) في الوردية.",
+                url: "/dashboard?tab=time",
+                tab: "time",
+                tag: `mft-checkin-${docRec.id}-${lifecycle.lastCheckInMs}`,
+                topic: `chkin-${docRec.id.slice(-20)}`,
+                dedupe: true,
+                urgent: true,
+                requireInteraction: true,
+              },
+              "alerts",
+            );
+            summary.checkInNotified += 1;
+          }
+
+          if (lifecycle.shouldMarkIdle) {
+            await deps.firestore
+              .patchDocument(`workers/${workerId}`, {
+                presenceStatus: "idle",
+                missedCheckInAt: new Date(nowMs),
+              })
+              .catch(() => {});
+
+            await notifyHrAdmins({
+              dedupeDocId: `shift_missed_checkin_${docRec.id}_${lifecycle.lastCheckInMs}`,
+              eventType: "missed_checkin",
+              title: `⚠️ Missed 2h Check-In: ${workerName}`,
+              body: `${workerName} did not confirm the 2-hour presence check-in within the 10-minute window and is now marked Idle.`,
+              href: `/admin/work-sessions?status=idle`,
+              entityId: docRec.id,
+              actorUid: workerId,
+              urgent: true,
+            });
+            summary.markedIdle += 1;
+          }
+
           summary.details.push({
             sessionId: docRec.id,
             workerId,
@@ -645,7 +754,34 @@ export async function reconcileActiveShifts(deps: ReconcileDeps): Promise<Reconc
             action: lifecycle.shouldMarkIdle ? "checkin_idle" : "checkin_due",
             notified,
           });
+        } else if (otFieldsOutOfSync) {
+          await deps.firestore
+            .patchDocument(
+              `workSessions/${docRec.id}`,
+              {
+                standardHours: lifecycle.standardHours,
+                overtimeMinutes: approvedOt,
+                allowedShiftMs: lifecycle.allowedMs,
+                lastUpdated: new Date(nowMs),
+              },
+              precondition,
+            )
+            .catch(() => {});
         }
+      } else if (otFieldsOutOfSync) {
+        // Sync approved overtime (including resetting legacy unapproved overtime back to 0) onto active session
+        await deps.firestore
+          .patchDocument(
+            `workSessions/${docRec.id}`,
+            {
+              standardHours: lifecycle.standardHours,
+              overtimeMinutes: approvedOt,
+              allowedShiftMs: lifecycle.allowedMs,
+              lastUpdated: new Date(nowMs),
+            },
+            precondition,
+          )
+          .catch(() => {});
       }
     } catch (err) {
       summary.errors.push(`session ${docRec.id}: ${err instanceof Error ? err.message : String(err)}`);

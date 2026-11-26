@@ -195,8 +195,11 @@ export default function AdminHRPage() {
     todayHoliday,
     todaysSessions,
     presentWorkerIds,
+    activeShiftWorkerIds,
     lateWorkerIds,
     overtimeWorkerIds,
+    approvedOtByKey,
+    approvedTodayOtByWorker,
     hrSummary,
     workerTaskStats,
     policyInputsFor,
@@ -725,6 +728,7 @@ export default function AdminHRPage() {
           presentWorkerIds={presentWorkerIds}
           lateWorkerIds={lateWorkerIds}
           overtimeWorkerIds={overtimeWorkerIds}
+          approvedTodayOtByWorker={approvedTodayOtByWorker}
           todayFilter={todayFilter}
           setTodayFilter={setTodayFilter}
           setOnboardModalWorker={setOnboardModalWorker}
@@ -813,6 +817,7 @@ export default function AdminHRPage() {
           settings={settings}
           activePeriod={activePeriod}
           workerTaskStats={workerTaskStats}
+          approvedOtByKey={approvedOtByKey}
           setOnboardModalWorker={setOnboardModalWorker}
           setPayslipModalWorker={setPayslipModalWorker}
           setDashboardWorker={setDashboardWorker}
@@ -920,6 +925,7 @@ export default function AdminHRPage() {
       {dashboardWorker && (
         <Worker360Modal
           worker={dashboardWorker}
+          isLiveOnline={activeShiftWorkerIds.has(dashboardWorker.id)}
           settings={settings}
           adminEmail={adminEmail}
           onClose={() => setDashboardWorker(null)}

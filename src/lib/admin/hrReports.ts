@@ -1,4 +1,5 @@
 import { effectiveSessionWorkMs, sessionHours, type SessionLike } from "@/lib/admin/workTime";
+import { computeAllowedShiftMs, isMissionSession } from "@/lib/admin/shiftLifecycle";
 import { CAIRO_TZ, addDaysToYmd, cairoDayOfWeek, cairoEndOfDayMs, cairoMinutesOfDay, cairoParts, cairoStartOfDayMs, cairoWallTimeToDate, cairoYmd } from "@/lib/admin/cairoTime";
 import {
   POLICY_2026_SETTINGS_DEFAULTS,
@@ -500,7 +501,7 @@ export function calculateAttendancePolicy(
   }
 
   const totalHours =
-    effectiveSessionWorkMs(session, nowMs, { standardHours: settings.standardHours }) / (1000 * 60 * 60);
+    effectiveSessionWorkMs(session, nowMs, { standardHours: settings.standardHours, approvedOvertimeMinutes: 0 }) / (1000 * 60 * 60);
   return {
     isLate,
     latePenalty,
@@ -516,7 +517,7 @@ export function productivityScore(
   sessions: SessionForHr[],
 ): number {
   if (sessions.length === 0) return 0;
-  const avgHours = sessions.reduce((sum, s) => sum + sessionHours(s), 0) / sessions.length;
+  const avgHours = sessions.reduce((sum, s) => sum + sessionHours(s, undefined, { standardHours: expectedHoursPerDay || 8, approvedOvertimeMinutes: 0 }), 0) / sessions.length;
   const exp = expectedHoursPerDay || 8;
   const taskCompletion = totalTasks > 0 ? (completedTasks / totalTasks) * 100 : 50;
   return Math.min(100, Math.round((avgHours / exp) * 70 + taskCompletion * 0.3));
@@ -676,9 +677,10 @@ export function computePayrollForWorker(
   for (const s of workerSessions) {
     const dKey = sessionDateYmd(s);
     if (!dKey) continue;
+    const approvedOtMins = otByDate.get(dKey) ?? 0;
     const sMs = effectiveSessionWorkMs(s, Date.now(), {
       standardHours: std,
-      overtimeMinutes: Math.max(Number(s.overtimeMinutes) || 0, otByDate.get(dKey) ?? 0),
+      approvedOvertimeMinutes: approvedOtMins,
     });
     const sStart = toJsDate(s.startTime) ?? toJsDate(s.loginTime);
     const sOut = s.isActive ? null : toJsDate(s.logoutTime);
@@ -689,6 +691,7 @@ export function computePayrollForWorker(
         date: dKey,
         totalWorkTime: sMs,
         isActive: Boolean(s.isActive),
+        isExternalMission: isMissionSession(s),
       });
     } else {
       const pStart = toJsDate(prev.startTime) ?? toJsDate(prev.loginTime);
@@ -706,8 +709,8 @@ export function computePayrollForWorker(
         loginTime: wrapTs(earliest),
         logoutTime: wrapTs(latestOut),
         isActive: anyActive,
-        isExternalMission: Boolean(prev.isExternalMission && s.isExternalMission),
-        totalWorkTime: (prev.totalWorkTime || 0) + sMs,
+        isExternalMission: Boolean(isMissionSession(prev) && isMissionSession(s)),
+        totalWorkTime: Math.min((prev.totalWorkTime || 0) + sMs, computeAllowedShiftMs(std, approvedOtMins)),
       });
     }
   }
@@ -775,9 +778,11 @@ export function computePayrollForWorker(
     const date = sessionDateYmd(s) ?? "";
 
     if (!isPolicy2026Active(cfg, date)) {
-      // ── Legacy maths (kept unchanged for already-closed cycles) ──
-      basePay += h * hr;
-      const ot = Math.max(0, h - std);
+      // ── Legacy maths — overtime strictly gated by admin approval ──
+      const approvedOtHours = (otByDate.get(date) ?? 0) / 60;
+      const regularH = Math.min(h, std);
+      const ot = Math.min(Math.max(0, h - std), approvedOtHours);
+      basePay += regularH * hr;
       overtimeHours += ot;
       legacyOvertimePay += ot * hr * (cfg.overtimeMultiplier || WORK_POLICY.OVERTIME_MULTIPLIER);
       const policy = calculateAttendancePolicy(s, cfg);
@@ -845,7 +850,8 @@ export function computePayrollForWorker(
         }
 
         // Early leave: covered → those minutes are paid; uncovered → simply unpaid (no extra deduction).
-        if (lastOut) {
+        // Mission-only days and days already reaching standardHours (e.g. partial office + mission) are exempt.
+        if (lastOut && !s.isExternalMission && workedMin < std * 60) {
           const reqEnd = requiredShiftEnd(firstIn, pcfg);
           const el = evaluateEarlyLeave(lastOut, reqEnd, runningUsage, pcfg);
           if (el.isEarly) {

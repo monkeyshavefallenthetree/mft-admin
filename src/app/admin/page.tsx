@@ -6,7 +6,14 @@ import { collection, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { FILTERED_LINKS, ICONS, STRAPI_CMS_ADMIN } from "@/lib/admin/nav";
 import { effectiveSessionWorkMs, type SessionLike } from "@/lib/admin/workTime";
-import { cairoYmd } from "@/lib/admin/cairoTime";
+import {
+  CAIRO_TZ,
+  addDaysToYmd,
+  cairoParts,
+  cairoStartOfDayMs,
+  cairoYmd,
+  cairoYmdAtMinutes,
+} from "@/lib/admin/cairoTime";
 import { DEFAULT_HR_SETTINGS, formatDepartment, isLateTodayHtml, type HrSettings } from "@/lib/admin/hrReports";
 import { subscribeHrSettings } from "@/lib/admin/hrSettings";
 import { subscribeClientPortals } from "@/lib/admin/clientPortalStore";
@@ -61,9 +68,13 @@ interface Session extends SessionLike {
 }
 interface ExceptionReq {
   id: string;
+  workerId?: string;
   workerName?: string;
   type?: string;
   status?: string;
+  exceptionDate?: string;
+  lateMinutes?: number;
+  overtimeMinutes?: number;
   createdAt?: TS;
   submittedAt?: TS;
 }
@@ -207,11 +218,23 @@ export default function AdminOverviewPage() {
 
   const s = useMemo(() => {
     const today = ymd(now);
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfToday = new Date(cairoStartOfDayMs(today));
 
     const approvedWorkers = workers.filter((w) => w.status === "approved");
     const pendingWorkers = workers.filter((w) => w.status === "pending");
     const workerMap = new Map(workers.map((w) => [w.id, w]));
+
+    const approvedOtByKey = new Map<string, number>();
+    for (const e of exceptions) {
+      if (e.type !== "overtime" || e.status !== "approved" || !e.workerId || !e.exceptionDate) continue;
+      const mins = Number(e.lateMinutes ?? e.overtimeMinutes ?? 0);
+      if (Number.isFinite(mins) && mins > 0) {
+        const key = `${e.workerId}|${e.exceptionDate}`;
+        approvedOtByKey.set(key, (approvedOtByKey.get(key) ?? 0) + mins);
+      }
+    }
+    const approvedOtMinsFor = (sess: Session) =>
+      sess.workerId && sess.date ? (approvedOtByKey.get(`${sess.workerId}|${sess.date}`) ?? 0) : 0;
 
     const pendingApproval = tasks.filter((t) => t.status === "pending-approval");
     const openTasks = tasks.filter((t) => t.status !== "completed");
@@ -234,16 +257,21 @@ export default function AdminOverviewPage() {
 
     const todaySessions = sessions.filter((x) => x.date === today);
     const todayMs = todaySessions.reduce(
-      (a, x) => a + effectiveSessionWorkMs(x, now.getTime(), { standardHours: stdHours }),
+      (a, x) =>
+        a +
+        effectiveSessionWorkMs(x, now.getTime(), {
+          standardHours: stdHours,
+          approvedOvertimeMinutes: approvedOtMinsFor(x),
+        }),
       0,
     );
     const lateToday = todaySessions.filter((x) => !x.isExternalMission && isSessionLate(x)).length;
-    const activeSessions = todaySessions.filter((x) => x.isActive);
+    const activeSessions = todaySessions.filter((x) => x.isActive && !x.isExternalMission);
     const idleSessions = activeSessions.filter((x) => x.presenceStatus === "idle");
     const activeTodayWorkerIds = new Set(activeSessions.map((x) => x.workerId).filter(Boolean));
     const onlineWorkers = workers.filter((w) => activeTodayWorkerIds.has(w.id));
 
-    // Build 28-day daily series for charts, sparklines & week-over-week deltas
+    // Build 28-day daily series for charts, sparklines & week-over-week deltas (strictly Cairo calendar days)
     const days28: {
       label: string;
       shortDay: string;
@@ -257,18 +285,24 @@ export default function AdminOverviewPage() {
     }[] = [];
 
     for (let i = 27; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
-      const key = ymd(d);
+      const key = addDaysToYmd(today, -i);
+      const d = cairoYmdAtMinutes(key, 12 * 60) ?? new Date(`${key}T12:00:00Z`);
       const daySessions = sessions.filter((x) => x.date === key);
       let dayTotalH = 0;
       let dayOtH = 0;
       let dayLate = 0;
       for (const sess of daySessions) {
+        const approvedOtMins = approvedOtMinsFor(sess);
         const h = hours(
-          effectiveSessionWorkMs(sess, key === today ? now.getTime() : undefined, { standardHours: stdHours }),
+          effectiveSessionWorkMs(sess, key === today ? now.getTime() : undefined, {
+            standardHours: stdHours,
+            approvedOvertimeMinutes: approvedOtMins,
+          }),
         );
         dayTotalH += h;
-        dayOtH += Math.max(0, h - stdHours);
+        if (!sess.isExternalMission && approvedOtMins > 0) {
+          dayOtH += Math.min(Math.max(0, h - stdHours), approvedOtMins / 60);
+        }
         if (!sess.isExternalMission && isSessionLate(sess)) dayLate++;
       }
       const dayTasksDone = completedTasks.filter((t) => {
@@ -277,8 +311,8 @@ export default function AdminOverviewPage() {
       }).length;
 
       days28.push({
-        label: d.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
-        shortDay: d.toLocaleDateString(undefined, { weekday: "short" }),
+        label: d.toLocaleDateString("en-US", { timeZone: CAIRO_TZ, month: "short", day: "numeric" }),
+        shortDay: d.toLocaleDateString("en-US", { timeZone: CAIRO_TZ, weekday: "short" }),
         date: key,
         totalH: Math.round(dayTotalH * 10) / 10,
         regularH: Math.round(Math.max(0, dayTotalH - dayOtH) * 10) / 10,
@@ -316,7 +350,10 @@ export default function AdminOverviewPage() {
       if ((sess.date ?? "") < cutoff28) continue;
       const dept = sess.department || workerMap.get(sess.workerId ?? "")?.department || "general";
       const h = hours(
-        effectiveSessionWorkMs(sess, sess.date === today ? now.getTime() : undefined, { standardHours: stdHours }),
+        effectiveSessionWorkMs(sess, sess.date === today ? now.getTime() : undefined, {
+          standardHours: stdHours,
+          approvedOvertimeMinutes: approvedOtMinsFor(sess),
+        }),
       );
       deptMap.set(dept, (deptMap.get(dept) ?? 0) + h);
     }
@@ -469,8 +506,9 @@ export default function AdminOverviewPage() {
     return Math.round((chartSlice.reduce((a, d) => a + d.totalH, 0) / chartSlice.length) * 10) / 10;
   }, [chartSlice]);
 
+  const cairoHour = cairoParts(now).hour;
   const greeting =
-    now.getHours() < 12 ? "Good morning" : now.getHours() < 18 ? "Good afternoon" : "Good evening";
+    cairoHour < 12 ? "Good morning" : cairoHour < 18 ? "Good afternoon" : "Good evening";
   const attentionCount =
     s.pendingApproval.length +
     s.pendingWorkers.length +

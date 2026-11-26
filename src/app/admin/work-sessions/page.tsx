@@ -5,9 +5,13 @@ import { collection, onSnapshot, Timestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { downloadCsv } from "@/lib/admin/csv";
 import { effectiveSessionWorkMs, sessionHours } from "@/lib/admin/workTime";
-import { addDaysToYmd, cairoYmd, formatCairoTime } from "@/lib/admin/cairoTime";
+import { CAIRO_TZ, addDaysToYmd, cairoYmd, formatCairoTime } from "@/lib/admin/cairoTime";
 import { DEFAULT_HR_SETTINGS, isLateTodayHtml, type HrSettings } from "@/lib/admin/hrReports";
-import { subscribeHrSettings } from "@/lib/admin/hrSettings";
+import {
+  subscribeApprovedPolicyRequests,
+  subscribeHrSettings,
+  type ApprovedRequestRow,
+} from "@/lib/admin/hrSettings";
 import { DEPARTMENTS } from "@/lib/admin/constants";
 import { useUrlState } from "@/lib/admin/useUrlState";
 import { toast } from "@/lib/admin/feedback";
@@ -86,11 +90,16 @@ function time(t?: Timestamp | null) {
 }
 
 function isStaleUnclosedSession(s: WorkSession, todayCairo: string) {
-  return Boolean(s.isActive && s.date && s.date < todayCairo);
+  return Boolean(s.isActive && !s.isExternalMission && s.date && s.date < todayCairo);
 }
 
 function isLiveTodayActiveSession(s: WorkSession, todayCairo: string) {
-  return Boolean(s.isActive && (!s.date || s.date >= todayCairo));
+  return Boolean(
+    s.isActive &&
+      !s.isExternalMission &&
+      Boolean(s.loginTime || s.startTime) &&
+      (!s.date || s.date >= todayCairo),
+  );
 }
 
 function Svg({ d, className = "h-4 w-4" }: { d: string; className?: string }) {
@@ -114,6 +123,7 @@ const PAGE_SIZE = 50;
 export default function AdminWorkSessionsPage() {
   const [sessions, setSessions] = useState<WorkSession[]>([]);
   const [workers, setWorkers] = useState<WorkerOpt[]>([]);
+  const [approvedRequests, setApprovedRequests] = useState<ApprovedRequestRow[]>([]);
   const [hrSettings, setHrSettings] = useState<HrSettings>(DEFAULT_HR_SETTINGS);
   const [liveNowMs, setLiveNowMs] = useState(() => Date.now());
   const [loading, setLoading] = useState(true);
@@ -125,6 +135,20 @@ export default function AdminWorkSessionsPage() {
   const [viewType, setViewType] = useUrlState("view", "sessions");
 
   useEffect(() => subscribeHrSettings(setHrSettings), []);
+  useEffect(() => subscribeApprovedPolicyRequests(setApprovedRequests), []);
+
+  const approvedOtByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of approvedRequests) {
+      if (r.type !== "overtime" || !r.workerId || !r.exceptionDate) continue;
+      const mins = Number(r.lateMinutes ?? r.overtimeMinutes ?? 0) || 0;
+      if (mins > 0) {
+        const key = `${r.workerId}|${r.exceptionDate}`;
+        map.set(key, (map.get(key) ?? 0) + mins);
+      }
+    }
+    return map;
+  }, [approvedRequests]);
 
   useEffect(() => {
     const id = window.setInterval(() => setLiveNowMs(Date.now()), 30_000);
@@ -206,10 +230,15 @@ export default function AdminWorkSessionsPage() {
       if (statusFilter === "late" && !isLateSession(s, hrSettings)) return false;
       if (statusFilter === "active" && (!isLiveTodayActiveSession(s, todayCairo) || s.presenceStatus === "idle")) return false;
       if (statusFilter === "idle" && (!isLiveTodayActiveSession(s, todayCairo) || s.presenceStatus !== "idle")) return false;
-      if (statusFilter === "overtime" && sessionHours(s, liveNowMs, { standardHours: stdHours }) <= stdHours) return false;
+      if (statusFilter === "overtime") {
+        const approvedOtMins = s.workerId && s.date ? (approvedOtByKey.get(`${s.workerId}|${s.date}`) ?? 0) : 0;
+        const h = sessionHours(s, liveNowMs, { standardHours: stdHours, approvedOvertimeMinutes: approvedOtMins });
+        const approvedOtH = s.isExternalMission ? 0 : Math.min(Math.max(0, h - stdHours), approvedOtMins / 60);
+        if (approvedOtH <= 0) return false;
+      }
       return true;
     });
-  }, [sessions, workerFilter, departmentFilter, dateFrom, dateTo, statusFilter, hrSettings, liveNowMs, stdHours, todayCairo]);
+  }, [sessions, workerFilter, departmentFilter, dateFrom, dateTo, statusFilter, hrSettings, liveNowMs, stdHours, todayCairo, approvedOtByKey]);
 
   const summary = useMemo(() => {
     let totalMs = 0;
@@ -219,7 +248,11 @@ export default function AdminWorkSessionsPage() {
     let idle = 0;
     let ot = 0;
     for (const s of filtered) {
-      const ms = effectiveSessionWorkMs(s, liveNowMs, { standardHours: stdHours });
+      const approvedOtMins = s.workerId && s.date ? (approvedOtByKey.get(`${s.workerId}|${s.date}`) ?? 0) : 0;
+      const ms = effectiveSessionWorkMs(s, liveNowMs, {
+        standardHours: stdHours,
+        approvedOvertimeMinutes: approvedOtMins,
+      });
       totalMs += ms;
       if (s.workerId) workersSet.add(s.workerId);
       if (isLateSession(s, hrSettings)) late += 1;
@@ -227,26 +260,34 @@ export default function AdminWorkSessionsPage() {
         if (s.presenceStatus === "idle") idle += 1;
         else active += 1;
       }
-      ot += Math.max(0, ms / 3600000 - stdHours);
+      if (!s.isExternalMission && approvedOtMins > 0) {
+        ot += Math.min(Math.max(0, ms / 3600000 - stdHours), approvedOtMins / 60);
+      }
     }
     const totalH = Math.round((totalMs / 3600000) * 10) / 10;
     const avg = filtered.length > 0 ? Math.round((totalMs / filtered.length / 3600000) * 10) / 10 : 0;
     return { totalH, count: filtered.length, workers: workersSet.size, late, active, idle, avg, ot: Math.round(ot * 10) / 10 };
-  }, [filtered, liveNowMs, hrSettings, stdHours, todayCairo]);
+  }, [filtered, liveNowMs, hrSettings, stdHours, todayCairo, approvedOtByKey]);
 
   const totalsByWorker = useMemo(() => {
     const map: Record<string, { name: string; dept?: string; role?: string; hours: number; sessions: number; late: number; ot: number }> = {};
     for (const s of filtered) {
       const id = s.workerId || "unknown";
       if (!map[id]) map[id] = { name: s.workerName || id, dept: s.department, role: s.role, hours: 0, sessions: 0, late: 0, ot: 0 };
-      const h = sessionHours(s, liveNowMs, { standardHours: stdHours });
+      const approvedOtMins = s.workerId && s.date ? (approvedOtByKey.get(`${s.workerId}|${s.date}`) ?? 0) : 0;
+      const h = sessionHours(s, liveNowMs, {
+        standardHours: stdHours,
+        approvedOvertimeMinutes: approvedOtMins,
+      });
       map[id].hours += h;
       map[id].sessions += 1;
-      map[id].ot += Math.max(0, h - stdHours);
+      if (!s.isExternalMission && approvedOtMins > 0) {
+        map[id].ot += Math.min(Math.max(0, h - stdHours), approvedOtMins / 60);
+      }
       if (isLateSession(s, hrSettings)) map[id].late += 1;
     }
     return Object.entries(map).sort((a, b) => b[1].hours - a[1].hours);
-  }, [filtered, liveNowMs, hrSettings, stdHours]);
+  }, [filtered, liveNowMs, hrSettings, stdHours, approvedOtByKey]);
   const maxWorkerHours = Math.max(1, ...totalsByWorker.map(([, t]) => t.hours));
 
   const exportCsv = () => {
@@ -266,14 +307,21 @@ export default function AdminWorkSessionsPage() {
     ]];
     for (const s of filtered) {
       const stale = isStaleUnclosedSession(s, todayCairo);
+      const approvedOtMins = s.workerId && s.date ? (approvedOtByKey.get(`${s.workerId}|${s.date}`) ?? 0) : 0;
       rows.push([
         s.workerName || "",
         s.department || "",
         s.role || "",
         s.date || "",
-        s.loginTime ? s.loginTime.toDate().toLocaleString() : "",
-        s.logoutTime ? s.logoutTime.toDate().toLocaleString() : stale ? "Unclosed (Pending Auto Clock-Out)" : s.isActive ? "Active" : "",
-        sessionHours(s, liveNowMs, { standardHours: stdHours }).toFixed(2),
+        s.loginTime ? s.loginTime.toDate().toLocaleString("en-US", { timeZone: CAIRO_TZ }) : "",
+        s.logoutTime
+          ? s.logoutTime.toDate().toLocaleString("en-US", { timeZone: CAIRO_TZ })
+          : stale
+            ? "Unclosed (Pending Auto Clock-Out)"
+            : s.isActive
+              ? "Active"
+              : "",
+        sessionHours(s, liveNowMs, { standardHours: stdHours, approvedOvertimeMinutes: approvedOtMins }).toFixed(2),
         isLateSession(s, hrSettings) ? "Late" : "On-Time",
         isLiveTodayActiveSession(s, todayCairo) ? "yes" : "no",
         stale ? "Unclosed (Past Day)" : s.isActive ? (s.presenceStatus === "idle" ? "Idle (Missed Check-in)" : "Active (Verified)") : "Offline",
@@ -295,12 +343,19 @@ export default function AdminWorkSessionsPage() {
       const label = d.length === 10 ? d.slice(5) : d;
       if (!map.has(label)) map.set(label, { date: label, Hours: 0, Overtime: 0 });
       const entry = map.get(label)!;
-      const h = sessionHours(s, liveNowMs, { standardHours: stdHours });
+      const approvedOtMins = s.workerId && s.date ? (approvedOtByKey.get(`${s.workerId}|${s.date}`) ?? 0) : 0;
+      const h = sessionHours(s, liveNowMs, {
+        standardHours: stdHours,
+        approvedOvertimeMinutes: approvedOtMins,
+      });
+      const otH = !s.isExternalMission && approvedOtMins > 0
+        ? Math.min(Math.max(0, h - stdHours), approvedOtMins / 60)
+        : 0;
       entry.Hours = Math.round((entry.Hours + h) * 10) / 10;
-      entry.Overtime = Math.round((entry.Overtime + Math.max(0, h - stdHours)) * 10) / 10;
+      entry.Overtime = Math.round((entry.Overtime + otH) * 10) / 10;
     }
     return Array.from(map.values()).slice(-14);
-  }, [filtered, liveNowMs, stdHours]);
+  }, [filtered, liveNowMs, stdHours, approvedOtByKey]);
 
   const punctualitySlices = useMemo(() => {
     let onTime = 0;
@@ -526,8 +581,14 @@ export default function AdminWorkSessionsPage() {
                 </thead>
                 <tbody className="divide-y divide-zinc-100">
                   {pageItems.map((s) => {
-                    const h = sessionHours(s, liveNowMs, { standardHours: stdHours });
-                    const ot = Math.max(0, h - stdHours);
+                    const approvedOtMins = s.workerId && s.date ? (approvedOtByKey.get(`${s.workerId}|${s.date}`) ?? 0) : 0;
+                    const h = sessionHours(s, liveNowMs, {
+                      standardHours: stdHours,
+                      approvedOvertimeMinutes: approvedOtMins,
+                    });
+                    const ot = !s.isExternalMission && approvedOtMins > 0
+                      ? Math.min(Math.max(0, h - stdHours), approvedOtMins / 60)
+                      : 0;
                     const late = isLateSession(s, hrSettings);
                     const stale = isStaleUnclosedSession(s, todayCairo);
                     const liveActive = isLiveTodayActiveSession(s, todayCairo);

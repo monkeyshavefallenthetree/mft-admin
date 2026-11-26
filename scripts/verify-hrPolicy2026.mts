@@ -270,6 +270,25 @@ test("off-day: all approved worked minutes count from clock-in", () => {
   assert.equal(r.totalMinutes, 240);
   assert.equal(r.dayMinutes, 240);
 });
+test("workday midday-break clamp: 10:00–20:00 wall span with 2h break (480m worked) pays 0 OT even if 120m approved", () => {
+  const r = payableOvertimeForDay({
+    firstClockIn: at("10:00"), lastClockOut: at("20:00"), workedMinutes: 480,
+    approvedMinutes: 120, isOffDay: false, hourlyRate: 100,
+  });
+  assert.equal(r.actualMinutes, 0);
+  assert.equal(r.totalMinutes, 0);
+  assert.equal(r.total, 0);
+});
+test("workday midday break: workedMinutes clamps wall-clock overtime so unpaid breaks never pay OT", () => {
+  // Clocked in 10:00, out 20:00 (2h wall after 18:00), but had a 1h break so workedMinutes = 540 (9h = 60m OT).
+  const r = payableOvertimeForDay({
+    firstClockIn: at("10:00"), lastClockOut: at("20:00"), workedMinutes: 540,
+    approvedMinutes: 120, isOffDay: false, hourlyRate: 100,
+  });
+  assert.equal(r.actualMinutes, 60);
+  assert.equal(r.totalMinutes, 60);
+  assert.equal(r.nightMinutes, 60);
+});
 
 console.log("\n[7] Reimbursements");
 test("outdoor without screenshot / route → errors", () => {

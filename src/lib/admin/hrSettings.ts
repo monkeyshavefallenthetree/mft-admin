@@ -484,6 +484,7 @@ export interface ApprovedRequestRow {
   exceptionDate: string;
   endDate?: string;
   lateMinutes?: number | null;
+  overtimeMinutes?: number | null;
   leaveDays?: number | null;
   reason?: string;
   status: string;

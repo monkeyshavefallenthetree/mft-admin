@@ -9,13 +9,21 @@ import { workerName } from "@/components/admin/hr/hrPageUtils";
 
 interface Props {
   worker: Worker;
+  isLiveOnline?: boolean;
   settings: HrSettings;
   adminEmail: string;
   onClose: () => void;
   onOpenPayslip: (w: Worker) => void;
 }
 
-export default function Worker360Modal({ worker: dashboardWorker, settings, adminEmail, onClose, onOpenPayslip }: Props) {
+export default function Worker360Modal({
+  worker: dashboardWorker,
+  isLiveOnline = false,
+  settings,
+  adminEmail,
+  onClose,
+  onOpenPayslip,
+}: Props) {
   const { dir, t } = useHrLang();
 
   return (
@@ -45,7 +53,7 @@ export default function Worker360Modal({ worker: dashboardWorker, settings, admi
                 <p className="text-xs text-zinc-500 dark:text-zinc-400">{dashboardWorker.email}</p>
                 <p className="text-xs mt-0.5">
                   <span className="text-zinc-600 dark:text-zinc-300 uppercase font-semibold">{dashboardWorker.status}</span>
-                  {dashboardWorker.isOnline ? (
+                  {isLiveOnline ? (
                     <span className="ms-2 text-emerald-700 dark:text-emerald-400 font-semibold">{t("● متصل", "● Online")}</span>
                   ) : (
                     <span className="ms-2 text-zinc-400 font-medium">{t("○ غير متصل", "○ Offline")}</span>

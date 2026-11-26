@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { sessionHours } from "@/lib/admin/workTime";
+import { formatCairoTime } from "@/lib/admin/cairoTime";
 import { formatDepartment, type HrSettings } from "@/lib/admin/hrReports";
 import { useHrLang } from "@/lib/admin/hrI18n";
 import type { AdjustmentKind } from "@/components/admin/hr/HrAdjustmentModal";
@@ -19,6 +20,7 @@ interface Props {
   presentWorkerIds: Set<string>;
   lateWorkerIds: Set<string>;
   overtimeWorkerIds: Set<string>;
+  approvedTodayOtByWorker?: Map<string, number>;
   todayFilter: TodayFilter;
   setTodayFilter: (f: TodayFilter) => void;
   setOnboardModalWorker: (w: Worker) => void;
@@ -36,6 +38,7 @@ export default function TodayTab({
   presentWorkerIds,
   lateWorkerIds,
   overtimeWorkerIds,
+  approvedTodayOtByWorker,
   todayFilter,
   setTodayFilter,
   setOnboardModalWorker,
@@ -166,10 +169,16 @@ export default function TodayTab({
           const isPresent = workerTodaySessions.length > 0 && presentWorkerIds.has(w.id);
           const isActiveInShift = workerTodaySessions.some((s) => Boolean(s.isActive));
           const isLate = isPresent && lateWorkerIds.has(w.id);
+          const approvedOtMins = approvedTodayOtByWorker?.get(w.id) ?? 0;
           const workedHours =
             Math.round(
               workerTodaySessions.reduce(
-                (sum, s) => sum + sessionHours(s, liveNowMs, { standardHours: stdHours }),
+                (sum, s) =>
+                  sum +
+                  sessionHours(s, liveNowMs, {
+                    standardHours: stdHours,
+                    approvedOvertimeMinutes: approvedOtMins,
+                  }),
                 0,
               ) * 10,
             ) / 10;
@@ -258,7 +267,7 @@ export default function TodayTab({
                       {isActiveInShift
                         ? t("متصل بالوردية الآن", "Active in shift")
                         : isPresent
-                          ? t("أنهى الشيفت / استراحة", "Clocked out")
+                          ? t("أنهى الشيفت", "Clocked out")
                           : t("لم يسجل حضور اليوم", "Not clocked in")}
                     </span>
                     <span className="font-code font-bold tabular-nums text-zinc-900">
@@ -268,7 +277,7 @@ export default function TodayTab({
                   <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-zinc-200/70">
                     <div
                       className={`h-full rounded-full transition-all duration-500 ${
-                        workedHours > stdHours
+                        workedHours > stdHours && approvedOtMins > 0
                           ? "bg-violet-500"
                           : isActiveInShift
                             ? "bg-emerald-500"
@@ -296,10 +305,7 @@ export default function TodayTab({
                     <div className="flex items-center justify-between">
                       <span className="text-zinc-500">{t("وقت الحضور:", "Clock-in Time:")}</span>
                       <strong className="font-code text-zinc-900">
-                        {clockInTs.toDate().toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
+                        {formatCairoTime(clockInTs.toDate())}
                       </strong>
                     </div>
                   )}

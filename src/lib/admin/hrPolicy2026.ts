@@ -1286,8 +1286,13 @@ export function payableOvertimeForDay(p: {
     start = p.firstClockIn;
   } else {
     start = requiredShiftEnd(p.firstClockIn, cfg);
-    if (p.lastClockOut) actual = Math.max(0, Math.floor((p.lastClockOut.getTime() - start.getTime()) / 60000));
-    else actual = Math.max(0, Math.round(p.workedMinutes - cfg.standardHours * 60));
+    const workedOt = Math.max(0, Math.round(p.workedMinutes - cfg.standardHours * 60));
+    if (p.lastClockOut) {
+      const wallAfterEnd = Math.max(0, Math.floor((p.lastClockOut.getTime() - start.getTime()) / 60000));
+      actual = Math.min(wallAfterEnd, workedOt);
+    } else {
+      actual = workedOt;
+    }
   }
   const payable = Math.min(Math.max(0, p.approvedMinutes), actual);
   const split = splitOvertimePay(start, payable, p.hourlyRate, cfg);

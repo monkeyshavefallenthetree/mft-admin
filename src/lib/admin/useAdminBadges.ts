@@ -5,6 +5,7 @@ import { collection, doc, getDoc, onSnapshot, query, serverTimestamp, setDoc, wh
 import { auth, db } from "@/lib/firebase";
 import { subscribeAdminChatNotifications, type ChatNotification, type StoredPushSubscription } from "@/lib/chatNotifications";
 import {
+  getAdminNotificationCreatedMs,
   subscribeAdminNotifications,
   type AdminNotificationDoc,
 } from "@/lib/adminNotifications";
@@ -320,6 +321,18 @@ async function showSwOrDesktopNotification(
   }
 }
 
+function hasStoredWebPushSub(): boolean {
+  try {
+    return Boolean(localStorage.getItem(ADMIN_LOCAL_SUB_KEY));
+  } catch {
+    return false;
+  }
+}
+
+function isTabHidden(): boolean {
+  return typeof document !== "undefined" && document.visibilityState === "hidden";
+}
+
 function notifyIncrease(key: BadgeKey, count: number) {
   const copy = ALERT_COPY[key];
   if (!copy) return;
@@ -327,15 +340,9 @@ function notifyIncrease(key: BadgeKey, count: number) {
     description: copy.body(count),
     action: { label: "View", onClick: () => navigateTo(copy.href) },
   });
-  // Only show local fallback notification if Web Push is not already subscribed on this device
-  const hasWebPushSub = (() => {
-    try {
-      return Boolean(localStorage.getItem(ADMIN_LOCAL_SUB_KEY));
-    } catch {
-      return false;
-    }
-  })();
-  if (desktopNotifyEnabled() && !hasWebPushSub) {
+  // Only show local fallback OS notification when the tab is hidden AND Web Push
+  // is not already subscribed on this device (avoids duplicate OS banners).
+  if (desktopNotifyEnabled() && isTabHidden() && !hasStoredWebPushSub()) {
     void showSwOrDesktopNotification(`MFT · ${copy.title}`, copy.body(count), `mft-${key}`, copy.href, true);
   }
 }
@@ -394,14 +401,29 @@ export function useAdminBadges(enabled: boolean, role: AdminRole = "super_admin"
       () => navigator.serviceWorker?.removeEventListener("message", onSwMessage),
     ];
 
-    /** Update a counter and fire alerts + sound when it grows (skips the initial load). */
-    const track = (key: BadgeKey, count: number, extra?: Partial<AdminBadges>) => {
+    const mountedAtMs = Date.now();
+    const ALERT_RECENCY_WINDOW_MS = 120_000;
+
+    /**
+     * Update a counter for sidebar badges & bell queues. Only fire toast/sound/OS
+     * alerts on settled server increments when `alertOnIncrease` is true (used for
+     * queues not already emitted into `adminNotifications`, preventing duplicate alerts).
+     */
+    const track = (
+      key: BadgeKey,
+      count: number,
+      extra?: Partial<AdminBadges>,
+      fromCache = false,
+      alertOnIncrease = false,
+    ) => {
       const before = prev.current[key];
-      if (before !== undefined && count > before) {
-        playAdminSound();
-        notifyIncrease(key, count);
+      if (!fromCache) {
+        if (alertOnIncrease && before !== undefined && count > before) {
+          playAdminSound();
+          notifyIncrease(key, count);
+        }
+        prev.current[key] = count;
       }
-      prev.current[key] = count;
       set({ [key]: count, ...extra } as Partial<AdminBadges>);
     };
 
@@ -415,24 +437,32 @@ export function useAdminBadges(enabled: boolean, role: AdminRole = "super_admin"
 
     // Role-scoped real-time event stream (messages, projects, tasks started/claimed/submitted, new hires, excuses, HR events)
     safe(() =>
-      subscribeAdminNotifications(db, role, (items) => {
+      subscribeAdminNotifications(db, role, (items, meta) => {
         const currentUid = auth.currentUser?.uid || auth.currentUser?.email || "admin";
         const unread = items.filter((n) => !Array.isArray(n.readBy) || !n.readBy.includes(currentUid));
 
         if (seenNotifIds.current === null) {
-          seenNotifIds.current = new Set(items.map((i) => i.id));
-        } else {
+          // Wait for the first settled server snapshot before recording the baseline
+          // so stale cache hydration never triggers false alerts.
+          if (meta.ready && !meta.fromCache) {
+            seenNotifIds.current = new Set(items.map((i) => i.id));
+          }
+        } else if (!meta.fromCache) {
           for (const item of items) {
             if (!seenNotifIds.current.has(item.id)) {
               seenNotifIds.current.add(item.id);
-              if (item.actorUid !== auth.currentUser?.uid) {
+              const alreadyRead = Array.isArray(item.readBy) && item.readBy.includes(currentUid);
+              const createdMs = getAdminNotificationCreatedMs(item);
+              const isFresh = createdMs !== null && createdMs >= mountedAtMs - ALERT_RECENCY_WINDOW_MS;
+              if (item.actorUid !== auth.currentUser?.uid && !alreadyRead && isFresh) {
                 playAdminSound();
                 toast.info(item.title, {
                   description: item.body,
                   action: { label: "View", onClick: () => navigateTo(item.href) },
                 });
-                // Use identical stable tag `mft-ev-${item.id}` so any concurrent Web Push collapses instead of duplicating
-                if (desktopNotifyEnabled()) {
+                // Skip local SW/desktop fallback when tab is visible (in-page toast is shown)
+                // or when Web Push is already subscribed on this device (avoids duplicate OS alerts).
+                if (desktopNotifyEnabled() && isTabHidden() && !hasStoredWebPushSub()) {
                   void showSwOrDesktopNotification(item.title, item.body, `mft-ev-${item.id}`, item.href, true);
                 }
               }
@@ -449,27 +479,28 @@ export function useAdminBadges(enabled: boolean, role: AdminRole = "super_admin"
 
     if (canOps) {
       unsubs.push(
-        subscribeAdminChatNotifications(db, (notifs) => {
-          track("unreadChats", notifs.length, { chatNotifications: notifs });
+        subscribeAdminChatNotifications(db, (notifs, meta) => {
+          track("unreadChats", notifs.length, { chatNotifications: notifs }, Boolean(meta?.fromCache));
         }),
       );
       safe(() =>
         onSnapshot(
           query(collection(db, "tasks"), where("status", "==", "pending-approval")),
-          (s) => track("pendingApprovals", s.size),
+          (s) => track("pendingApprovals", s.size, undefined, s.metadata.fromCache),
           () => {},
         ),
       );
       safe(() =>
         onSnapshot(
           collection(db, "submissions"),
+          { includeMetadataChanges: true },
           (s) => {
             let n = 0;
             s.forEach((d) => {
               const st = d.data().status;
               if (!st || st === "new") n += 1;
             });
-            track("newSubmissions", n);
+            track("newSubmissions", n, undefined, s.metadata.fromCache, true);
           },
           () => {},
         ),
@@ -480,21 +511,21 @@ export function useAdminBadges(enabled: boolean, role: AdminRole = "super_admin"
       safe(() =>
         onSnapshot(
           query(collection(db, "workers"), where("status", "==", "pending")),
-          (s) => track("pendingWorkers", s.size),
+          (s) => track("pendingWorkers", s.size, undefined, s.metadata.fromCache),
           () => {},
         ),
       );
       safe(() =>
         onSnapshot(
           query(collection(db, "exceptionRequests"), where("status", "==", "pending")),
-          (s) => track("pendingExceptions", s.size),
+          (s) => track("pendingExceptions", s.size, undefined, s.metadata.fromCache),
           () => {},
         ),
       );
       safe(() =>
         onSnapshot(
           query(collection(db, "reimbursements"), where("stage", "in", ["pre_approval", "review"])),
-          (s) => track("pendingReimbursements", s.size),
+          (s) => track("pendingReimbursements", s.size, undefined, s.metadata.fromCache),
           () => {},
         ),
       );

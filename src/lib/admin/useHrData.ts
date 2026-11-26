@@ -35,7 +35,7 @@ import {
   type ApprovedRequestRow,
   type ReimbursementDoc,
 } from "@/lib/admin/hrSettings";
-import { effectiveLeaveDaysForRequest, ymd as localYmd } from "@/lib/admin/hrPolicy2026";
+import { effectiveLeaveDaysForRequest } from "@/lib/admin/hrPolicy2026";
 import type { Worker, WorkSession, TaskDoc, AlertDoc } from "@/lib/admin/hrPageTypes";
 import { todayYmd, assignedIds } from "@/components/admin/hr/hrPageUtils";
 
@@ -71,6 +71,7 @@ export function useHrData({
   const [alerts, setAlerts] = useState<AlertDoc[]>([]);
 
   const [settings, setSettings] = useState<HrSettings>(DEFAULT_HR_SETTINGS);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
 
   const [holidays, setHolidays] = useState<HolidayItem[]>([]);
 
@@ -81,6 +82,7 @@ export function useHrData({
   const [ledger, setLedger] = useState<PermissionLedgerDoc[]>([]);
 
   const [approvedRequests, setApprovedRequests] = useState<ApprovedRequestRow[]>([]);
+  const [approvedRequestsLoaded, setApprovedRequestsLoaded] = useState(false);
 
   const [reimbursements, setReimbursements] = useState<ReimbursementDoc[]>([]);
 
@@ -137,6 +139,7 @@ export function useHrData({
     let mirroredOnce = false;
     return subscribeHrSettings((s) => {
       setSettings(s);
+      setSettingsLoaded(true);
       const sWithMeta = s as HrSettings & { _mirrorUpdatedAtMs?: number };
       if (!mirroredOnce && (s.officeNetworks?.length ?? 0) > 0 && !sWithMeta._mirrorUpdatedAtMs) {
         mirroredOnce = true;
@@ -154,7 +157,14 @@ export function useHrData({
   // HR-POL-2026 data
   useEffect(() => subscribePermissionLedger(setLedger), [adminEmail, refreshTick]);
 
-  useEffect(() => subscribeApprovedPolicyRequests(setApprovedRequests), [adminEmail, refreshTick]);
+  useEffect(
+    () =>
+      subscribeApprovedPolicyRequests((rows) => {
+        setApprovedRequests(rows);
+        setApprovedRequestsLoaded(true);
+      }),
+    [adminEmail, refreshTick],
+  );
 
   useEffect(() => subscribeReimbursements(setReimbursements), [adminEmail, refreshTick]);
 
@@ -219,7 +229,7 @@ export function useHrData({
       (s) =>
         sessionDateYmd(s) === today &&
         Boolean(s.workerId) &&
-        (Boolean(s.loginTime) || Boolean(s.startTime) || Boolean(s.isActive) || (s.totalWorkTime ?? 0) > 0),
+        (Boolean(s.loginTime) || Boolean(s.startTime) || (s.totalWorkTime ?? 0) > 0),
     );
   }, [sessions, today]);
 
@@ -234,7 +244,9 @@ export function useHrData({
   const activeShiftWorkerIds = useMemo(() => {
     const set = new Set<string>();
     for (const s of todaysSessions) {
-      if (s.workerId && s.isActive) set.add(s.workerId);
+      if (s.workerId && s.isActive && !s.isExternalMission && (s.loginTime || s.startTime)) {
+        set.add(s.workerId);
+      }
     }
     return set;
   }, [todaysSessions]);
@@ -245,6 +257,31 @@ export function useHrData({
     const id = window.setInterval(() => setLiveNowMs(Date.now()), 30_000);
     return () => window.clearInterval(id);
   }, [activeShiftWorkerIds.size]);
+
+  const approvedOtByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of approvedRequests) {
+      if (r.type !== "overtime" || !r.workerId || !r.exceptionDate) continue;
+      const mins = Number(r.lateMinutes ?? r.overtimeMinutes ?? 0) || 0;
+      if (mins > 0) {
+        const key = `${r.workerId}|${r.exceptionDate}`;
+        map.set(key, (map.get(key) ?? 0) + mins);
+      }
+    }
+    return map;
+  }, [approvedRequests]);
+
+  const approvedTodayOtByWorker = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of approvedRequests) {
+      if (r.type !== "overtime" || !r.workerId || r.exceptionDate !== today) continue;
+      const mins = Number(r.lateMinutes ?? r.overtimeMinutes ?? 0) || 0;
+      if (mins > 0) {
+        map.set(r.workerId, (map.get(r.workerId) ?? 0) + mins);
+      }
+    }
+    return map;
+  }, [approvedRequests, today]);
 
   // Auto-heal stale `isOnline: true` flags AND close unclosed past-day `workSessions` cleanly
   useEffect(() => {
@@ -261,18 +298,27 @@ export function useHrData({
       }
     }
 
+    // Wait until BOTH approved overtime requests AND HR settings have resolved before
+    // closing stale past-day sessions so approved overtime is never prematurely wiped to 0.
+    if (!approvedRequestsLoaded || !settingsLoaded) return;
+
     const nowMs = Date.now();
     for (const s of sessions) {
       if (!s.isActive || s.isExternalMission || !s.id) continue;
       const dKey = sessionDateYmd(s);
       if (!dKey || dKey >= today || cleanedStaleSessionsRef.current.has(s.id)) continue;
       cleanedStaleSessionsRef.current.add(s.id);
-      const lifecycle = evaluateShiftLifecycle(s, {
-        nowMs,
-        todayCairoYmd: today,
-        standardHours: settings.standardHours || 8,
-        policySettings: settings,
-      });
+      const pastApprovedOt = s.workerId ? (approvedOtByKey.get(`${s.workerId}|${dKey}`) ?? 0) : 0;
+      const lifecycle = evaluateShiftLifecycle(
+        { ...s, overtimeMinutes: pastApprovedOt, allowedShiftMs: undefined },
+        {
+          nowMs,
+          todayCairoYmd: today,
+          standardHours: settings.standardHours || 8,
+          overtimeMinutes: pastApprovedOt,
+          policySettings: settings,
+        },
+      );
       if (lifecycle.action === "auto_clock_out") {
         const cappedLogout = new Date(lifecycle.cappedLogoutMs ?? lifecycle.shiftLimitAtMs);
         const cappedTotal = lifecycle.cappedTotalWorkTimeMs ?? lifecycle.allowedMs;
@@ -281,17 +327,31 @@ export function useHrData({
           logoutTime: cappedLogout,
           endTime: cappedLogout,
           segmentStartAt: null,
+          overtimeMinutes: pastApprovedOt,
+          allowedShiftMs: lifecycle.allowedMs,
           bankedWorkTime: cappedTotal,
           totalWorkTime: cappedTotal,
           presenceStatus: "offline",
           autoClockedOut: true,
           autoClockOutReason: lifecycle.autoClockOutReason || "past_day_unclosed",
           autoClockedOutAt: serverTimestamp(),
+          autoClockOutNotifiedAt: serverTimestamp(),
           lastUpdated: serverTimestamp(),
         }).catch(() => {});
       }
     }
-  }, [workersLoaded, sessionsLoaded, workers, sessions, activeShiftWorkerIds, today, settings]);
+  }, [
+    workersLoaded,
+    sessionsLoaded,
+    approvedRequestsLoaded,
+    settingsLoaded,
+    workers,
+    sessions,
+    activeShiftWorkerIds,
+    today,
+    settings,
+    approvedOtByKey,
+  ]);
 
   // Evaluate lateness ONLY against each worker's earliest clock-in of the day
   const lateWorkerIds = useMemo(() => {
@@ -317,18 +377,20 @@ export function useHrData({
     const hoursByWorker = new Map<string, number>();
     const std = settings.standardHours || 8;
     for (const s of todaysSessions) {
-      if (!s.workerId) continue;
+      if (!s.workerId || s.isExternalMission) continue;
+      const approvedOtMins = approvedTodayOtByWorker.get(s.workerId) ?? 0;
       hoursByWorker.set(
         s.workerId,
-        (hoursByWorker.get(s.workerId) ?? 0) + sessionHours(s, liveNowMs, { standardHours: std }),
+        (hoursByWorker.get(s.workerId) ?? 0) +
+          sessionHours(s, liveNowMs, { standardHours: std, approvedOvertimeMinutes: approvedOtMins }),
       );
     }
     const set = new Set<string>();
     for (const [wId, hrs] of hoursByWorker.entries()) {
-      if (hrs > std) set.add(wId);
+      if ((approvedTodayOtByWorker.get(wId) ?? 0) > 0 && hrs > std) set.add(wId);
     }
     return set;
-  }, [todaysSessions, settings.standardHours, liveNowMs]);
+  }, [todaysSessions, settings.standardHours, liveNowMs, approvedTodayOtByWorker]);
 
   // Today KPI Metrics
   const hrSummary = useMemo(() => {
@@ -340,7 +402,12 @@ export function useHrData({
     const attendanceRate = expectedWorkers > 0 ? Math.round((presentToday / expectedWorkers) * 100) : 0;
     const std = settings.standardHours || 8;
     const payrollHoursToday = todaysSessions.reduce(
-      (sum, s) => sum + sessionHours(s, liveNowMs, { standardHours: std }),
+      (sum, s) =>
+        sum +
+        sessionHours(s, liveNowMs, {
+          standardHours: std,
+          approvedOvertimeMinutes: s.workerId ? (approvedTodayOtByWorker.get(s.workerId) ?? 0) : 0,
+        }),
       0,
     );
 
@@ -352,7 +419,16 @@ export function useHrData({
       attendanceRate,
       payrollHoursToday: Math.round(payrollHoursToday * 10) / 10,
     };
-  }, [approved.length, presentWorkerIds.size, lateWorkerIds.size, overtimeWorkerIds.size, todaysSessions, settings.standardHours, liveNowMs]);
+  }, [
+    approved.length,
+    presentWorkerIds.size,
+    lateWorkerIds.size,
+    overtimeWorkerIds.size,
+    todaysSessions,
+    settings.standardHours,
+    liveNowMs,
+    approvedTodayOtByWorker,
+  ]);
 
   const workerTaskStats = useMemo(() => {
     const m = new Map<string, { completed: number; total: number }>();
@@ -371,8 +447,8 @@ export function useHrData({
   const policyInputsFor = useCallback(
     (w: Worker, start: Date, end: Date) => {
       const workerId = w.id;
-      const s = localYmd(start);
-      const e = localYmd(end);
+      const s = cairoYmd(start);
+      const e = cairoYmd(end);
       const leaveReqs = approvedRequests.filter(
         (r) =>
           r.workerId === workerId &&
@@ -393,7 +469,7 @@ export function useHrData({
         .filter((r) => r.type !== "unpaid_leave" && r.leaveType !== "unpaid")
         .reduce((sum, r) => sum + effectiveLeaveDaysForRequest(r, wknd, holidays), 0);
       const approvedLeaveDays = paidLeaveDays + unpaidLeaveDays;
-      const fallbackStart = w.createdAt?.toDate ? localYmd(w.createdAt.toDate()) : null;
+      const fallbackStart = w.createdAt?.toDate ? cairoYmd(w.createdAt.toDate()) : null;
       return {
         permissionLedger: effectiveLedger.filter((l) => l.workerId === workerId && l.date >= s && l.date <= e),
         approvedOvertime: approvedRequests
@@ -404,7 +480,7 @@ export function useHrData({
               r.exceptionDate >= s &&
               r.exceptionDate <= e,
           )
-          .map((r) => ({ date: r.exceptionDate, minutes: Number(r.lateMinutes) || 0 })),
+          .map((r) => ({ date: r.exceptionDate, minutes: Number(r.lateMinutes ?? r.overtimeMinutes ?? 0) || 0 })),
         approvedLeaveDays,
         paidLeaveDays,
         unpaidLeaveDays,
@@ -517,8 +593,11 @@ export function useHrData({
     todayHoliday,
     todaysSessions,
     presentWorkerIds,
+    activeShiftWorkerIds,
     lateWorkerIds,
     overtimeWorkerIds,
+    approvedOtByKey,
+    approvedTodayOtByWorker,
     hrSummary,
     workerTaskStats,
     policyInputsFor,

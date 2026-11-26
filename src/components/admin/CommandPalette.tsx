@@ -15,6 +15,7 @@ interface Props {
   onSetTheme: (t: ThemePref) => void;
   onSignOut: () => void;
   onToggleSidebar: () => void;
+  onOpenAi?: () => void;
 }
 
 type Group = "Needs attention" | "Actions" | "Go to" | "Preferences";
@@ -48,6 +49,7 @@ export default function CommandPalette({
   onSetTheme,
   onSignOut,
   onToggleSidebar,
+  onOpenAi,
 }: Props) {
   const [q, setQ] = useState("");
   const [groupFilter, setGroupFilter] = useState<"all" | Group>("all");
@@ -137,6 +139,19 @@ export default function CommandPalette({
       .map((c) => ({ ...c, group: "Needs attention" as Group, keywords: "pending inbox todo" }));
 
     const actions: Command[] = [
+      ...(onOpenAi
+        ? [
+            {
+              id: "open-super-ai",
+              group: "Actions" as Group,
+              label: "Open Super AI Assistant",
+              hint: "MFT Super AI · Live briefing, HR-POL-2026 & confirmed drafts (⌘J)",
+              icon: "M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z",
+              keywords: "ai super assistant copilot chat help policy draft",
+              run: act(onOpenAi),
+            },
+          ]
+        : []),
       ...(canOps
         ? [
             {
@@ -253,7 +268,7 @@ export default function CommandPalette({
         run: act(onSignOut),
       },
     ];
-  }, [badges, role, theme, onNavigate, onClose, onSetTheme, onSignOut, onToggleSidebar]);
+  }, [badges, role, theme, onNavigate, onClose, onSetTheme, onSignOut, onToggleSidebar, onOpenAi]);
 
   const filtered = useMemo(() => {
     const terms = q.trim().toLowerCase().split(/\s+/).filter(Boolean);

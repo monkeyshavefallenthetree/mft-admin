@@ -1,8 +1,8 @@
 import { Timestamp } from "firebase/firestore";
 import { cairoYmd } from "./cairoTime";
 import {
-  MAX_ABSOLUTE_SHIFT_MS,
   computeAllowedShiftMs,
+  isMissionSession,
   resolveSessionAnchors,
 } from "./shiftLifecycle";
 
@@ -44,6 +44,9 @@ export type SessionLike = {
 
 export interface EffectiveWorkTimeOptions {
   standardHours?: number;
+  /** Admin-approved overtime minutes for this worker+day. Strictly overrides any raw session field. */
+  approvedOvertimeMinutes?: number;
+  /** Legacy alias for `approvedOvertimeMinutes`. */
   overtimeMinutes?: number;
 }
 
@@ -55,30 +58,20 @@ function resolveAllowedMs(session: SessionLike, opts?: EffectiveWorkTimeOptions)
         ? session.standardHours
         : 8;
   const ot =
-    typeof opts?.overtimeMinutes === "number" && Number.isFinite(opts.overtimeMinutes)
-      ? Math.max(0, opts.overtimeMinutes)
-      : typeof session.overtimeMinutes === "number" && Number.isFinite(session.overtimeMinutes)
-        ? Math.max(0, session.overtimeMinutes)
+    typeof opts?.approvedOvertimeMinutes === "number" && Number.isFinite(opts.approvedOvertimeMinutes)
+      ? Math.max(0, opts.approvedOvertimeMinutes)
+      : typeof opts?.overtimeMinutes === "number" && Number.isFinite(opts.overtimeMinutes)
+        ? Math.max(0, opts.overtimeMinutes)
         : 0;
 
-  if (opts?.standardHours !== undefined || opts?.overtimeMinutes !== undefined) {
-    return computeAllowedShiftMs(std, ot);
-  }
-  if (
-    typeof session.allowedShiftMs === "number" &&
-    Number.isFinite(session.allowedShiftMs) &&
-    session.allowedShiftMs > 0
-  ) {
-    return Math.min(MAX_ABSOLUTE_SHIFT_MS, session.allowedShiftMs);
-  }
   return computeAllowedShiftMs(std, ot);
 }
 
 /**
  * Returns the accurate work duration (ms) for a session, including live elapsed time
- * for today's currently active shifts (in `Africa/Cairo`) capped cleanly to the worker's
- * allowed shift duration (`standardHours + overtimeMinutes`) so unclosed shifts never
- * runaway-inflate hours or create false overtime.
+ * for today's currently active shifts (in `Africa/Cairo`). Both active AND closed regular
+ * sessions are strictly capped at `standardHours + approvedOvertimeMinutes` so unapproved
+ * overtime or unclosed shifts never inflate displayed or paid hours.
  */
 export function effectiveSessionWorkMs(
   session: SessionLike,
@@ -91,15 +84,21 @@ export function effectiveSessionWorkMs(
       : 0;
   const allowedMs = resolveAllowedMs(session, opts);
 
-  if (!session.isActive || session.isExternalMission) {
-    if (session.autoClockedOut && !session.isExternalMission) {
-      return Math.min(storedMs, allowedMs);
-    }
+  if (isMissionSession(session)) {
     return storedMs;
   }
 
-  const anchors = resolveSessionAnchors(session, nowMs);
+  if (!session.isActive) {
+    return Math.min(storedMs, allowedMs);
+  }
+
+  const anchors = resolveSessionAnchors(session);
   const todayYmd = cairoYmd(nowMs);
+
+  // Ghost active session with no real clock-in timestamp — never fabricate elapsed time
+  if (anchors.segmentStartMs == null) {
+    return Math.min(storedMs, allowedMs);
+  }
 
   // Never runaway-count an unclosed session from a past calendar day
   if (!anchors.sessionYmd || anchors.sessionYmd !== todayYmd) {

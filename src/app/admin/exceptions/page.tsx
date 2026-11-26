@@ -1,7 +1,19 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { collection, onSnapshot, doc, setDoc, updateDoc, serverTimestamp, writeBatch, addDoc } from "firebase/firestore";
+import {
+  collection,
+  onSnapshot,
+  doc,
+  getDoc,
+  getDocs,
+  query,
+  where,
+  updateDoc,
+  serverTimestamp,
+  writeBatch,
+  addDoc,
+} from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 import { downloadCsv } from "@/lib/admin/csv";
 import { useUrlState } from "@/lib/admin/useUrlState";
@@ -14,7 +26,8 @@ import { ICONS } from "@/lib/admin/nav";
 import ModalPortal from "@/components/admin/ui/ModalPortal";
 import ExceptionPolicyInsight, { checkAnnualLeave, checkMonthlyPermission, type InsightWorker } from "@/components/admin/hr/ExceptionPolicyInsight";
 import { chargeableMinutes, policyConfigFromSettings } from "@/lib/admin/hrPolicy2026";
-import { cairoYmd, cairoYmdAtMinutes } from "@/lib/admin/cairoTime";
+import { CAIRO_TZ, cairoYmd, cairoYmdAtMinutes, formatCairoTime } from "@/lib/admin/cairoTime";
+import { computeAllowedShiftMs } from "@/lib/admin/shiftLifecycle";
 import { DEFAULT_HR_SETTINGS, type HrSettings } from "@/lib/admin/hrReports";
 import { subscribeHrSettings } from "@/lib/admin/hrSettings";
 
@@ -66,15 +79,85 @@ function formatExceptionType(type: string | undefined) {
 
 function formatTs(t: { toDate: () => Date } | undefined) {
   if (!t?.toDate) return "—";
-  return t.toDate().toLocaleString([], { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  return t.toDate().toLocaleString("en-US", {
+    timeZone: CAIRO_TZ,
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function formatSubmittedYmd(t: { toDate: () => Date } | undefined) {
   if (!t?.toDate) return "—";
   const d = t.toDate();
-  const ymdStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  const timeStr = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  return `${ymdStr} (${timeStr})`;
+  return `${cairoYmd(d)} (${formatCairoTime(d)})`;
+}
+
+/**
+ * Re-computes admin-approved overtime minutes for `(workerId, exceptionDate)` from
+ * `exceptionRequests` (`type === "overtime" && status === "approved"`) and syncs
+ * `overtimeMinutes` + `allowedShiftMs` onto the existing `workSessions/{workerId}_{date}` doc.
+ * Never creates a session doc if the worker hasn't clocked in.
+ */
+async function syncApprovedOvertimeToWorkSession(
+  workerId: string,
+  exceptionDate: string,
+  defaultStandardHours: number,
+): Promise<void> {
+  if (!workerId || !exceptionDate) return;
+  try {
+    const sessionRef = doc(db, "workSessions", `${workerId}_${exceptionDate}`);
+    const sessionSnap = await getDoc(sessionRef);
+    if (!sessionSnap.exists()) return;
+    const sessionData = sessionSnap.data();
+    if (sessionData.isExternalMission === true) return;
+
+    const reqSnap = await getDocs(
+      query(collection(db, "exceptionRequests"), where("workerId", "==", workerId)),
+    );
+    let approvedMins = 0;
+    reqSnap.forEach((d) => {
+      const data = d.data();
+      if (
+        data.type === "overtime" &&
+        data.status === "approved" &&
+        data.exceptionDate === exceptionDate
+      ) {
+        const mins = Number(data.lateMinutes ?? data.overtimeMinutes ?? 0);
+        if (Number.isFinite(mins) && mins > 0) approvedMins += mins;
+      }
+    });
+
+    const std =
+      typeof sessionData.standardHours === "number" &&
+      Number.isFinite(sessionData.standardHours) &&
+      sessionData.standardHours > 0
+        ? sessionData.standardHours
+        : defaultStandardHours > 0
+          ? defaultStandardHours
+          : 8;
+    const allowedShiftMs = computeAllowedShiftMs(std, approvedMins);
+
+    const patch: Record<string, unknown> = {
+      overtimeMinutes: approvedMins,
+      allowedShiftMs,
+      standardHours: std,
+      lastUpdated: serverTimestamp(),
+    };
+    if (!sessionData.isActive) {
+      if (typeof sessionData.totalWorkTime === "number" && sessionData.totalWorkTime > allowedShiftMs) {
+        patch.totalWorkTime = allowedShiftMs;
+      }
+      if (typeof sessionData.bankedWorkTime === "number" && sessionData.bankedWorkTime > allowedShiftMs) {
+        patch.bankedWorkTime = allowedShiftMs;
+      }
+    }
+    await updateDoc(sessionRef, patch);
+  } catch (err) {
+    console.warn("[Exceptions] Failed syncing approved overtime to workSession:", workerId, exceptionDate, err);
+  }
 }
 
 function timeAgo(t: { toDate: () => Date } | undefined) {
@@ -173,7 +256,7 @@ export default function AdminExceptionsPage() {
       if (dateFilter !== "all") {
         const ex = e.createdAt?.toDate?.() ?? e.submittedAt?.toDate?.() ?? new Date(0);
         const now = new Date();
-        if (dateFilter === "today" && ex.toDateString() !== now.toDateString()) return false;
+        if (dateFilter === "today" && cairoYmd(ex) !== cairoYmd(now)) return false;
         if (dateFilter === "week" && ex < new Date(now.getTime() - 7 * 86400000)) return false;
         if (dateFilter === "month" && ex < new Date(now.getTime() - 30 * 86400000)) return false;
       }
@@ -193,8 +276,11 @@ export default function AdminExceptionsPage() {
   }, [baseFiltered]);
 
   const todayN = useMemo(() => {
-    const today = new Date().toDateString();
-    return items.filter((e) => (e.createdAt?.toDate?.() ?? e.submittedAt?.toDate?.() ?? new Date(0)).toDateString() === today).length;
+    const today = cairoYmd();
+    return items.filter((e) => {
+      const dt = e.createdAt?.toDate?.() ?? e.submittedAt?.toDate?.();
+      return dt ? cairoYmd(dt) === today : false;
+    }).length;
   }, [items]);
 
   // Drop selections that are no longer visible.
@@ -217,6 +303,24 @@ export default function AdminExceptionsPage() {
   const toggleAll = () => setSelected(allSelected ? new Set() : new Set(filtered.map((f) => f.id)));
 
   const byId = (id: string) => items.find((i) => i.id === id);
+
+  const syncOvertimeSessionsForIds = async (affectedIds: string[]) => {
+    const pairs = new Map<string, { workerId: string; exceptionDate: string }>();
+    for (const id of affectedIds) {
+      const req = byId(id);
+      if (req?.type === "overtime" && req.workerId && req.exceptionDate) {
+        pairs.set(`${req.workerId}|${req.exceptionDate}`, {
+          workerId: req.workerId,
+          exceptionDate: req.exceptionDate,
+        });
+      }
+    }
+    await Promise.all(
+      Array.from(pairs.values()).map(({ workerId, exceptionDate }) =>
+        syncApprovedOvertimeToWorkSession(workerId, exceptionDate, hrSettings.standardHours || 8),
+      ),
+    );
+  };
 
   const approve = async (requestedIds: string[]) => {
     // HR-POL-2026: validate annual/emergency leave and monthly permission quotas before approving.
@@ -312,6 +416,7 @@ export default function AdminExceptionsPage() {
         }
       });
       await batch.commit();
+      await syncOvertimeSessionsForIds(ids);
       ids.forEach((id) => {
         const e = byId(id);
         void logActivity({ action: "approved", entity: "exception", entityId: id, label: `${formatExceptionType(e?.type)} · ${e?.workerName ?? "worker"}`, detail: e?.exceptionDate });
@@ -397,6 +502,7 @@ export default function AdminExceptionsPage() {
           }
         });
         await batch.commit();
+        await syncOvertimeSessionsForIds(responseModal.ids);
         responseModal.ids.forEach((id) => {
           const x = byId(id);
           void logActivity({ action: "rejected", entity: "exception", entityId: id, label: `${formatExceptionType(x?.type)} · ${x?.workerName ?? "worker"}`, detail: modalText.trim() || undefined });
@@ -504,6 +610,7 @@ export default function AdminExceptionsPage() {
         }
       });
       await batch.commit();
+      await syncOvertimeSessionsForIds(ids);
       ids.forEach((id) => {
         const x = byId(id);
         void logActivity({
@@ -566,6 +673,7 @@ export default function AdminExceptionsPage() {
         }
       });
       await batch.commit();
+      await syncOvertimeSessionsForIds(ids);
       ids.forEach((id) => {
         const x = byId(id);
         void logActivity({ action: "deleted", entity: "exception", entityId: id, label: `${formatExceptionType(x?.type)} · ${x?.workerName ?? "worker"}` });

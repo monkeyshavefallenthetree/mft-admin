@@ -6,6 +6,7 @@ import { auth, db } from "@/lib/firebase";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import CommandPalette from "@/components/admin/CommandPalette";
+import AdminAiDrawer from "@/components/admin/AdminAiDrawer";
 import {
   NAV_GROUPS,
   ICONS,
@@ -30,6 +31,7 @@ import { isSoundEnabled, playAdminSound, setSoundEnabled } from "@/lib/admin/sou
 import { FeedbackHost, confirmDialog, toast } from "@/lib/admin/feedback";
 import { useTheme, type ThemePref } from "@/lib/admin/theme";
 import { logActivity } from "@/lib/admin/activity";
+import { CAIRO_TZ, cairoYmd, formatCairoTime } from "@/lib/admin/cairoTime";
 import { URL_SYNC_EVENT } from "@/lib/admin/useUrlState";
 
 function Icon({ d, className = "h-[18px] w-[18px]" }: { d: string; className?: string }) {
@@ -40,21 +42,30 @@ function Icon({ d, className = "h-[18px] w-[18px]" }: { d: string; className?: s
   );
 }
 
-function timeAgo(d?: Date) {
-  if (!d) return "";
-  const s = Math.floor((Date.now() - d.getTime()) / 1000);
-  if (s < 60) return "just now";
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  return `${Math.floor(s / 86400)}d ago`;
+function formatNotifTimestamp(d?: Date): string {
+  if (!d || Number.isNaN(d.getTime())) return "";
+  const nowMs = Date.now();
+  const s = Math.floor((nowMs - d.getTime()) / 1000);
+  if (cairoYmd(d) === cairoYmd(nowMs)) {
+    if (s < 60) return "just now";
+    if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+    return `${Math.floor(s / 3600)}h ago · ${formatCairoTime(d)}`;
+  }
+  const datePart = new Intl.DateTimeFormat("en-US", {
+    timeZone: CAIRO_TZ,
+    month: "short",
+    day: "numeric",
+  }).format(d);
+  return `${datePart} · ${formatCairoTime(d)}`;
 }
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<{ email: string | null } | null>(null);
-  const [mobileOpen, setMobileOpen] = useState(false);
+  const [mobileOpenPath, setMobileOpenPath] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
   const [bellOpen, setBellOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const bellRef = useRef<HTMLDivElement>(null);
@@ -62,8 +73,21 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const router = useRouter();
   const pathname = usePathname();
 
+  const mobileOpen = mobileOpenPath === pathname;
+  const setMobileOpen = useCallback(
+    (next: boolean | ((cur: boolean) => boolean)) => {
+      setMobileOpenPath((cur) => {
+        const isOpen = cur === pathname;
+        const resolved = typeof next === "function" ? next(isOpen) : next;
+        return resolved ? pathname : null;
+      });
+    },
+    [pathname],
+  );
+
   const role = getAdminRole(user?.email);
   const roleMeta = getAdminRoleMeta(role);
+  const defaultHref = roleMeta.defaultHref;
   const navGroups = getNavGroupsForRole(role);
 
   const badges = useAdminBadges(!!user, role);
@@ -74,9 +98,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const [pushBannerDismissed, setPushBannerDismissed] = useState(false);
 
   useEffect(() => {
-    setDesktopOn(desktopNotifyEnabled());
-    setSoundOn(isSoundEnabled());
-    if (typeof window !== "undefined") {
+    const id = window.setTimeout(() => {
+      setDesktopOn(desktopNotifyEnabled());
+      setSoundOn(isSoundEnabled());
+      setCollapsed(localStorage.getItem("mft.sidebar.collapsed") === "1");
       const ua = window.navigator.userAgent || "";
       const isIOS =
         /iPad|iPhone|iPod/.test(ua) ||
@@ -87,7 +112,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       if (isIOS && !isStandalone) {
         setIosNeedsInstall(true);
       }
-    }
+    }, 0);
+    return () => window.clearTimeout(id);
   }, []);
 
   useEffect(() => {
@@ -105,13 +131,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const routeAllowed = !user || isPathAllowedForRole(pathname, role);
   useEffect(() => {
     if (!loading && user && pathname !== "/admin/login" && !routeAllowed) {
-      router.replace(roleMeta.defaultHref);
+      router.replace(defaultHref);
     }
-  }, [loading, user, pathname, routeAllowed, roleMeta.defaultHref, router]);
+  }, [loading, user, pathname, routeAllowed, defaultHref, router]);
 
-  useEffect(() => {
-    setCollapsed(localStorage.getItem("mft.sidebar.collapsed") === "1");
-  }, []);
   const toggleCollapsed = () => {
     setCollapsed((c) => {
       localStorage.setItem("mft.sidebar.collapsed", c ? "0" : "1");
@@ -124,10 +147,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setPaletteOpen((o) => !o);
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "j") {
+        e.preventDefault();
+        setAiOpen((o) => !o);
       } else if (e.key === "Escape") {
         setBellOpen(false);
         setUserMenuOpen(false);
-        setMobileOpen(false);
+        setMobileOpenPath(null);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -143,32 +169,34 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     return () => document.removeEventListener("mousedown", onClick);
   }, []);
 
-  useEffect(() => setMobileOpen(false), [pathname]);
-
-  const go = useCallback(
-    (href: string) => {
-      const target = new URL(href, window.location.origin);
-      if (!isPathAllowedForRole(target.pathname, role)) {
-        router.push(roleMeta.defaultHref);
-        return;
-      }
-      const samePage = target.pathname === window.location.pathname;
-      router.push(href);
-      if (samePage) window.setTimeout(() => window.dispatchEvent(new Event(URL_SYNC_EVENT)), 60);
-    },
-    [router, role, roleMeta.defaultHref],
-  );
+  const go = (href: string) => {
+    const target = new URL(href, window.location.origin);
+    if (!isPathAllowedForRole(target.pathname, role)) {
+      router.push(defaultHref);
+      return;
+    }
+    const samePage = target.pathname === window.location.pathname;
+    router.push(href);
+    if (samePage) window.setTimeout(() => window.dispatchEvent(new Event(URL_SYNC_EVENT)), 60);
+  };
 
   useEffect(() => {
     const onNav = (e: Event) => {
       const href = (e as CustomEvent<string>).detail;
       if (typeof href !== "string") return;
       e.preventDefault();
-      go(href);
+      const target = new URL(href, window.location.origin);
+      if (!isPathAllowedForRole(target.pathname, role)) {
+        router.push(defaultHref);
+        return;
+      }
+      const samePage = target.pathname === window.location.pathname;
+      router.push(href);
+      if (samePage) window.setTimeout(() => window.dispatchEvent(new Event(URL_SYNC_EVENT)), 60);
     };
     window.addEventListener(NAVIGATE_EVENT, onNav);
     return () => window.removeEventListener(NAVIGATE_EVENT, onNav);
-  }, [go]);
+  }, [router, role, defaultHref]);
 
   const [online, setOnline] = useState(true);
   useEffect(() => {
@@ -182,6 +210,24 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     };
   }, []);
 
+  const readerKey = auth.currentUser?.uid || user?.email || "admin";
+
+  // Avoid double-counting unread `adminNotifications` whose category is already represented
+  // in an active non-zero pending queue counter (e.g. pending worker, exception, approval, chat).
+  const nonOverlappingUnreadAdminNotifs = badges.adminNotifications.reduce((acc, ev) => {
+    const isUnread = !Array.isArray(ev.readBy) || !ev.readBy.includes(readerKey);
+    if (!isUnread) return acc;
+    const et = ev.eventType;
+    const overlapsQueue =
+      ((et === "task_chat_message" || et === "project_chat_message") && badges.unreadChats > 0) ||
+      (et === "worker_registered" && badges.pendingWorkers > 0) ||
+      (et === "exception_submitted" && badges.pendingExceptions > 0) ||
+      (et === "task_submitted_approval" && badges.pendingApprovals > 0) ||
+      ((et === "reimbursement_submitted" || et === "reimbursement_invoice_uploaded") &&
+        badges.pendingReimbursements > 0);
+    return overlapsQueue ? acc : acc + 1;
+  }, 0);
+
   const pendingTotal =
     badges.unreadChats +
     badges.pendingWorkers +
@@ -189,7 +235,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     badges.pendingApprovals +
     badges.newSubmissions +
     badges.pendingReimbursements +
-    badges.unreadAdminNotifs;
+    nonOverlappingUnreadAdminNotifs;
 
   useEffect(() => {
     if (pathname === "/admin/login") {
@@ -265,7 +311,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const currentGroup = NAV_GROUPS.find((g) => g.items.some((i) => i.href === current?.href));
 
   const totalAlerts = pendingTotal;
-  const readerKey = auth.currentUser?.uid || user?.email || "admin";
 
   const alertRows = [
     {
@@ -586,6 +631,24 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             </div>
           )}
 
+          {/* MFT Super AI Copilot Trigger */}
+          <button
+            type="button"
+            id="super-ai-trigger"
+            onClick={() => setAiOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-900 bg-zinc-950 px-2.5 py-1.5 text-xs font-semibold text-white shadow-xs transition-all hover:bg-red-600 hover:border-red-600 cursor-pointer"
+            title="Open MFT Super AI Assistant (Ctrl/Cmd+J)"
+          >
+            <Icon
+              d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z"
+              className="h-3.5 w-3.5 text-red-400"
+            />
+            <span className="hidden sm:inline">Super AI</span>
+            <kbd className="hidden rounded bg-white/15 px-1 py-0.5 font-code text-[9px] font-semibold text-zinc-200 md:inline">
+              ⌘J
+            </kbd>
+          </button>
+
           {/* Live Sync Status Pill */}
           <span
             className={`hidden items-center gap-1.5 rounded-full border px-2.5 py-1 font-code text-[10px] font-semibold uppercase tracking-wider sm:flex ${
@@ -805,7 +868,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                                   {n.senderName}
                                 </span>
                                 <span className="shrink-0 font-code text-[10px] text-zinc-400">
-                                  {timeAgo(n.createdAt?.toDate())}
+                                  {formatNotifTimestamp(n.createdAt?.toDate())}
                                 </span>
                               </span>
                               <span className="block truncate text-[11px] text-zinc-500">
@@ -866,7 +929,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                                   {ev.title}
                                 </span>
                                 <span className="shrink-0 font-code text-[10px] text-zinc-400">
-                                  {timeAgo(ev.createdAt?.toDate?.())}
+                                  {formatNotifTimestamp(ev.createdAt?.toDate?.())}
                                 </span>
                               </span>
                               <span className="mt-0.5 block line-clamp-2 text-[11px] text-zinc-600">
@@ -1119,6 +1182,14 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         onSetTheme={setTheme}
         onSignOut={() => void handleLogout()}
         onToggleSidebar={toggleCollapsed}
+        onOpenAi={() => setAiOpen(true)}
+      />
+      <AdminAiDrawer
+        open={aiOpen}
+        onClose={() => setAiOpen(false)}
+        onNavigate={go}
+        role={role}
+        pathname={pathname}
       />
       <FeedbackHost />
     </div>

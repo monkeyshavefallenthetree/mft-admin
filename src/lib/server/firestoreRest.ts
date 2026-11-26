@@ -9,6 +9,7 @@ export type FirestoreDocRecord = {
   id: string;
   path: string;
   data: Record<string, unknown>;
+  updateTime?: string;
 };
 
 export interface ServerFirestoreClient {
@@ -17,8 +18,17 @@ export interface ServerFirestoreClient {
     collectionId: string,
     filters: Array<{ field: string; op: "EQUAL" | "LESS_THAN" | "GREATER_THAN"; value: unknown }>,
   ): Promise<FirestoreDocRecord[]>;
-  patchDocument(docPath: string, fields: Record<string, unknown>): Promise<void>;
+  patchDocument(
+    docPath: string,
+    fields: Record<string, unknown>,
+    opts?: { updateTime?: string },
+  ): Promise<boolean>;
   createDocument(collectionId: string, fields: Record<string, unknown>): Promise<string>;
+  createDocumentIfAbsent(
+    collectionId: string,
+    documentId: string,
+    fields: Record<string, unknown>,
+  ): Promise<{ created: boolean; id: string }>;
 }
 
 /* ────────────────────── Firestore REST Value Codec ────────────────────── */
@@ -87,6 +97,7 @@ export function decodeFirestoreValue(fsVal: Record<string, unknown> | undefined)
 export function decodeFirestoreDoc(raw: {
   name?: string;
   fields?: Record<string, Record<string, unknown>>;
+  updateTime?: string;
 }): FirestoreDocRecord {
   const fullName = raw.name || "";
   const idx = fullName.indexOf("/documents/");
@@ -99,7 +110,7 @@ export function decodeFirestoreDoc(raw: {
       data[k] = decodeFirestoreValue(v);
     }
   }
-  return { id, path: relPath, data };
+  return { id, path: relPath, data, ...(raw.updateTime ? { updateTime: raw.updateTime } : {}) };
 }
 
 /* ────────────────────── Auth Token Providers ────────────────────── */
@@ -328,6 +339,7 @@ export function createFirestoreRestClient(
       const raw = (await res.json()) as {
         name?: string;
         fields?: Record<string, Record<string, unknown>>;
+        updateTime?: string;
       };
       return decodeFirestoreDoc(raw);
     },
@@ -369,7 +381,7 @@ export function createFirestoreRestClient(
       }
 
       const rows = (await res.json()) as Array<{
-        document?: { name?: string; fields?: Record<string, Record<string, unknown>> };
+        document?: { name?: string; fields?: Record<string, Record<string, unknown>>; updateTime?: string };
       }>;
       const out: FirestoreDocRecord[] = [];
       for (const row of rows) {
@@ -378,28 +390,45 @@ export function createFirestoreRestClient(
       return out;
     },
 
-    async patchDocument(docPath: string, fields: Record<string, unknown>): Promise<void> {
+    async patchDocument(
+      docPath: string,
+      fields: Record<string, unknown>,
+      opts?: { updateTime?: string },
+    ): Promise<boolean> {
       const clean = docPath.replace(/^\/+/, "");
       const keys = Object.keys(fields).filter((k) => fields[k] !== undefined);
-      if (keys.length === 0) return;
+      if (keys.length === 0) return true;
 
-      const maskParams = keys
-        .map((k) => `updateMask.fieldPaths=${encodeURIComponent(k)}`)
-        .join("&");
+      const params = keys.map((k) => `updateMask.fieldPaths=${encodeURIComponent(k)}`);
+      if (opts?.updateTime) {
+        params.push(`currentDocument.updateTime=${encodeURIComponent(opts.updateTime)}`);
+      }
       const encodedFields: Record<string, unknown> = {};
       for (const k of keys) {
         encodedFields[k] = encodeFirestoreValue(fields[k]);
       }
 
-      const res = await fetchImpl(`${FIRESTORE_BASE}/${clean}?${maskParams}`, {
+      const res = await fetchImpl(`${FIRESTORE_BASE}/${clean}?${params.join("&")}`, {
         method: "PATCH",
         headers,
         body: JSON.stringify({ fields: encodedFields }),
       });
+      if (res.status === 409 || res.status === 412 || res.status === 400) {
+        // Optimistic concurrency precondition mismatch (another cron or client already updated/closed doc)
+        if (opts?.updateTime && (res.status === 409 || res.status === 412)) {
+          return false;
+        }
+        const txt = await res.text();
+        if (opts?.updateTime && txt.includes("FAILED_PRECONDITION")) {
+          return false;
+        }
+        throw new Error(`Firestore PATCH ${clean} failed (${res.status}): ${txt.slice(0, 200)}`);
+      }
       if (!res.ok) {
         const txt = await res.text();
         throw new Error(`Firestore PATCH ${clean} failed (${res.status}): ${txt.slice(0, 200)}`);
       }
+      return true;
     },
 
     async createDocument(collectionId: string, fields: Record<string, unknown>): Promise<string> {
@@ -419,6 +448,36 @@ export function createFirestoreRestClient(
       const raw = (await res.json()) as { name?: string };
       const parts = (raw.name || "").split("/");
       return parts[parts.length - 1] || "";
+    },
+
+    async createDocumentIfAbsent(
+      collectionId: string,
+      documentId: string,
+      fields: Record<string, unknown>,
+    ): Promise<{ created: boolean; id: string }> {
+      const encodedFields: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(fields)) {
+        if (v !== undefined) encodedFields[k] = encodeFirestoreValue(v);
+      }
+      const res = await fetchImpl(
+        `${FIRESTORE_BASE}/${collectionId}?documentId=${encodeURIComponent(documentId)}`,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ fields: encodedFields }),
+        },
+      );
+      if (res.status === 409) {
+        return { created: false, id: documentId };
+      }
+      if (!res.ok) {
+        const txt = await res.text();
+        if (txt.includes("ALREADY_EXISTS")) {
+          return { created: false, id: documentId };
+        }
+        throw new Error(`Firestore CREATE ${collectionId}/${documentId} failed (${res.status}): ${txt.slice(0, 200)}`);
+      }
+      return { created: true, id: documentId };
     },
   };
 }

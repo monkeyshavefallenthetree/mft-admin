@@ -158,19 +158,34 @@ await test("Unclosed active shift NEVER inflates past allowedMs (8h default, not
   assert.equal(ms, 8 * HOUR);
 });
 
-await test("Active shift with approved overtime allows up to standardHours + overtimeMinutes", () => {
-  const ms = workTime.effectiveSessionWorkMs(
-    {
-      date: "2026-11-25",
-      isActive: true,
-      startTime: new Date(t10),
-      segmentStartAt: new Date(t10),
-      bankedWorkTime: 0,
-      overtimeMinutes: 120,
-    },
-    t10 + 9.5 * HOUR,
-  );
-  assert.equal(ms, 9.5 * HOUR);
+await test("Active shift with approved overtime allows up to standardHours + approvedOvertimeMinutes (omitted defaults to 0)", () => {
+  const sessionWithRawOt = {
+    date: "2026-11-25",
+    isActive: true,
+    startTime: new Date(t10),
+    segmentStartAt: new Date(t10),
+    bankedWorkTime: 0,
+    overtimeMinutes: 120,
+    allowedShiftMs: 10 * HOUR,
+  };
+  // Omitting approvedOvertimeMinutes MUST NOT trust raw session.overtimeMinutes or session.allowedShiftMs
+  const unapprovedMs = workTime.effectiveSessionWorkMs(sessionWithRawOt, t10 + 9.5 * HOUR);
+  assert.equal(unapprovedMs, 8 * HOUR);
+
+  // Explicit approvedOvertimeMinutes allows up to standardHours + approvedOvertimeMinutes
+  const approvedMs = workTime.effectiveSessionWorkMs(sessionWithRawOt, t10 + 9.5 * HOUR, {
+    approvedOvertimeMinutes: 120,
+  });
+  assert.equal(approvedMs, 9.5 * HOUR);
+
+  // evaluateShiftLifecycle also ignores raw session.overtimeMinutes / session.allowedShiftMs when opts.overtimeMinutes omitted
+  const unapprovedLifecycle = shiftLifecycle.evaluateShiftLifecycle(sessionWithRawOt, {
+    nowMs: t10 + 9.5 * HOUR,
+    todayCairoYmd: "2026-11-25",
+  });
+  assert.equal(unapprovedLifecycle.overtimeMinutes, 0);
+  assert.equal(unapprovedLifecycle.allowedMs, 8 * HOUR);
+  assert.equal(unapprovedLifecycle.action, "auto_clock_out");
 });
 
 await test("Past-day unclosed session does not runaway-count and clamps corrupted storedMs", () => {
@@ -669,19 +684,32 @@ console.log("\n[6] Server-side reconcileActiveShifts() integration");
 
 function createMockFirestore(initialDocs: Record<string, Record<string, unknown>>) {
   const store = new Map<string, Record<string, unknown>>();
+  const versions = new Map<string, number>();
   for (const [k, v] of Object.entries(initialDocs)) {
     store.set(k, structuredClone(v));
+    versions.set(k, 1);
   }
   let autoId = 1;
+  const updateTimeOf = (k: string) => `2026-11-25T10:00:0${versions.get(k) ?? 1}.000000Z`;
   return {
     store,
+    versions,
+    bumpVersion(docPath: string) {
+      const clean = docPath.replace(/^\/+/, "");
+      versions.set(clean, (versions.get(clean) ?? 1) + 1);
+    },
     client: {
       async getDocument(docPath: string) {
         const clean = docPath.replace(/^\/+/, "");
         const data = store.get(clean);
         if (!data) return null;
         const parts = clean.split("/");
-        return { id: parts[parts.length - 1]!, path: clean, data: structuredClone(data) };
+        return {
+          id: parts[parts.length - 1]!,
+          path: clean,
+          data: structuredClone(data),
+          updateTime: updateTimeOf(clean),
+        };
       },
       async queryCollection(
         collectionId: string,
@@ -697,19 +725,50 @@ function createMockFirestore(initialDocs: Record<string, Record<string, unknown>
             const v = data[f.field];
             if (f.op === "EQUAL" && v !== f.value) match = false;
           }
-          if (match) out.push({ id, path: k, data: structuredClone(data) });
+          if (match) {
+            out.push({
+              id,
+              path: k,
+              data: structuredClone(data),
+              updateTime: updateTimeOf(k),
+            });
+          }
         }
         return out;
       },
-      async patchDocument(docPath: string, fields: Record<string, unknown>) {
+      async patchDocument(
+        docPath: string,
+        fields: Record<string, unknown>,
+        opts?: { updateTime?: string },
+      ) {
         const clean = docPath.replace(/^\/+/, "");
+        if (opts?.updateTime && store.has(clean) && updateTimeOf(clean) !== opts.updateTime) {
+          return false;
+        }
         const prev = store.get(clean) || {};
         store.set(clean, { ...prev, ...structuredClone(fields) });
+        versions.set(clean, (versions.get(clean) ?? 0) + 1);
+        return true;
       },
       async createDocument(collectionId: string, fields: Record<string, unknown>) {
         const id = `doc_${autoId++}`;
-        store.set(`${collectionId}/${id}`, structuredClone(fields));
+        const key = `${collectionId}/${id}`;
+        store.set(key, structuredClone(fields));
+        versions.set(key, 1);
         return id;
+      },
+      async createDocumentIfAbsent(
+        collectionId: string,
+        documentId: string,
+        fields: Record<string, unknown>,
+      ) {
+        const key = `${collectionId}/${documentId}`;
+        if (store.has(key)) {
+          return { created: false, id: documentId };
+        }
+        store.set(key, structuredClone(fields));
+        versions.set(key, 1);
+        return { created: true, id: documentId };
       },
     },
   };
@@ -720,6 +779,7 @@ await test("Closed app +6h past shift: auto clocks out at 18:00 (8h), sends ONE 
     "settings/hr": { standardHours: 8, autoClockOutGraceMinutes: 2, policy2026Enabled: true, shiftStartTime: "10:00" },
     "workers/w1": {
       firstName: "Ahmed",
+      status: "approved",
       isOnline: true,
       presenceStatus: "active",
       expoPushToken: "ExponentPushToken[dead-token]",
@@ -829,6 +889,7 @@ await test("Active shift 2h check-in fires once at 1h 50m, dedupes at 1h 55m, an
     "settings/hr": { standardHours: 8 },
     "workers/w2": {
       firstName: "Sara",
+      status: "approved",
       isOnline: true,
       presenceStatus: "active",
       webPushSubscriptions: [{ endpoint: "https://push.example/sara", keys: { p256dh: "p", auth: "a" } }],
@@ -896,6 +957,7 @@ await test("Approved 120m OT extends shift to 10h: warns at 19:45, completes at 
     "settings/hr": { standardHours: 8, autoClockOutGraceMinutes: 2 },
     "workers/w3": {
       firstName: "Omar",
+      status: "approved",
       isOnline: true,
       webPushSubscriptions: [{ endpoint: "https://push.example/omar", keys: { p256dh: "p", auth: "a" } }],
     },
@@ -957,7 +1019,7 @@ await test("Active session missing `date` derives Cairo date from startTime for 
   const yest10 = cairoTime.cairoWallTimeToDate(2026, 11, 24, 10, 0, 0).getTime();
   const mockDb = createMockFirestore({
     "settings/hr": { standardHours: 8, autoClockOutGraceMinutes: 2 },
-    "workers/w4": { firstName: "Nour", isOnline: true },
+    "workers/w4": { firstName: "Nour", status: "approved", isOnline: true },
     "workSessions/legacy_no_date": {
       workerId: "w4",
       workerName: "Nour",
@@ -985,6 +1047,480 @@ await test("Active session missing `date` derives Cairo date from startTime for 
   const closed = mockDb.store.get("workSessions/legacy_no_date")!;
   assert.equal(closed.autoClockOutReason, "past_day_unclosed");
   assert.equal(closed.totalWorkTime, 9 * HOUR, "Should match 2026-11-24 approved 60m OT via derived Cairo date");
+});
+
+/* ─────────────────────────── [7] Round-2 Regressions ─────────────────────────── */
+console.log("\n[7] Round-2 regressions: 1 check-in/day, approved-only OT, truthful notifications & ghost silence");
+
+await test("workTime.ts caps closed unapproved 10h regular session to 8h, ignores stale session.overtimeMinutes when approvedOvertimeMinutes=0, and returns 0 for ghost active session", () => {
+  // Closed regular session with unapproved 10h totalWorkTime & stale session.overtimeMinutes=120
+  const capped = workTime.effectiveSessionWorkMs(
+    {
+      date: "2026-11-25",
+      isActive: false,
+      startTime: new Date(t10),
+      logoutTime: new Date(t10 + 10 * HOUR),
+      totalWorkTime: 10 * HOUR,
+      overtimeMinutes: 120,
+      allowedShiftMs: 10 * HOUR,
+    },
+    t10 + 11 * HOUR,
+    { standardHours: 8, approvedOvertimeMinutes: 0 },
+  );
+  assert.equal(capped, 8 * HOUR);
+
+  // Approved 120m OT allows the 10h closed regular session
+  const approved10 = workTime.effectiveSessionWorkMs(
+    {
+      date: "2026-11-25",
+      isActive: false,
+      startTime: new Date(t10),
+      logoutTime: new Date(t10 + 10 * HOUR),
+      totalWorkTime: 10 * HOUR,
+      overtimeMinutes: 0,
+    },
+    t10 + 11 * HOUR,
+    { standardHours: 8, approvedOvertimeMinutes: 120 },
+  );
+  assert.equal(approved10, 10 * HOUR);
+
+  // Ghost active session with NO startTime/loginTime MUST return 0 (never fabricate live elapsed time)
+  const ghostMs = workTime.effectiveSessionWorkMs(
+    {
+      date: "2026-11-25",
+      isActive: true,
+      totalWorkTime: 0,
+    },
+    t10 + 5 * HOUR,
+    { standardHours: 8, approvedOvertimeMinutes: 0 },
+  );
+  assert.equal(ghostMs, 0);
+
+  // External mission returns exact stored mission duration
+  const missionMs = workTime.effectiveSessionWorkMs(
+    {
+      date: "2026-11-25",
+      isActive: false,
+      isExternalMission: true,
+      totalWorkTime: 4 * HOUR,
+    },
+    t10 + 5 * HOUR,
+    { standardHours: 8, approvedOvertimeMinutes: 0 },
+  );
+  assert.equal(missionMs, 4 * HOUR);
+});
+
+await test("resolveTodayOvertimeMinutes strictly sums approved OT only; evaluateShiftLifecycle returns inactive for ghost/mission sessions", () => {
+  const ot = shiftLifecycle.resolveTodayOvertimeMinutes("2026-11-25", [
+    { type: "overtime", status: "pending", exceptionDate: "2026-11-25", lateMinutes: 120 },
+    { type: "overtime", status: "rejected", exceptionDate: "2026-11-25", lateMinutes: 90 },
+    { type: "overtime", status: "approved", exceptionDate: "2026-11-24", lateMinutes: 60 },
+    { type: "overtime", status: "approved", exceptionDate: "2026-11-25", lateMinutes: 45 },
+    { type: "overtime", status: "approved", exceptionDate: "2026-11-25", overtimeMinutes: 30 },
+    { type: "late", status: "approved", exceptionDate: "2026-11-25", lateMinutes: 30 },
+  ]);
+  assert.equal(ot, 75);
+
+  // Ghost session missing startTime & loginTime
+  const ghostEval = shiftLifecycle.evaluateShiftLifecycle(
+    { id: "w_ghost_2026-11-25", workerId: "w_ghost", date: "2026-11-25", isActive: true },
+    { nowMs: t10 + 9 * HOUR, todayCairoYmd: "2026-11-25" },
+  );
+  assert.equal(ghostEval.action, "inactive");
+  assert.equal(ghostEval.shouldSendAutoClockOutPush, false);
+  assert.equal(ghostEval.shouldSendCheckInPush, false);
+
+  // Mission session marked active accidentally
+  const missionEval = shiftLifecycle.evaluateShiftLifecycle(
+    {
+      id: "mission_123",
+      workerId: "w1",
+      date: "2026-11-25",
+      isActive: true,
+      isExternalMission: true,
+      startTime: new Date(t10),
+    },
+    { nowMs: t10 + 9 * HOUR, todayCairoYmd: "2026-11-25" },
+  );
+  assert.equal(missionEval.action, "inactive");
+  assert.equal(missionEval.shouldSendAutoClockOutPush, false);
+});
+
+await test("computePayrollForWorker enforces approved-only OT in BOTH HR-POL-2026 & legacy paths, exempts mission-only days from shortfall, and caps regular+mission same-day combo", () => {
+  const start = cairoTime.cairoWallTimeToDate(2026, 11, 25, 0, 0, 0);
+  const end = cairoTime.cairoWallTimeToDate(2026, 11, 25, 23, 59, 59);
+  const closed10hUnapproved = [
+    {
+      date: "2026-11-25",
+      isActive: false,
+      startTime: { toDate: () => new Date(t10) },
+      loginTime: { toDate: () => new Date(t10) },
+      logoutTime: { toDate: () => new Date(t10 + 10 * HOUR) },
+      totalWorkTime: 10 * HOUR,
+      overtimeMinutes: 120, // unapproved / stale field on session!
+    },
+  ];
+
+  // (a) HR-POL-2026 with NO approved OT -> strictly 8h, 0 OT pay
+  const pay2026 = hrReports.computePayrollForWorker(closed10hUnapproved, 100, start, end, {
+    settings: { ...hrReports.DEFAULT_HR_SETTINGS, policy2026Enabled: true },
+    workerStartDate: "2026-11-25",
+    approvedOvertime: [],
+    capAtToday: false,
+  });
+  assert.equal(pay2026.totalHours, 8);
+  assert.equal(pay2026.overtimeHours, 0);
+  assert.equal(pay2026.overtimePay, 0);
+  assert.equal(pay2026.basePay, 800);
+
+  // (b) Legacy path (policy2026Enabled: false) with NO approved OT -> strictly 8h, 0 OT pay
+  const payLegacyNone = hrReports.computePayrollForWorker(closed10hUnapproved, 100, start, end, {
+    settings: { ...hrReports.DEFAULT_HR_SETTINGS, policy2026Enabled: false, overtimeMultiplier: 1.5 },
+    workerStartDate: "2026-11-25",
+    approvedOvertime: [],
+    capAtToday: false,
+  });
+  assert.equal(payLegacyNone.totalHours, 8);
+  assert.equal(payLegacyNone.overtimeHours, 0);
+  assert.equal(payLegacyNone.overtimePay, 0);
+  assert.equal(payLegacyNone.basePay, 800);
+
+  // (c) Legacy path WITH 120m approved OT -> 8h base (800) + 2h * 100 * 1.5 (300) = 1100 (NO 2.5x double-pay!)
+  const payLegacyApproved = hrReports.computePayrollForWorker(closed10hUnapproved, 100, start, end, {
+    settings: { ...hrReports.DEFAULT_HR_SETTINGS, policy2026Enabled: false, overtimeMultiplier: 1.5 },
+    workerStartDate: "2026-11-25",
+    approvedOvertime: [{ date: "2026-11-25", minutes: 120 }],
+    capAtToday: false,
+  });
+  assert.equal(payLegacyApproved.totalHours, 10);
+  assert.equal(payLegacyApproved.overtimeHours, 2);
+  assert.equal(payLegacyApproved.basePay, 800);
+  assert.equal(payLegacyApproved.overtimePay, 300);
+
+  // (d) Mission-only 4h day -> 0 shortfallMinutes (no false early-leave deduction)
+  const missionOnlyPay = hrReports.computePayrollForWorker(
+    [
+      {
+        date: "2026-11-25",
+        isActive: false,
+        isExternalMission: true,
+        startTime: { toDate: () => new Date(t10) },
+        loginTime: { toDate: () => new Date(t10) },
+        logoutTime: { toDate: () => new Date(t10 + 4 * HOUR) },
+        totalWorkTime: 4 * HOUR,
+      },
+    ],
+    100,
+    start,
+    end,
+    {
+      settings: { ...hrReports.DEFAULT_HR_SETTINGS, policy2026Enabled: true },
+      workerStartDate: "2026-11-25",
+      approvedOvertime: [],
+      capAtToday: false,
+    },
+  );
+  assert.equal(missionOnlyPay.shortfallMinutes, 0);
+  assert.equal(missionOnlyPay.totalHours, 4);
+
+  // (e) Regular 8h + External Mission 4h on same day with 0 approved OT -> capped at 8h (0 fake OT!)
+  const comboPay = hrReports.computePayrollForWorker(
+    [
+      {
+        date: "2026-11-25",
+        isActive: false,
+        startTime: { toDate: () => new Date(t10) },
+        loginTime: { toDate: () => new Date(t10) },
+        logoutTime: { toDate: () => new Date(t10 + 8 * HOUR) },
+        totalWorkTime: 8 * HOUR,
+      },
+      {
+        date: "2026-11-25",
+        isActive: false,
+        isExternalMission: true,
+        startTime: { toDate: () => new Date(t10) },
+        loginTime: { toDate: () => new Date(t10) },
+        logoutTime: { toDate: () => new Date(t10 + 4 * HOUR) },
+        totalWorkTime: 4 * HOUR,
+      },
+    ],
+    100,
+    start,
+    end,
+    {
+      settings: { ...hrReports.DEFAULT_HR_SETTINGS, policy2026Enabled: true },
+      workerStartDate: "2026-11-25",
+      approvedOvertime: [],
+      capAtToday: false,
+    },
+  );
+  assert.equal(comboPay.totalHours, 8);
+  assert.equal(comboPay.overtimeHours, 0);
+  assert.equal(comboPay.overtimePay, 0);
+});
+
+await test("Cron: PENDING overtime NEVER extends shift; auto clocks out at 18:00 (8h) and strips stale session.overtimeMinutes", async () => {
+  const mockDb = createMockFirestore({
+    "settings/hr": { standardHours: 8, autoClockOutGraceMinutes: 2 },
+    "workers/w_pend_ot": {
+      firstName: "Karim",
+      status: "approved",
+      isOnline: true,
+      webPushSubscriptions: [{ endpoint: "https://push.example/karim", keys: { p256dh: "p", auth: "a" } }],
+    },
+    "workSessions/w_pend_ot_2026-11-25": {
+      workerId: "w_pend_ot",
+      workerName: "Karim",
+      date: "2026-11-25",
+      isActive: true,
+      startTime: new Date(t10),
+      segmentStartAt: new Date(t10),
+      bankedWorkTime: 0,
+      overtimeMinutes: 120,
+      allowedShiftMs: 10 * HOUR,
+    },
+    "exceptionRequests/ot_pending": {
+      workerId: "w_pend_ot",
+      type: "overtime",
+      exceptionDate: "2026-11-25",
+      lateMinutes: 120,
+      status: "pending", // NOT approved!
+    },
+  });
+
+  const summary = await reconcileMod.reconcileActiveShifts({
+    firestore: mockDb.client,
+    nowMs: t10 + 8 * HOUR + 2 * MIN, // 18:02 Cairo
+    sendWebPush: async (subs) => ({ sent: subs.length, failed: 0, goneEndpoints: [], errors: [] }),
+  });
+
+  assert.equal(summary.autoClockedOut, 1);
+  const closed = mockDb.store.get("workSessions/w_pend_ot_2026-11-25")!;
+  assert.equal(closed.isActive, false);
+  assert.equal(closed.overtimeMinutes, 0);
+  assert.equal(closed.allowedShiftMs, 8 * HOUR);
+  assert.equal(closed.totalWorkTime, 8 * HOUR);
+  assert.equal((closed.logoutTime as Date).getTime(), t10 + 8 * HOUR);
+});
+
+await test("Cron: Ghost, unapproved/pending worker, deleted worker, & active mission sessions close SILENTLY with ZERO pushes & ZERO adminNotifications", async () => {
+  const mockDb = createMockFirestore({
+    "settings/hr": { standardHours: 8, autoClockOutGraceMinutes: 2 },
+    "workers/w_pending": { firstName: "Newbie", status: "pending", isOnline: true },
+    "workers/w_approved": { firstName: "Valid", status: "approved", isOnline: true },
+    "adminPushSubscriptions/admin1": {
+      uid: "admin1",
+      role: "super_admin",
+      subscriptions: [{ endpoint: "https://push.example/admin", keys: { p256dh: "p", auth: "a" } }],
+    },
+    // (1) Unapproved/pending worker who somehow has an active session
+    "workSessions/w_pending_2026-11-25": {
+      workerId: "w_pending",
+      workerName: "Newbie",
+      date: "2026-11-25",
+      isActive: true,
+      startTime: new Date(t10),
+    },
+    // (2) Deleted worker (no workers/w_deleted doc exists)
+    "workSessions/w_deleted_2026-11-25": {
+      workerId: "w_deleted",
+      workerName: "Ghost Deleted",
+      date: "2026-11-25",
+      isActive: true,
+      startTime: new Date(t10),
+    },
+    // (3) Approved worker but ghost session with NO startTime/loginTime
+    "workSessions/w_approved_2026-11-25": {
+      workerId: "w_approved",
+      workerName: "Valid",
+      date: "2026-11-25",
+      isActive: true,
+    },
+    // (4) External mission accidentally marked active
+    "workSessions/mission_bad_1": {
+      workerId: "w_approved",
+      workerName: "Valid",
+      date: "2026-11-25",
+      isActive: true,
+      isExternalMission: true,
+      startTime: new Date(t10),
+    },
+  });
+
+  let webPushCalls = 0;
+  let expoPushCalls = 0;
+
+  const summary = await reconcileMod.reconcileActiveShifts({
+    firestore: mockDb.client,
+    nowMs: t10 + 9 * HOUR,
+    sendWebPush: async () => {
+      webPushCalls++;
+      return { sent: 1, failed: 0, goneEndpoints: [], errors: [] };
+    },
+    sendExpoPush: async () => {
+      expoPushCalls++;
+      return { ok: true, sent: 1, failed: 0, invalidTokens: [], tickets: [], data: [], errors: [] };
+    },
+  });
+
+  assert.equal(summary.silentlyClosedGhosts, 4);
+  assert.equal(summary.autoClockedOut, 0);
+  assert.equal(summary.checkInNotified, 0);
+  assert.equal(summary.markedIdle, 0);
+  assert.equal(webPushCalls, 0, "MUST send 0 Web Pushes for ghost/unapproved/deleted/mission sessions");
+  assert.equal(expoPushCalls, 0, "MUST send 0 Expo Pushes for ghost/unapproved/deleted/mission sessions");
+
+  const adminNotifs = Array.from(mockDb.store.keys()).filter((k) => k.startsWith("adminNotifications/"));
+  assert.equal(adminNotifs.length, 0, "MUST create 0 adminNotifications for invalid/unapproved/ghost sessions");
+
+  for (const id of [
+    "workSessions/w_pending_2026-11-25",
+    "workSessions/w_deleted_2026-11-25",
+    "workSessions/w_approved_2026-11-25",
+    "workSessions/mission_bad_1",
+  ]) {
+    const doc = mockDb.store.get(id)!;
+    assert.equal(doc.isActive, false, `${id} should be closed`);
+    assert.equal(doc.autoClockOutReason, "invalid_or_unapproved_cleanup");
+  }
+});
+
+await test("Cron: Past-day session >2 days old closes silently; 1-day-old session labels date in adminNotification", async () => {
+  const old5d = cairoTime.cairoWallTimeToDate(2026, 11, 20, 10, 0, 0).getTime();
+  const yest1d = cairoTime.cairoWallTimeToDate(2026, 11, 24, 10, 0, 0).getTime();
+
+  const mockDb = createMockFirestore({
+    "settings/hr": { standardHours: 8, autoClockOutGraceMinutes: 2 },
+    "workers/w_old": { firstName: "Mona", status: "approved", isOnline: true },
+    "workers/w_yest": { firstName: "Tarek", status: "approved", isOnline: true },
+    "workSessions/w_old_2026-11-20": {
+      workerId: "w_old",
+      workerName: "Mona",
+      date: "2026-11-20",
+      isActive: true,
+      startTime: new Date(old5d),
+      segmentStartAt: new Date(old5d),
+    },
+    "workSessions/w_yest_2026-11-24": {
+      workerId: "w_yest",
+      workerName: "Tarek",
+      date: "2026-11-24",
+      isActive: true,
+      startTime: new Date(yest1d),
+      segmentStartAt: new Date(yest1d),
+    },
+  });
+
+  const summary = await reconcileMod.reconcileActiveShifts({
+    firestore: mockDb.client,
+    nowMs: t10, // 2026-11-25 10:00 Cairo
+    sendWebPush: async () => ({ sent: 0, failed: 0, goneEndpoints: [], errors: [] }),
+  });
+
+  assert.equal(summary.autoClockedOut, 2);
+  assert.equal(mockDb.store.has("adminNotifications/shift_autoclose_w_old_2026-11-20"), false, ">2d past-day must close silently");
+  const yestNotif = mockDb.store.get("adminNotifications/shift_autoclose_w_yest_2026-11-24");
+  assert.ok(yestNotif, "1-day-old past shift should create deterministic dated adminNotification");
+  assert.match(String(yestNotif!.title), /\(2026-11-24\)/);
+});
+
+await test("Cron: Optimistic updateTime conflict & deterministic dedupeDocId suppress duplicate admin notifications", async () => {
+  // (a) Pre-seeded deterministic adminNotifications doc suppresses duplicate admin Web Push
+  const mockDb = createMockFirestore({
+    "settings/hr": { standardHours: 8, autoClockOutGraceMinutes: 2 },
+    "workers/w_dup": { firstName: "Hani", status: "approved", isOnline: true },
+    "workSessions/w_dup_2026-11-25": {
+      workerId: "w_dup",
+      workerName: "Hani",
+      date: "2026-11-25",
+      isActive: true,
+      startTime: new Date(t10),
+      segmentStartAt: new Date(t10),
+    },
+    "adminNotifications/shift_autoclose_w_dup_2026-11-25": {
+      eventType: "worker_auto_clock_out",
+      title: "Already sent",
+    },
+    "adminPushSubscriptions/admin1": {
+      uid: "admin1",
+      role: "hr_admin",
+      subscriptions: [{ endpoint: "https://push.example/admin-dup", keys: { p256dh: "p", auth: "a" } }],
+    },
+  });
+
+  const pushedEndpoints: string[] = [];
+  const s1 = await reconcileMod.reconcileActiveShifts({
+    firestore: mockDb.client,
+    nowMs: t10 + 8 * HOUR + 5 * MIN,
+    sendWebPush: async (subs) => {
+      pushedEndpoints.push(...subs.map((x) => x.endpoint));
+      return { sent: subs.length, failed: 0, goneEndpoints: [], errors: [] };
+    },
+  });
+  assert.equal(s1.autoClockedOut, 1);
+  assert.equal(pushedEndpoints.includes("https://push.example/admin-dup"), false, "Pre-existing dedupeDocId must suppress duplicate admin Web Push");
+
+  // (b) Concurrent updateTime mismatch aborts patch & emits 0 notifications
+  const mockRace = createMockFirestore({
+    "settings/hr": { standardHours: 8, autoClockOutGraceMinutes: 2 },
+    "workers/w_race": {
+      firstName: "Rami",
+      status: "approved",
+      isOnline: true,
+      webPushSubscriptions: [{ endpoint: "https://push.example/rami", keys: { p256dh: "p", auth: "a" } }],
+    },
+    "workSessions/w_race_2026-11-25": {
+      workerId: "w_race",
+      workerName: "Rami",
+      date: "2026-11-25",
+      isActive: true,
+      startTime: new Date(t10),
+      segmentStartAt: new Date(t10),
+    },
+  });
+  const racingClient = {
+    ...mockRace.client,
+    async patchDocument(docPath: string, fields: Record<string, unknown>, opts?: { updateTime?: string }) {
+      if (docPath.startsWith("workSessions/") && opts?.updateTime) {
+        // Simulate another cron instance winning the write just before us
+        mockRace.bumpVersion(docPath);
+      }
+      return mockRace.client.patchDocument(docPath, fields, opts);
+    },
+  };
+  let racePushCount = 0;
+  const sRace = await reconcileMod.reconcileActiveShifts({
+    firestore: racingClient,
+    nowMs: t10 + 8 * HOUR + 5 * MIN,
+    sendWebPush: async () => {
+      racePushCount++;
+      return { sent: 1, failed: 0, goneEndpoints: [], errors: [] };
+    },
+  });
+  assert.equal(sRace.autoClockedOut, 0, "Lost optimistic lock race must not count as autoClockedOut");
+  assert.equal(racePushCount, 0, "Lost optimistic lock race must emit 0 pushes");
+  assert.equal(mockRace.store.has("adminNotifications/shift_autoclose_w_race_2026-11-25"), false);
+});
+
+await test("firestore.rules enforces 1-check-in/day deterministic IDs, approved-only OT lock, & admin-only list + worker shift_* get on adminNotifications", () => {
+  const rules = fs.readFileSync(path.join(rootDir, "firestore.rules"), "utf8");
+  assert.match(rules, /id == request\.auth\.uid \+ '_' \+ request\.resource\.data\.date/);
+  assert.match(rules, /overtimeMinutes/);
+  assert.match(rules, /isExternalMission/);
+  assert.match(rules, /!\(resource\.data\.get\('isActive', false\) == false && request\.resource\.data\.get\('isActive', false\) == true\)/);
+  assert.match(rules, /allow list: if isSuperAdmin\(\)/);
+  assert.match(rules, /allow get: if isSuperAdmin\(\)/);
+  assert.match(rules, /shift_\[a-z_\]\+_'/);
+});
+
+await test("hrPolicy2026.ts remains byte-identical with sibling worker repo when present", () => {
+  const adminPolicyPath = path.join(rootDir, "src/lib/admin/hrPolicy2026.ts");
+  const workerPolicyPath = path.resolve(rootDir, "../mft-monkeys-main/src/lib/worker/hrPolicy2026.ts");
+  if (fs.existsSync(workerPolicyPath)) {
+    const adminNorm = fs.readFileSync(adminPolicyPath, "utf8").replace(/\r\n/g, "\n");
+    const workerNorm = fs.readFileSync(workerPolicyPath, "utf8").replace(/\r\n/g, "\n");
+    assert.equal(adminNorm, workerNorm, "hrPolicy2026.ts drifted from mft-monkeys-main/src/lib/worker/hrPolicy2026.ts");
+  }
 });
 
 console.log(`\n${passed} passed, ${failures.length} failed`);

@@ -384,16 +384,36 @@ export default function ReportsPage() {
     [tasks, start, end, dept, workerMap],
   );
 
+  const approvedOtByKey = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const r of approvedRequests) {
+      if (r.type !== "overtime" || !r.workerId || !r.exceptionDate) continue;
+      const mins = Number(r.lateMinutes ?? r.overtimeMinutes ?? 0) || 0;
+      if (mins > 0) {
+        const key = `${r.workerId}|${r.exceptionDate}`;
+        map.set(key, (map.get(key) ?? 0) + mins);
+      }
+    }
+    return map;
+  }, [approvedRequests]);
+
   /* KPIs */
   const kpis = useMemo(() => {
+    const otMinsFor = (x: Session) => {
+      const dKey = sessionDateYmd(x);
+      return x.workerId && dKey ? (approvedOtByKey.get(`${x.workerId}|${dKey}`) ?? 0) : 0;
+    };
     const totalHours = rangeSessions.reduce(
-      (s, x) => s + sessionHours(x, liveNowMs, { standardHours: stdHours }),
+      (s, x) => s + sessionHours(x, liveNowMs, { standardHours: stdHours, approvedOvertimeMinutes: otMinsFor(x) }),
       0,
     );
-    const overtime = rangeSessions.reduce(
-      (s, x) => s + Math.max(0, sessionHours(x, liveNowMs, { standardHours: stdHours }) - stdHours),
-      0,
-    );
+    const overtime = rangeSessions.reduce((s, x) => {
+      if (x.isExternalMission) return s;
+      const approvedOtMins = otMinsFor(x);
+      if (approvedOtMins <= 0) return s;
+      const h = sessionHours(x, liveNowMs, { standardHours: stdHours, approvedOvertimeMinutes: approvedOtMins });
+      return s + Math.min(Math.max(0, h - stdHours), approvedOtMins / 60);
+    }, 0);
     let late = 0;
     rangeSessions.forEach((s) => {
       const p = calculateAttendancePolicy(s, hrSettings, liveNowMs);
@@ -409,7 +429,7 @@ export default function ReportsPage() {
       expectedSessions > 0 ? Math.min(100, Math.round((workerDays / expectedSessions) * 100)) : 0;
     const avgPerDay = workerDays > 0 ? totalHours / workerDays : 0;
     return { totalHours, overtime, late, attendance, avgPerDay, workerDays, expectedDays };
-  }, [rangeSessions, start, end, teamWorkers.length, hrSettings, holidays, liveNowMs, stdHours]);
+  }, [rangeSessions, start, end, teamWorkers.length, hrSettings, holidays, liveNowMs, stdHours, approvedOtByKey]);
 
   /* Daily trend */
   const trend = useMemo(() => {
@@ -436,9 +456,13 @@ export default function ReportsPage() {
         key = ymd(w);
       }
       const b = buckets.get(key) ?? { hours: 0, overtime: 0, late: 0 };
-      const h = sessionHours(s, liveNowMs, { standardHours: stdHours });
+      const dKey = sessionDateYmd(s);
+      const approvedOtMins = s.workerId && dKey ? (approvedOtByKey.get(`${s.workerId}|${dKey}`) ?? 0) : 0;
+      const h = sessionHours(s, liveNowMs, { standardHours: stdHours, approvedOvertimeMinutes: approvedOtMins });
       b.hours += h;
-      b.overtime += Math.max(0, h - stdHours);
+      if (!s.isExternalMission && approvedOtMins > 0) {
+        b.overtime += Math.min(Math.max(0, h - stdHours), approvedOtMins / 60);
+      }
       if (calculateAttendancePolicy(s, hrSettings, liveNowMs).isLate || s.isLate) b.late++;
       buckets.set(key, b);
     });
@@ -452,8 +476,8 @@ export default function ReportsPage() {
       days.push({
         key,
         label: weekly
-          ? `Wk ${cursor.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`
-          : cursor.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+          ? `Wk ${cursor.toLocaleDateString("en-US", { timeZone: CAIRO_TZ, month: "short", day: "numeric" })}`
+          : cursor.toLocaleDateString("en-US", { timeZone: CAIRO_TZ, month: "short", day: "numeric" }),
         hours: totalH,
         regular: Math.round(Math.max(0, totalH - otH) * 10) / 10,
         overtime: otH,
@@ -463,7 +487,7 @@ export default function ReportsPage() {
       guard++;
     }
     return { days, weekly };
-  }, [rangeSessions, start, end, hrSettings, liveNowMs, stdHours]);
+  }, [rangeSessions, start, end, hrSettings, liveNowMs, stdHours, approvedOtByKey]);
 
   const trendAvg = useMemo(() => {
     const activeDays = trend.days.filter((d) => d.hours > 0);
@@ -519,7 +543,7 @@ export default function ReportsPage() {
                 r.exceptionDate >= sYmd &&
                 r.exceptionDate <= eYmd,
             )
-            .map((r) => ({ date: r.exceptionDate, minutes: Number(r.lateMinutes) || 0 })),
+            .map((r) => ({ date: r.exceptionDate, minutes: Number(r.lateMinutes ?? r.overtimeMinutes ?? 0) || 0 })),
           approvedLeaveDays: paidLeaveDays + unpaidLeaveDays,
           paidLeaveDays,
           unpaidLeaveDays,
@@ -579,7 +603,9 @@ export default function ReportsPage() {
     rangeSessions.forEach((s) => {
       const d = s.department ?? workerMap.get(s.workerId ?? "")?.department ?? "unassigned";
       const r = map.get(d) ?? { hours: 0, people: new Set<string>(), late: 0 };
-      r.hours += sessionHours(s, liveNowMs, { standardHours: stdHours });
+      const dKey = sessionDateYmd(s);
+      const approvedOtMins = s.workerId && dKey ? (approvedOtByKey.get(`${s.workerId}|${dKey}`) ?? 0) : 0;
+      r.hours += sessionHours(s, liveNowMs, { standardHours: stdHours, approvedOvertimeMinutes: approvedOtMins });
       if (s.workerId) r.people.add(s.workerId);
       if (calculateAttendancePolicy(s, hrSettings, liveNowMs).isLate || s.isLate) r.late++;
       map.set(d, r);
@@ -594,7 +620,7 @@ export default function ReportsPage() {
         color: DEPT_HEX[i % DEPT_HEX.length],
       }))
       .sort((a, b) => b.hours - a.hours);
-  }, [rangeSessions, workerMap, hrSettings, liveNowMs, stdHours]);
+  }, [rangeSessions, workerMap, hrSettings, liveNowMs, stdHours, approvedOtByKey]);
 
   /* Projects */
   const projectRows = useMemo(() => {
