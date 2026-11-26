@@ -261,9 +261,14 @@ async function callGeminiNative(params: {
   fetchImpl: typeof fetch;
   timeoutMs: number;
 }): Promise<{ ok: boolean; text: string; status?: number; reason?: string }> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-    params.model,
-  )}:generateContent?key=${encodeURIComponent(params.apiKey)}`;
+  const isVertexExpress = params.apiKey.startsWith("AQ.");
+  const url = isVertexExpress
+    ? `https://aiplatform.googleapis.com/v1/publishers/google/models/${encodeURIComponent(
+        params.model,
+      )}:generateContent`
+    : `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+        params.model,
+      )}:generateContent`;
 
   const contents = params.messages.map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
@@ -282,7 +287,10 @@ async function callGeminiNative(params: {
   try {
     const res = await params.fetchImpl(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": params.apiKey,
+      },
       body: JSON.stringify(body),
       signal: buildTimeoutSignal(params.timeoutMs),
     });
@@ -420,12 +428,21 @@ export async function callAiGateway(
     if (provider === "gemini") {
       const key = cleanEnv(env, "GEMINI_API_KEY");
       if (!key) continue;
-      const models = dedupeModels([
-        cleanEnv(env, "GEMINI_MODEL"),
-        "gemini-2.5-flash",
-        "gemini-3-flash-preview",
-        "gemini-2.5-flash-lite",
-      ]);
+      const isVertexExpress = key.startsWith("AQ.");
+      const models = isVertexExpress
+        ? dedupeModels([
+            cleanEnv(env, "GEMINI_MODEL"),
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
+            "gemini-2.0-flash",
+          ])
+        : dedupeModels([
+            cleanEnv(env, "GEMINI_MODEL"),
+            "gemini-2.5-flash",
+            "gemini-3-flash-preview",
+            "gemini-2.5-flash-lite",
+            "gemini-2.0-flash",
+          ]);
       for (const model of models) {
         const r = await callGeminiNative({
           apiKey: key,

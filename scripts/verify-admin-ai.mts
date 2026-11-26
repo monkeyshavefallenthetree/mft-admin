@@ -521,6 +521,79 @@ await test("Full fallback chain: custom (503) -> opencode (403) -> groq (429) ->
   assert.ok(Array.isArray(extracted.parsed?.actions));
 });
 
+await test("Gemini auto-detects Vertex AI Express (AQ.) vs AI Studio (AIza...) with x-goog-api-key header & model fallback", async () => {
+  const vertexCalls: Array<{ url: string; headers: Record<string, string>; body: unknown }> = [];
+  const mockVertexFetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const headers = (init?.headers ?? {}) as Record<string, string>;
+    const body = JSON.parse(String(init?.body || "{}"));
+    vertexCalls.push({ url, headers, body });
+
+    // Simulate gemini-2.5-flash 404 -> falls back cleanly to gemini-2.5-flash-lite on Vertex Express
+    if (url.includes("/models/gemini-2.5-flash:generateContent")) {
+      return makeJsonResponse(404, { error: "not_found" });
+    }
+    if (url === "https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash-lite:generateContent") {
+      return makeJsonResponse(200, {
+        candidates: [{ content: { parts: [{ text: "Vertex Express response OK" }] } }],
+      });
+    }
+    return makeJsonResponse(500, {});
+  };
+
+  const aqKey = "AQ.Ab8RN6MockVertexExpressKey12345";
+  const rVertex = await aiGateway.callAiGateway(
+    {
+      systemPrompt: "Sys",
+      messages: [
+        { role: "user", content: "Hi" },
+        { role: "assistant", content: "Hello" },
+        { role: "user", content: "Briefing" },
+      ],
+    },
+    { fetchImpl: mockVertexFetch, env: { GEMINI_API_KEY: aqKey } },
+  );
+
+  assert.equal(rVertex.ok, true);
+  assert.equal(rVertex.provider, "gemini");
+  assert.equal(rVertex.model, "gemini-2.5-flash-lite");
+  assert.equal(rVertex.text, "Vertex Express response OK");
+  assert.equal(vertexCalls.length, 2);
+  for (const c of vertexCalls) {
+    assert.ok(c.url.startsWith("https://aiplatform.googleapis.com/v1/publishers/google/models/"));
+    assert.equal(c.url.includes(aqKey), false, "API key MUST NEVER appear in URL");
+    assert.equal(c.headers["x-goog-api-key"], aqKey);
+    const contents = (c.body as { contents?: Array<{ role?: string }> }).contents ?? [];
+    assert.deepEqual(
+      contents.map((x) => x.role),
+      ["user", "model", "user"],
+      "Every contents entry must carry explicit role",
+    );
+  }
+
+  // Standard AI Studio key (AIza...) routes to generativelanguage.googleapis.com with x-goog-api-key header
+  let studioUrl = "";
+  let studioHeaderKey = "";
+  const aizaKey = "AIzaSyMockStudioKey67890";
+  const rStudio = await aiGateway.callAiGateway(
+    { systemPrompt: "Sys", messages: [{ role: "user", content: "Hi" }] },
+    {
+      fetchImpl: async (input, init) => {
+        studioUrl = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        studioHeaderKey = ((init?.headers ?? {}) as Record<string, string>)["x-goog-api-key"] ?? "";
+        return makeJsonResponse(200, {
+          candidates: [{ content: { parts: [{ text: "AI Studio OK" }] } }],
+        });
+      },
+      env: { GEMINI_API_KEY: aizaKey },
+    },
+  );
+  assert.equal(rStudio.ok, true);
+  assert.equal(studioUrl, "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent");
+  assert.equal(studioUrl.includes(aizaKey), false, "API key MUST NEVER appear in URL");
+  assert.equal(studioHeaderKey, aizaKey);
+});
+
 await test("OpenRouter fallback sends HTTP-Referer + X-Title and handles malformed mft-actions JSON safely", async () => {
   let sawHeaders: Record<string, string> = {};
   const mockFetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
